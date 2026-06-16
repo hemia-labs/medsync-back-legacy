@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: 12.16.2
+  NODE_VERSION: 22
   APP_NAME: medsync-back-legacy
 
 jobs:
@@ -145,8 +145,8 @@ jobs:
             # node-localstorage / subida de archivos escriben en src/tempFolder
             mkdir -p src/tempFolder logs
 
-            # npm 6 (Node 12): usar --production, NO --omit=dev
-            npm ci --production
+            # Node 22 (npm 10): lockfileVersion 3 se lee de forma nativa.
+            npm ci --omit=dev
 
             command -v pm2 > /dev/null || npm install --global pm2
 

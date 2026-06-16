@@ -14,7 +14,7 @@
     "qa:security-headers": "node scripts/qa/security-headers-http-regression.js"
   },
   "engines": {
-    "node": "12.16.2"
+    "node": ">=22 <23"
   },
   "keywords": [
     "example",
