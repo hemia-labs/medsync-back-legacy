@@ -1,0 +1,80 @@
+[
+        {
+            "id": "29037480927304972",
+            "label": "Diente Sano",
+            "identity": 0,
+            "value": false
+        },
+        {
+            "id": "29037480927304972",
+            "label": "Corona",
+            "identity": 1,
+            "value": false
+        },
+        {
+            "id": "9237409270234344",
+            "label": "Corona Filtrada",
+            "identity": 2,
+            "value": false
+        },
+        {
+            "id": "740239709702342",
+            "label": "Resina",
+            "identity": 3,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "ICDAS",
+            "identity": 4,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Caries Esmalte",
+            "identity": 5,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Resina Filtrada",
+            "identity": 6,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Diente Ausente",
+            "identity": 7,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Caries Dentina",
+            "identity": 8,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Corona Fracturada",
+            "identity": 9,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Cavidad Desalojada",
+            "identity": 10,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Resto Reticular",
+            "identity": 11,
+            "value": false
+        },
+        {
+            "id": "07203974092734",
+            "label": "Puente",
+            "identity": 12,
+            "value": false
+        }
+]

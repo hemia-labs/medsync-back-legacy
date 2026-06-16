@@ -1,0 +1,15 @@
+node_modules
+src\config\config.js
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+*.old
+*.local
+coverage/
+dist/
+build/
+tmp/
+temp/

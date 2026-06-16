@@ -1,0 +1,50 @@
+{
+  "name": "medicapp-core-back",
+  "version": "0.0.1",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "npm run dev:d2",
+    "dev:d2": "node scripts/dev-auth-mode.js d2",
+    "dev:legacy": "node scripts/dev-auth-mode.js legacy",
+    "start": "node src/index.js",
+    "qa:security-auth-cookies": "node scripts/qa/security-auth-cookies-whitebox-audit.js",
+    "qa:authz-fase0": "node scripts/qa/authz-fase0-regression.js",
+    "qa:security-idor": "node scripts/qa/security-multitenant-idor-suite.js",
+    "qa:security-headers": "node scripts/qa/security-headers-http-regression.js"
+  },
+  "engines": {
+    "node": "12.16.2"
+  },
+  "keywords": [
+    "example",
+    "heroku"
+  ],
+  "dependencies": {
+    "aws-sdk": "^2.1320.0",
+    "axios": "^1.18.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "~1.4.4",
+    "debug": "~2.6.9",
+    "ejs": "^3.1.5",
+    "express": "^4.22.2",
+    "express-session": "^1.17.1",
+    "express-validator": "^6.9.2",
+    "fs-extra": "^9.1.0",
+    "http-errors": "~1.6.3",
+    "jsonwebtoken": "^9.0.3",
+    "jwt-decode": "^3.1.2",
+    "method-override": "^3.0.0",
+    "morgan": "~1.9.1",
+    "mysql2": "^3.22.5",
+    "node-localstorage": "^2.1.6",
+    "nodemailer": "^9.0.0",
+    "passport": "^0.4.1",
+    "passport-local": "^1.0.0",
+    "sequelize": "^6.6.2",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

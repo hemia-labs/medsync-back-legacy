@@ -1,0 +1,169 @@
+name: Deploy medsync-back-legacy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 12.16.2
+  APP_NAME: medsync-back-legacy
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # No hay paso de "build": el proyecto es JavaScript plano (CommonJS).
+      # El artefacto de despliegue es src/ + package.json + package-lock.json
+      # + ecosystem.config.cjs + .env. Las dependencias se instalan en el VPS.
+
+      - name: Validate deployment configuration
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        run: |
+          node <<'NODE'
+          const requiredKeys = ['VPS_HOST', 'VPS_USER', 'VPS_SSH_KEY', 'VPS_APP_DIR'];
+          const missingKeys = requiredKeys.filter((key) => !process.env[key]);
+
+          if (missingKeys.length > 0) {
+            console.error(`Missing GitHub secrets: ${missingKeys.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Create production environment file
+        env:
+          # Guarda el .env de PRODUCCIÓN completo en un único secret (ENV_FILE).
+          # Debe ser una versión "production" del .env.local:
+          #   - NODE_ENV=production (y APP_ENV/ENVIRONMENT=production)
+          #   - REQUIRE_ACTIVE_SESSION=true
+          #   - JWT_SECRET / REFRESH_TOKEN_SECRET / PASSWORD_RESET_CODE_SECRET
+          #     / SIGNATURE_LINK_TOKEN_SECRET / CSRF_TOKEN_SECRET FUERTES (>=32 chars)
+          #   - CORS_ALLOWED_ORIGINS / CORS_ORIGIN con orígenes HTTPS explícitos
+          #     (sin http://localhost, sin wildcard) o validateStartupConfig aborta
+          #   - AUTH_COOKIE_SECURE=true y nombres de cookie de producción
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -z "$ENV_FILE" ]; then
+            echo "Missing GitHub secret: ENV_FILE"
+            exit 1
+          fi
+
+          printf '%s\n' "$ENV_FILE" > .env
+          chmod 644 .env
+
+          # Validación mínima: claves que validateStartupConfig exige en producción.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const content = fs.readFileSync('.env', 'utf8');
+          const has = (k) => new RegExp(`^${k}=.+`, 'm').test(content);
+
+          const required = [
+            'NODE_ENV',
+            'PORT',
+            'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
+            'JWT_SECRET',
+            'REFRESH_TOKEN_SECRET',
+            'PASSWORD_RESET_CODE_SECRET',
+            'CORS_ALLOWED_ORIGINS',
+          ];
+          const missing = required.filter((k) => !has(k));
+          if (missing.length > 0) {
+            console.error(`ENV_FILE is missing required keys: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+
+          if (!/^NODE_ENV=production\s*$/m.test(content)) {
+            console.error('ENV_FILE must set NODE_ENV=production');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Prepare app directory
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: VPS_APP_DIR
+          script: |
+            set -e
+            mkdir -p "$VPS_APP_DIR"
+            rm -rf "$VPS_APP_DIR/src"
+            rm -f "$VPS_APP_DIR/package.json"
+            rm -f "$VPS_APP_DIR/package-lock.json"
+            rm -f "$VPS_APP_DIR/ecosystem.config.cjs"
+            rm -f "$VPS_APP_DIR/.env"
+
+      - name: Upload app to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          source: "src,package.json,package-lock.json,ecosystem.config.cjs,.env"
+          target: ${{ secrets.VPS_APP_DIR }}
+
+      - name: Install production dependencies and restart
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          NODE_VERSION: ${{ env.NODE_VERSION }}
+          APP_NAME: ${{ env.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT || '3009' }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: VPS_APP_DIR,NODE_VERSION,APP_NAME,APP_PORT
+          script: |
+            set -e
+
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            nvm install "$NODE_VERSION"
+            nvm use "$NODE_VERSION"
+
+            cd "$VPS_APP_DIR"
+            chmod 600 .env
+
+            # node-localstorage / subida de archivos escriben en src/tempFolder
+            mkdir -p src/tempFolder logs
+
+            # npm 6 (Node 12): usar --production, NO --omit=dev
+            npm ci --production
+
+            command -v pm2 > /dev/null || npm install --global pm2
+
+            pm2 startOrReload ecosystem.config.cjs --update-env
+            pm2 save
+
+            for i in $(seq 1 10); do
+              if curl -fsS "http://127.0.0.1:$APP_PORT" > /dev/null; then
+                echo "$APP_NAME is ready"
+                exit 0
+              fi
+
+              echo "Attempt $i: app not ready yet..."
+              sleep 2
+            done
+
+            echo "$APP_NAME did not become ready in time"
+            pm2 status
+            pm2 logs "$APP_NAME" --lines 80 --nostream
+            exit 1

@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id_admin_audit_log VARCHAR(50) NOT NULL,
+    actor_login_id VARCHAR(50) NULL,
+    actor_role VARCHAR(50) NULL,
+    action VARCHAR(100) NOT NULL,
+    target_type VARCHAR(50) NULL,
+    target_id VARCHAR(50) NULL,
+    target_login_id VARCHAR(50) NULL,
+    target_business_id VARCHAR(50) NULL,
+    metadata_json LONGTEXT NULL,
+    ip VARCHAR(100) NULL,
+    user_agent VARCHAR(1000) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_admin_audit_log),
+    INDEX idx_admin_audit_actor_created (actor_login_id, created_at),
+    INDEX idx_admin_audit_action_created (action, created_at),
+    INDEX idx_admin_audit_target (target_type, target_id),
+    INDEX idx_admin_audit_target_login (target_login_id, created_at),
+    INDEX idx_admin_audit_target_business (target_business_id, created_at)
+);
