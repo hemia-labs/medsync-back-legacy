@@ -3,8 +3,8 @@ const sequelize = require('../../db/Sequelize.connection');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const PROFESSIONAL_ROLE_CODES = ['doctor', 'dentist', 'odontologist', 'specialist', 'professional', 'medico', 'odontologo', 'especialista'];
-const AUXILIARY_ROLE_CODES = ['assistant', 'reception', 'receptionist', 'auxiliary', 'staff', 'admin_staff', 'auxiliar', 'recepcion', 'asistente', 'administracion'];
-const IGNORED_ROLE_CODES = ['super_admin', 'admin', 'business_admin'];
+const AUXILIARY_ROLE_CODES = ['admin', 'business_admin', 'assistant', 'reception', 'receptionist', 'auxiliary', 'staff', 'admin_staff', 'auxiliar', 'recepcion', 'asistente', 'administracion'];
+const IGNORED_ROLE_CODES = ['super_admin'];
 const PROFESSIONAL_ROLE_SQL = PROFESSIONAL_ROLE_CODES.map((code) => `'${code}'`).join(', ');
 const IGNORED_ROLE_SQL = IGNORED_ROLE_CODES.map((code) => `'${code}'`).join(', ');
 

@@ -221,6 +221,17 @@ function compareMetric(current, previous) {
     };
 }
 
+function percentage(numerator, denominator) {
+    const normalizedNumerator = Number(numerator || 0);
+    const normalizedDenominator = Number(denominator || 0);
+
+    if (normalizedDenominator <= 0) {
+        return 0;
+    }
+
+    return Number(((normalizedNumerator / normalizedDenominator) * 100).toFixed(2));
+}
+
 function buildBusinessPayload(license) {
     const business = license && license.business ? license.business : {};
     const plan = license && license.plan ? license.plan : {};
@@ -325,7 +336,8 @@ class BusinessDashboardDao {
             const replacements = {
                 _id_business: idBusiness,
                 _from: range.fromDateTime,
-                _to: range.toDateTime
+                _to: range.toDateTime,
+                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES
             };
 
             const [
@@ -553,6 +565,9 @@ class BusinessDashboardDao {
                 appointmentsStatusRows,
                 prescriptionsRows,
                 clinicalHistoryRows,
+                retentionRows,
+                followUpRows,
+                treatmentEconomicsRows,
                 currentActivity,
                 previousActivity
             ] = await Promise.all([
@@ -585,6 +600,9 @@ class BusinessDashboardDao {
                 ),
                 this.prescriptionStatusSummary(currentReplacements),
                 this.clinicalHistoryStatusSummary(currentReplacements),
+                this.firstVisitRetentionSummary(currentReplacements),
+                this.followUpCoverageSummary(currentReplacements),
+                this.treatmentEconomicsSummary(currentReplacements),
                 this.activityTotals(idBusiness, range),
                 this.activityTotals(idBusiness, previousRange)
             ]);
@@ -592,6 +610,23 @@ class BusinessDashboardDao {
             const prescriptionByStatus = countByStatus(PRESCRIPTION_STATUSES, prescriptionsRows);
             const clinicalHistoryByStatus = countByStatus(CLINICAL_HISTORY_STATUSES, clinicalHistoryRows);
             const clinicalDrafts = countStatus(clinicalHistoryByStatus, 'DRAFT');
+            const appointmentByStatus = countByStatus(APPOINTMENT_STATUSES, appointmentsStatusRows);
+            const scheduledAppointments = countFromRows(appointmentsScheduledRows);
+            const completedAppointments = countStatus(appointmentByStatus, 'completed');
+            const cancelledAppointments = countStatus(appointmentByStatus, 'cancelled');
+            const noShowAppointments = countStatus(appointmentByStatus, 'no_show');
+            const pendingConfirmationAppointments = countStatus(appointmentByStatus, 'pending_confirmation');
+            const retention = retentionRows && retentionRows[0] ? retentionRows[0] : {};
+            const followUps = followUpRows && followUpRows[0] ? followUpRows[0] : {};
+            const treatmentEconomics = treatmentEconomicsRows && treatmentEconomicsRows[0] ? treatmentEconomicsRows[0] : {};
+            const firstVisitPatients = Number(retention.firstVisitPatients || 0);
+            const retainedPatients = Number(retention.retainedPatients || 0);
+            const dueFollowUps = Number(followUps.dueFollowUps || 0);
+            const scheduledFollowUps = Number(followUps.scheduledFollowUps || 0);
+            const patientsWithEstimatedTreatment = Number(treatmentEconomics.patientsWithEstimatedTreatment || 0);
+            const treatmentItemsWithCost = Number(treatmentEconomics.treatmentItemsWithCost || 0);
+            const totalEstimatedTreatmentValue = Number(treatmentEconomics.totalEstimatedTreatmentValue || 0);
+            const averageTreatmentValuePerPatient = Number(treatmentEconomics.averageTreatmentValuePerPatient || 0);
 
             return responseData.success({
                 range: {
@@ -605,7 +640,7 @@ class BusinessDashboardDao {
                 appointments: {
                     total: countFromRows(appointmentsTotalRows),
                     scheduled: countFromRows(appointmentsScheduledRows),
-                    byStatus: countByStatus(APPOINTMENT_STATUSES, appointmentsStatusRows)
+                    byStatus: appointmentByStatus
                 },
                 prescriptions: {
                     total: (prescriptionByStatus || []).reduce((acc, item) => acc + Number(item.count || 0), 0),
@@ -628,6 +663,35 @@ class BusinessDashboardDao {
                     appointmentsCreated: compareMetric(currentActivity.appointmentsCreated, previousActivity.appointmentsCreated),
                     prescriptionsIssued: compareMetric(currentActivity.prescriptionsIssued, previousActivity.prescriptionsIssued),
                     clinicalHistoriesFinalized: compareMetric(currentActivity.clinicalHistoriesFinalized, previousActivity.clinicalHistoriesFinalized)
+                },
+                decisionMetrics: {
+                    appointmentHealth: {
+                        scheduled: scheduledAppointments,
+                        completed: completedAppointments,
+                        completedRate: percentage(completedAppointments, scheduledAppointments),
+                        cancelled: cancelledAppointments,
+                        cancelledRate: percentage(cancelledAppointments, scheduledAppointments),
+                        noShow: noShowAppointments,
+                        noShowRate: percentage(noShowAppointments, scheduledAppointments),
+                        pendingConfirmation: pendingConfirmationAppointments,
+                        pendingConfirmationRate: percentage(pendingConfirmationAppointments, scheduledAppointments)
+                    },
+                    retention: {
+                        firstVisitPatients,
+                        retainedPatients,
+                        retentionRate: percentage(retainedPatients, firstVisitPatients)
+                    },
+                    followUps: {
+                        due: dueFollowUps,
+                        scheduled: scheduledFollowUps,
+                        coverageRate: percentage(scheduledFollowUps, dueFollowUps)
+                    },
+                    treatmentEconomics: {
+                        patientsWithEstimatedTreatment,
+                        treatmentItemsWithCost,
+                        totalEstimatedTreatmentValue,
+                        averageTreatmentValuePerPatient
+                    }
                 },
                 alerts: []
             }, Messages.DATA_GET_SUCCESSFULLY);
@@ -653,14 +717,18 @@ class BusinessDashboardDao {
             const replacements = {
                 _id_business: idBusiness,
                 _from: range.fromDateTime,
-                _to: range.toDateTime
+                _to: range.toDateTime,
+                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES
             };
 
             const rows = await this.professionalActivityRows(replacements);
             const items = (rows || []).map((row, index) => ({
                 professionalKey: `professional-${index + 1}`,
                 label: `Profesional ${index + 1}`,
+                roleLabel: row.roleLabel || 'Rol sin etiqueta',
                 prescriptionsIssued: Number(row.prescriptionsIssued || 0),
+                clinicalHistoriesCreated: Number(row.clinicalHistoriesCreated || 0),
+                clinicalHistoriesUpdated: Number(row.clinicalHistoriesUpdated || 0),
                 clinicalHistoriesFinalized: Number(row.clinicalHistoriesFinalized || 0),
                 documentsSigned: 0
             }));
@@ -757,11 +825,28 @@ class BusinessDashboardDao {
         return this.countMetric(
             `SELECT activity.actor_key AS actorKey,
                     SUM(activity.prescriptionsIssued) AS prescriptionsIssued,
+                    SUM(activity.clinicalHistoriesCreated) AS clinicalHistoriesCreated,
+                    SUM(activity.clinicalHistoriesUpdated) AS clinicalHistoriesUpdated,
                     SUM(activity.clinicalHistoriesFinalized) AS clinicalHistoriesFinalized,
-                    SUM(activity.prescriptionsIssued + activity.clinicalHistoriesFinalized) AS totalActivity
+                    CASE
+                        WHEN SUM(CASE
+                            WHEN profile_dpp.id_doctor_professional_profile IS NOT NULL
+                              OR login_dpp.id_doctor_professional_profile IS NOT NULL
+                              OR LOWER(COALESCE(r.code, '')) IN (:_professional_roles)
+                            THEN 1 ELSE 0
+                        END) > 0 THEN 'Profesionales'
+                        WHEN SUM(CASE WHEN l.id_login IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN 'Usuarios internos'
+                        ELSE 'Rol sin etiqueta'
+                    END AS roleLabel,
+                    SUM(activity.prescriptionsIssued
+                        + activity.clinicalHistoriesCreated
+                        + activity.clinicalHistoriesUpdated
+                        + activity.clinicalHistoriesFinalized) AS totalActivity
                FROM (
                     SELECT prescriptions.actor_key COLLATE utf8mb4_unicode_ci AS actor_key,
                            COUNT(*) AS prescriptionsIssued,
+                           0 AS clinicalHistoriesCreated,
+                           0 AS clinicalHistoriesUpdated,
                            0 AS clinicalHistoriesFinalized
                       FROM (
                             SELECT ${prescriptionActor} AS actor_key
@@ -776,6 +861,8 @@ class BusinessDashboardDao {
                     UNION ALL
                     SELECT clinical.actor_key COLLATE utf8mb4_unicode_ci AS actor_key,
                            0 AS prescriptionsIssued,
+                           0 AS clinicalHistoriesCreated,
+                           0 AS clinicalHistoriesUpdated,
                            COUNT(*) AS clinicalHistoriesFinalized
                       FROM (
                             SELECT ${clinicalHistoryActor} AS actor_key
@@ -788,7 +875,31 @@ class BusinessDashboardDao {
                            ) clinical
                      WHERE clinical.actor_key IS NOT NULL
                      GROUP BY clinical.actor_key COLLATE utf8mb4_unicode_ci
+                    UNION ALL
+                    SELECT CONCAT('login:', che.user_id) COLLATE utf8mb4_unicode_ci AS actor_key,
+                           0 AS prescriptionsIssued,
+                           SUM(CASE WHEN che.event_type = 'CREATED' THEN 1 ELSE 0 END) AS clinicalHistoriesCreated,
+                           SUM(CASE WHEN che.event_type = 'UPDATED' THEN 1 ELSE 0 END) AS clinicalHistoriesUpdated,
+                           0 AS clinicalHistoriesFinalized
+                      FROM clinical_history_events che
+                     WHERE ${collateEq('che.business_id', ':_id_business')}
+                       AND che.created_at >= :_from
+                       AND che.created_at <= :_to
+                       AND che.event_type IN ('CREATED', 'UPDATED')
+                       AND NULLIF(che.user_id, '') IS NOT NULL
+                     GROUP BY CONCAT('login:', che.user_id) COLLATE utf8mb4_unicode_ci
                ) activity
+              LEFT JOIN login l
+                ON activity.actor_key COLLATE utf8mb4_unicode_ci = CONCAT('login:', l.id_login) COLLATE utf8mb4_unicode_ci
+               AND ${collateEq('l.id_business', ':_id_business')}
+              LEFT JOIN rol r
+                ON ${collateEq('r.id_rol', 'l.id_rol')}
+              LEFT JOIN doctor_professional_profile login_dpp
+                ON ${collateEq('login_dpp.id_login', 'l.id_login')}
+               AND ${collateEq('login_dpp.id_business', ':_id_business')}
+              LEFT JOIN doctor_professional_profile profile_dpp
+                ON activity.actor_key COLLATE utf8mb4_unicode_ci = CONCAT('profile:', profile_dpp.id_doctor_professional_profile) COLLATE utf8mb4_unicode_ci
+               AND ${collateEq('profile_dpp.id_business', ':_id_business')}
               GROUP BY activity.actor_key
               ORDER BY totalActivity DESC, activity.actor_key`,
             replacements
@@ -906,6 +1017,80 @@ class BusinessDashboardDao {
                 AND ch.deleted_at IS NULL
               GROUP BY COALESCE(ch.status, 'unknown')
               ORDER BY status`,
+            replacements
+        );
+    }
+
+    async firstVisitRetentionSummary(replacements) {
+        return this.countMetric(
+            `SELECT COUNT(*) AS firstVisitPatients,
+                    SUM(CASE WHEN EXISTS (
+                        SELECT 1
+                          FROM appointment later_appointment
+                         WHERE ${collateEq('later_appointment.id_business', ':_id_business')}
+                           AND ${collateEq('later_appointment.id_person', 'first_visits.id_person')}
+                           AND later_appointment.active = 1
+                           AND later_appointment.appointment_date > first_visits.firstAppointmentDate
+                           AND later_appointment.status NOT IN ('cancelled', 'no_show', 'rescheduled')
+                         LIMIT 1
+                    ) THEN 1 ELSE 0 END) AS retainedPatients
+               FROM (
+                    SELECT a.id_person,
+                           MIN(a.appointment_date) AS firstAppointmentDate
+                      FROM appointment a
+                     WHERE ${collateEq('a.id_business', ':_id_business')}
+                       AND a.active = 1
+                       AND a.id_person IS NOT NULL
+                       AND a.status NOT IN ('cancelled', 'no_show', 'rescheduled')
+                     GROUP BY a.id_person
+               ) first_visits
+              WHERE first_visits.firstAppointmentDate >= :_from_date
+                AND first_visits.firstAppointmentDate <= :_to_date`,
+            replacements
+        );
+    }
+
+    async followUpCoverageSummary(replacements) {
+        return this.countMetric(
+            `SELECT COUNT(DISTINCT t.id_tracing) AS dueFollowUps,
+                    COUNT(DISTINCT CASE WHEN a.id_appointment IS NOT NULL THEN t.id_tracing END) AS scheduledFollowUps
+               FROM tracing t
+          LEFT JOIN appointment a
+                 ON ${collateEq('a.id_business', 't.id_business')}
+                AND ${collateEq('a.id_tracing', 't.id_tracing')}
+                AND a.active = 1
+                AND a.status NOT IN ('cancelled', 'no_show')
+              WHERE ${collateEq('t.id_business', ':_id_business')}
+                AND t.quote_date_after >= :_from_date
+                AND t.quote_date_after <= :_to_date`,
+            replacements
+        );
+    }
+
+    async treatmentEconomicsSummary(replacements) {
+        return this.countMetric(
+            `SELECT COUNT(*) AS patientsWithEstimatedTreatment,
+                    COALESCE(SUM(patient_totals.treatmentItemsWithCost), 0) AS treatmentItemsWithCost,
+                    COALESCE(SUM(patient_totals.estimatedValue), 0) AS totalEstimatedTreatmentValue,
+                    COALESCE(AVG(patient_totals.estimatedValue), 0) AS averageTreatmentValuePerPatient
+               FROM (
+                    SELECT pt.id_person,
+                           COUNT(*) AS treatmentItemsWithCost,
+                           SUM(CASE WHEN pt.cost > 0 THEN pt.cost ELSE 0 END) AS estimatedValue
+                      FROM patient_treatment pt
+                INNER JOIN treatment_plan tp
+                        ON ${collateEq('tp.id_treatment_plan', 'pt.id_treatment_plan')}
+                       AND ${collateEq('tp.id_business', 'pt.id_business')}
+                     WHERE ${collateEq('pt.id_business', ':_id_business')}
+                       AND pt.active = 1
+                       AND tp.active = 1
+                       AND pt.created_at >= :_from
+                       AND pt.created_at <= :_to
+                       AND pt.cost IS NOT NULL
+                       AND pt.cost > 0
+                       AND pt.status NOT IN ('cancelled', 'deleted')
+                     GROUP BY pt.id_person
+               ) patient_totals`,
             replacements
         );
     }

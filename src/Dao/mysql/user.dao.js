@@ -370,11 +370,9 @@ async saveProfessionalProfile(body) {
             return responseData.bad_request('Usuario y negocio requeridos para guardar perfil profesional.');
         }
 
-        if (body.id_login !== targetLogin) {
-            const canManageUsers = await this.hasPermission(body.id_login, 'admin.users');
-            if (!canManageUsers) {
-                return responseData.unauthorized('No tienes permiso para editar este perfil profesional.');
-            }
+        const canManageUsers = await this.hasPermission(body.id_login, 'admin.users');
+        if (body.id_login !== targetLogin && !canManageUsers) {
+            return responseData.unauthorized('No tienes permiso para editar este perfil profesional.');
         }
 
         const user = await sequelize.query(
@@ -414,6 +412,7 @@ async saveProfessionalProfile(body) {
         );
 
         const isSelfEdit = body.id_login === targetLogin;
+        const preserveAdminControlledFlags = isSelfEdit && !canManageUsers;
         const currentProfile = existing[0]
             ? await sequelize.query(
                 `SELECT can_issue_prescriptions, can_sign_documents, is_active
@@ -428,7 +427,7 @@ async saveProfessionalProfile(body) {
             : [];
         const currentFlags = currentProfile[0] || {};
         const currentProfileActive = existing[0] ? normalizeUpdateActive(currentFlags.is_active, true) : false;
-        const nextProfileActive = isSelfEdit
+        const nextProfileActive = preserveAdminControlledFlags
             ? (existing[0] ? currentProfileActive : true)
             : normalizeUpdateActive(body.is_active, true);
 
@@ -453,9 +452,9 @@ async saveProfessionalProfile(body) {
             _specialty_license: body.specialty_license || null,
             _professional_phone: body.professional_phone || null,
             _signature_image: body.signature_image || null,
-            _can_issue_prescriptions: isSelfEdit ? (currentFlags.can_issue_prescriptions || 0) : (body.can_issue_prescriptions === false ? 0 : 1),
-            _can_sign_documents: isSelfEdit ? (currentFlags.can_sign_documents || 0) : (body.can_sign_documents === true ? 1 : 0),
-            _is_active: isSelfEdit ? (existing[0] ? (currentProfileActive ? 1 : 0) : 1) : (nextProfileActive ? 1 : 0),
+            _can_issue_prescriptions: preserveAdminControlledFlags ? (currentFlags.can_issue_prescriptions || 0) : (body.can_issue_prescriptions === false ? 0 : 1),
+            _can_sign_documents: preserveAdminControlledFlags ? (currentFlags.can_sign_documents || 0) : (body.can_sign_documents === true ? 1 : 0),
+            _is_active: preserveAdminControlledFlags ? (existing[0] ? (currentProfileActive ? 1 : 0) : 1) : (nextProfileActive ? 1 : 0),
             _updated_by: body.id_login || null
         };
 

@@ -6,7 +6,13 @@ const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
-const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
+const collatedText = (value) => {
+    const expression = String(value || '').trim();
+    return expression.startsWith(':')
+        ? `CONVERT(${expression} USING utf8mb4) COLLATE ${TENANT_COLLATION}`
+        : `${expression} COLLATE ${TENANT_COLLATION}`;
+};
+const collateEq = (left, param) => `${collatedText(left)} = ${collatedText(param)}`;
 const DEFAULT_PATIENT_HISTORY_LIMIT = 8;
 const MAX_PATIENT_HISTORY_LIMIT = 50;
 const APPOINTMENT_BLOCKING_STATUSES = Object.freeze(['pending_confirmation', 'confirmed', 'completed']);
