@@ -10,7 +10,9 @@ const FRONTEND_ORIGINS = [
   'http://localhost:8082',
   'http://127.0.0.1:8082',
   'http://localhost:8098',
-  'http://127.0.0.1:8098'
+  'http://127.0.0.1:8098',
+  'http://localhost:4324',
+  'http://127.0.0.1:4324'
 ].join(',');
 
 const mode = String(process.argv[2] || 'd2').trim().toLowerCase();
