@@ -367,13 +367,16 @@ async function deleteRows(table, where = '', replacements = {}, transaction = nu
     return { table, skipped: true, deleted: 0 };
   }
 
+  const before = await countRows(table, where, replacements, transaction);
   const sql = `DELETE FROM \`${table}\`${where ? ` WHERE ${where}` : ''}`;
   const result = await sequelize.query(sql, {
     replacements,
     type: QueryTypes.DELETE,
     transaction
   });
-  return { table, skipped: false, deleted: affectedRows(result) };
+  const after = await countRows(table, where, replacements, transaction);
+  const countedDeleted = before !== null && after !== null ? Math.max(Number(before || 0) - Number(after || 0), 0) : 0;
+  return { table, skipped: false, deleted: Math.max(affectedRows(result), countedDeleted) };
 }
 
 function inCondition(column, key, values, replacements) {
@@ -676,7 +679,13 @@ async function resolveSuperAdminsToKeep(transaction = null) {
   }
 
   const keepEmail = String(process.env.QA_KEEP_SUPERADMIN_EMAIL || '').trim().toLowerCase();
-  if (!keepEmail) {
+  const keepPhone = String(process.env.QA_KEEP_SUPERADMIN_PHONE || '').trim();
+
+  if (keepEmail && keepPhone) {
+    throw new Error('Abortado: usa solo QA_KEEP_SUPERADMIN_EMAIL o QA_KEEP_SUPERADMIN_PHONE, no ambos.');
+  }
+
+  if (!keepEmail && !keepPhone) {
     return {
       rule: 'keep_all_super_admins',
       rows,
@@ -684,15 +693,28 @@ async function resolveSuperAdminsToKeep(transaction = null) {
     };
   }
 
-  const matching = rows.filter((row) => String(row.email || '').trim().toLowerCase() === keepEmail);
-  if (matching.length !== 1) {
-    throw new Error(`Abortado: QA_KEEP_SUPERADMIN_EMAIL=${keepEmail} no coincide exactamente con un super_admin.`);
+  if (keepEmail) {
+    const matching = rows.filter((row) => String(row.email || '').trim().toLowerCase() === keepEmail);
+    if (matching.length !== 1) {
+      throw new Error(`Abortado: QA_KEEP_SUPERADMIN_EMAIL=${keepEmail} no coincide exactamente con un super_admin.`);
+    }
+
+    return {
+      rule: 'keep_single_super_admin_by_email',
+      rows,
+      keepIds: matching.map((row) => row.id_login)
+    };
+  }
+
+  const matchingByPhone = rows.filter((row) => String(row.telephone || '').trim() === keepPhone);
+  if (matchingByPhone.length !== 1) {
+    throw new Error(`Abortado: QA_KEEP_SUPERADMIN_PHONE=${keepPhone} no coincide exactamente con un super_admin.`);
   }
 
   return {
-    rule: 'keep_single_super_admin_by_email',
+    rule: 'keep_single_super_admin_by_phone',
     rows,
-    keepIds: matching.map((row) => row.id_login)
+    keepIds: matchingByPhone.map((row) => row.id_login)
   };
 }
 

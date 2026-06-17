@@ -717,7 +717,8 @@ class BusinessDashboardDao {
             const replacements = {
                 _id_business: idBusiness,
                 _from: range.fromDateTime,
-                _to: range.toDateTime
+                _to: range.toDateTime,
+                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES
             };
 
             const rows = await this.professionalActivityRows(replacements);
