@@ -72,6 +72,10 @@ function buildD2AuthResponseData(data) {
         authenticated: true,
         user: {
             id_login: decoded.id_login || null,
+            id_session: decoded.id_session || null,
+            id_business: decoded.id_business || null,
+            id_rol: decoded.id_rol || null,
+            rol: decoded.rol || null,
             name: decoded.name || null,
             email: decoded.email || null,
             telephone: decoded.telephone || null
@@ -333,14 +337,17 @@ class AuthController extends httpResponseHelper{
     const d2CookieAuth = hasD2BrowserCookieAuth();
 
     if (req.authTokenInvalid) {
-        if (d2CookieAuth) {
+        const accessExpired = ['TokenExpiredError', 'missing_access_with_refresh'].includes(req.authTokenError);
+        const code = accessExpired ? 'AUTH_ACCESS_EXPIRED'
+            : req.authTokenError === 'inactive_session' ? 'AUTH_SESSION_INVALID' : 'AUTH_ACCESS_INVALID';
+        if (d2CookieAuth && !accessExpired) {
             clearD2AuthCookiesBestEffort(req, res, 'auth.session.cookie_clear_failed');
         }
         securityLogger.record('auth.session.failed', req, {
-            reason: 'invalid_token',
+            reason: accessExpired ? 'access_expired' : 'invalid_token',
             token_source: req.authTokenSource || null
         });
-        response = responseData.unauthorized(MESSAGES.UNAUTHORIZED);
+        response = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code });
         res.status(response.status).send(response);
         return;
     }
@@ -362,7 +369,7 @@ class AuthController extends httpResponseHelper{
             id_session_present: Boolean(req.tokenDecode.id_session),
             reason: 'missing_session_claims'
         });
-        response = responseData.unauthorized(MESSAGES.UNAUTHORIZED);
+        response = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code: 'AUTH_SESSION_INVALID' });
         res.status(response.status).send(response);
         return;
     }
@@ -382,7 +389,7 @@ class AuthController extends httpResponseHelper{
                 id_session_present: true,
                 reason: 'inactive_or_revoked_session'
             });
-            response = responseData.unauthorized(MESSAGES.UNAUTHORIZED);
+            response = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code: 'AUTH_SESSION_INVALID' });
         } else {
             response = responseData.success(buildD2SessionResponseData(response.data), MESSAGES.DATA_GET_SUCCESSFULLY);
             securityLogger.record('auth.session.success', req, {

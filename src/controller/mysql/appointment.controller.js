@@ -6,10 +6,15 @@ const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant
 
 class AppointmentController extends httpResponseHelper{
 
+  doctors = async(req, res) => {
+    const result = await AppointmentDao.doctors({ id_business: getBusinessIdFromToken(req.tokenDecode) });
+    res.status(result.status).send(result);
+  }
+
   getConfig = async(req, res, next) =>{
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await AppointmentDao.getConfig(getBusinessIdFromToken(req.tokenDecode));
+        response = await AppointmentDao.getConfig({ id_business: getBusinessIdFromToken(req.tokenDecode), id_login: req.tokenDecode.id_login, doctor_profile_id: req.query.doctor_profile_id });
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }

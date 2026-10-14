@@ -3,6 +3,7 @@ const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const BusinessDao = require('../../Dao/mysql/business.dao');
 const { getBusinessIdFromToken } = require('../../util/tenant');
+const { isTenantAdministrator } = require('../../util/effectivePermissions');
 
 class BusinessController extends httpResponseHelper {
     current = async(req, res) => {
@@ -22,7 +23,7 @@ class BusinessController extends httpResponseHelper {
     updateCurrent = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
-            const canConfig = await BusinessDao.hasPermission(req.tokenDecode ? req.tokenDecode.id_login : null, 'admin.config');
+            const canConfig = await isTenantAdministrator(req.tokenDecode ? req.tokenDecode.id_login : null, getBusinessIdFromToken(req.tokenDecode), 'admin.config');
             if (!canConfig) {
                 response = this.HttpError(HttpStatus.UNAUTHORIZED, 'No tienes permiso para modificar informacion del consultorio.');
                 res.status(response.status).send(response);

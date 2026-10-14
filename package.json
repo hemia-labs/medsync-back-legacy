@@ -11,7 +11,8 @@
     "qa:security-auth-cookies": "node scripts/qa/security-auth-cookies-whitebox-audit.js",
     "qa:authz-fase0": "node scripts/qa/authz-fase0-regression.js",
     "qa:security-idor": "node scripts/qa/security-multitenant-idor-suite.js",
-    "qa:security-headers": "node scripts/qa/security-headers-http-regression.js"
+    "qa:security-headers": "node scripts/qa/security-headers-http-regression.js",
+    "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js"
   },
   "engines": {
     "node": ">=22 <23"

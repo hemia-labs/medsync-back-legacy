@@ -82,7 +82,7 @@ listBuckets = async(req, res, next) =>{
     let id_business = getBusinessIdFromToken(req.tokenDecode);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await FilesDao.getfiles(id_person, id_business);
+        response = await FilesDao.getfiles(id_person, id_business, { codes: req.patientFileCodes });
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }

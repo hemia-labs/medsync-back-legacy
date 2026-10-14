@@ -1,6 +1,9 @@
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
+const planConsentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
+const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
+const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
 const { hashToken } = require('../../services/documentSignature/documentSignatureToken.service');
 const {
     SIGNATURE_REQUEST_STATUSES,
@@ -14,22 +17,6 @@ const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
 const GENERIC_LINK_MESSAGE = 'Este enlace ya no esta disponible. Solicita uno nuevo al consultorio.';
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
-const DEFAULT_MAX_SIGNATURE_IMAGE_BYTES = 2 * 1024 * 1024;
-const PNG_SIGNATURE_HEX = '89504e470d0a1a0a';
-
-function positiveInt(value, fallback) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-        return fallback;
-    }
-    return Math.floor(parsed);
-}
-
-const MAX_SIGNATURE_IMAGE_BYTES = positiveInt(
-    process.env.SIGNATURE_PUBLIC_MAX_SIGNATURE_IMAGE_BYTES,
-    DEFAULT_MAX_SIGNATURE_IMAGE_BYTES
-);
-
 function ok(data, message) {
     return {
         status: 200,
@@ -123,40 +110,6 @@ function displayName(person) {
     return `${person.name || ''} ${person.surname || ''}`.trim();
 }
 
-function validateSignatureImage(signatureImage) {
-    const image = String(signatureImage || '').trim();
-    const prefix = 'data:image/png;base64,';
-
-    if (!image) {
-        return { error: badRequest('La firma es requerida.') };
-    }
-
-    if (!image.startsWith(prefix)) {
-        return { error: badRequest('La firma debe ser una imagen PNG en base64.') };
-    }
-
-    const base64 = image.slice(prefix.length);
-    if (!base64 || !/^[A-Za-z0-9+/=\r\n]+$/.test(base64)) {
-        return { error: badRequest('La firma no tiene un formato valido.') };
-    }
-
-    const normalized = base64.replace(/\s/g, '');
-    if (normalized.length % 4 !== 0) {
-        return { error: badRequest('La firma no tiene un formato base64 valido.') };
-    }
-
-    const imageBuffer = Buffer.from(normalized, 'base64');
-    if (imageBuffer.length > MAX_SIGNATURE_IMAGE_BYTES) {
-        return { error: badRequest('La firma es demasiado grande.') };
-    }
-
-    if (imageBuffer.length < 8 || imageBuffer.slice(0, 8).toString('hex') !== PNG_SIGNATURE_HEX) {
-        return { error: badRequest('La firma debe ser una imagen PNG valida.') };
-    }
-
-    return { image: `${prefix}${normalized}` };
-}
-
 class PublicDocumentSignatureDao {
     requiredSignatureRoles(document) {
         const roles = [];
@@ -235,9 +188,15 @@ class PublicDocumentSignatureDao {
         return rows[0] || null;
     }
 
+    async lockPlanPatient(request, transaction) {
+        if (!request || request.document_type !== 'TREATMENT_PLAN_CONSENT') return;
+        await sequelize.query(`SELECT id_person FROM person WHERE ${collateEq('id_person', ':_id_person')} AND ${collateEq('id_business', ':_id_business')} FOR UPDATE`,
+            { replacements: { _id_person: request.id_person, _id_business: request.id_business }, type: QueryTypes.SELECT, transaction });
+    }
+
     async getDocument(request, transaction = null, forUpdate = false) {
         const rows = await sequelize.query(
-            `SELECT pd.id_patient_document, pd.id_business, pd.id_person, pd.document_type,
+            `SELECT pd.id_patient_document, pd.id_business, pd.id_person, pd.document_type, pd.origin, pd.treatment_plan_id,
                     pd.status, pd.title, pd.content_html_snapshot, pd.created_at,
                     pd.guardian_name_snapshot, pd.doctor_signature_snapshot,
                     pd.doctor_name_snapshot, pd.professional_license_snapshot,
@@ -261,7 +220,8 @@ class PublicDocumentSignatureDao {
             }
         );
 
-        return rows[0] || null;
+        const document = await documentRequirements.decorate(rows[0], request.id_business, transaction);
+        return document ? planConsentDocuments.decorate(document, transaction) : null;
     }
 
     async getPatient(request, transaction = null) {
@@ -387,6 +347,12 @@ class PublicDocumentSignatureDao {
         const transaction = await sequelize.transaction();
         try {
             const tokenHash = hashToken(normalizedToken);
+            const initialRequest = await this.getRequestByHash(tokenHash, transaction);
+            await this.lockPlanPatient(initialRequest, transaction);
+            // Match internal capture/request creation: patient (plans), then
+            // document, then request. Opposite locking can deadlock local/QR signing.
+            const document = this.requestIsAvailable(initialRequest) && !this.requestIsExpired(initialRequest)
+                ? await this.getDocument(initialRequest, transaction, true) : null;
             const request = await this.getRequestByHash(tokenHash, transaction, true);
 
             if (!this.requestIsAvailable(request)) {
@@ -400,11 +366,10 @@ class PublicDocumentSignatureDao {
                 return unavailable();
             }
 
-            const document = await this.getDocument(request, transaction, true);
             const patient = await this.getPatient(request, transaction);
             const signatures = await this.getDocumentSignatures(request, transaction);
 
-            if (!patient || !this.validateDocumentAndSignature(request, document, signatures)) {
+            if (!patient || !this.validateDocumentAndSignature(request, document, signatures) || !await planConsentDocuments.assertCurrent(document, transaction)) {
                 await transaction.rollback();
                 return unavailable();
             }
@@ -464,7 +429,7 @@ class PublicDocumentSignatureDao {
                     created_at: toIso(document.created_at)
                 },
                 patient: {
-                    display_name: displayName(patient)
+                    display_name: document.patient_name_snapshot || displayName(patient)
                 },
                 clinic: {
                     name: business.name || null,
@@ -502,6 +467,10 @@ class PublicDocumentSignatureDao {
         const transaction = await sequelize.transaction();
         try {
             const tokenHash = hashToken(normalizedToken);
+            const initialRequest = await this.getRequestByHash(tokenHash, transaction);
+            await this.lockPlanPatient(initialRequest, transaction);
+            const document = this.requestIsAvailable(initialRequest) && !this.requestIsExpired(initialRequest)
+                ? await this.getDocument(initialRequest, transaction, true) : null;
             const request = await this.getRequestByHash(tokenHash, transaction, true);
 
             if (!this.requestIsAvailable(request)) {
@@ -515,11 +484,10 @@ class PublicDocumentSignatureDao {
                 return unavailable();
             }
 
-            const document = await this.getDocument(request, transaction, true);
             const patient = await this.getPatient(request, transaction);
             const signatures = await this.getDocumentSignatures(request, transaction, true);
 
-            if (!patient || !this.validateDocumentAndSignature(request, document, signatures)) {
+            if (!patient || !this.validateDocumentAndSignature(request, document, signatures) || !await planConsentDocuments.assertCurrent(document, transaction)) {
                 await transaction.rollback();
                 return unavailable();
             }
@@ -529,7 +497,7 @@ class PublicDocumentSignatureDao {
                 return conflict('Esta firma ya fue capturada.');
             }
 
-            const signerName = normalizeOptionalText(body.signed_by_name, 255) || displayName(patient);
+            const signerName = normalizeOptionalText(body.signed_by_name, 255) || document.patient_name_snapshot || displayName(patient);
             const idSignature = uuidv4();
 
             await sequelize.query(
@@ -635,6 +603,8 @@ class PublicDocumentSignatureDao {
                 null,
                 transaction
             );
+
+            await planConsentDocuments.syncSigned({ ...document, status: nextDocumentStatus, signed_at: signedAt }, transaction, null);
 
             await transaction.commit();
 

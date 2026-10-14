@@ -37,5 +37,6 @@ router.post('/cancel', Token.Auth, csrfProtected, requireTenantOperational, vali
 router.delete('/draft', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateDeleteDraft), awaitHandlerFactory(PrescriptionController.deleteDraft));
 
 router.post('/audit-action', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateAuditAction), awaitHandlerFactory(PrescriptionController.auditAction));
+router.post('/output', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateAuditAction), awaitHandlerFactory(PrescriptionController.prepareOutput));
 
 module.exports = router;

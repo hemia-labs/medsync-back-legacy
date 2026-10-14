@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -6,6 +7,8 @@ const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const { resolveDocumentLicenseMetadata } = require('../../util/documentLicensing');
 const { assertPlanFeature } = require('../../util/planFeatures');
+const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
+const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
@@ -30,28 +33,7 @@ const PREMIUM_DOCUMENT_SUBTYPES = ['custom_premium', 'premium_multi_signature', 
 
 class DocumentDao {
     async hasPermission(idLogin, permission) {
-        if (!idLogin || !permission) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-              INNER JOIN permission_rol pr ON ${collateEq('pr.id_rol', 'l.id_rol')} AND pr.active = 1
-              INNER JOIN cat_permission cp ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND ${collateEq('cp.code', ':_permission')}
-                AND l.active = 1
-                AND cp.active = 1
-                AND cp.is_active = 1
-              LIMIT 1`,
-            {
-                replacements: { _id_login: idLogin, _permission: permission },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
     }
 
     async getPatient(idPerson, idBusiness) {
@@ -256,21 +238,23 @@ class DocumentDao {
     }
 
     async saveTemplate(body) {
+        let transaction;
         try {
             const canConfig = await this.hasPermission(body.id_login, PERMISSIONS.CONFIG);
             if (!canConfig) {
                 return responseData.unauthorized('No tienes permiso para configurar documentos.');
             }
 
+            transaction = await sequelize.transaction();
             const idTemplate = body.id_document_template || uuidv4();
             const existing = body.id_document_template ? await sequelize.query(
                 `SELECT id_document_template FROM document_templates
                   WHERE ${collateEq('id_document_template', ':_id_document_template')}
                     AND ${collateEq('id_business', ':_id_business')}
-                  LIMIT 1`,
+                  LIMIT 1 FOR UPDATE`,
                 {
                     replacements: { _id_document_template: body.id_document_template, _id_business: body.id_business },
-                    type: QueryTypes.SELECT
+                    type: QueryTypes.SELECT, transaction
                 }
             ) : [];
 
@@ -285,6 +269,7 @@ class DocumentDao {
             const licensingMetadata = this.resolveTemplateLicensingMetadata(body);
             const licensingError = await this.enforceTemplateLicensing(body, licensingMetadata);
             if (licensingError) {
+                await transaction.rollback();
                 return licensingError;
             }
 
@@ -322,14 +307,14 @@ class DocumentDao {
                             ...licensingMetadata,
                             ...flags
                         },
-                        type: QueryTypes.UPDATE
+                        type: QueryTypes.UPDATE, transaction
                     }
                 );
                 await sequelize.query(
                     `UPDATE document_template_versions
                         SET is_current = 0
                       WHERE ${collateEq('id_document_template', ':_id_document_template')}`,
-                    { replacements: { _id_document_template: idTemplate }, type: QueryTypes.UPDATE }
+                    { replacements: { _id_document_template: idTemplate }, type: QueryTypes.UPDATE, transaction }
                 );
             } else {
                 await sequelize.query(
@@ -360,7 +345,7 @@ class DocumentDao {
                             ...licensingMetadata,
                             ...flags
                         },
-                        type: QueryTypes.INSERT
+                        type: QueryTypes.INSERT, transaction
                     }
                 );
             }
@@ -371,7 +356,7 @@ class DocumentDao {
                   WHERE ${collateEq('id_document_template', ':_id_document_template')}`,
                 {
                     replacements: { _id_document_template: idTemplate },
-                    type: QueryTypes.SELECT
+                    type: QueryTypes.SELECT, transaction
                 }
             );
 
@@ -391,12 +376,14 @@ class DocumentDao {
                         _content_html: body.content_html || '',
                         _id_login: body.id_login
                     },
-                    type: QueryTypes.INSERT
+                    type: QueryTypes.INSERT, transaction
                 }
             );
 
+            await transaction.commit();
             return this.listTemplates(body);
         } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }
@@ -447,7 +434,8 @@ class DocumentDao {
                 return acc;
             }, {});
 
-            const enriched = rows.map((document) => ({
+            const effectiveDocuments = await documentRequirements.decorateMany(rows, body.id_business);
+            const enriched = effectiveDocuments.map((document) => ({
                 ...document,
                 signatures: signaturesByDocument[document.id_patient_document] || []
             }));
@@ -458,7 +446,7 @@ class DocumentDao {
         }
     }
 
-    async getTemplateVersion(idBusiness, idTemplate) {
+    async getTemplateVersion(idBusiness, idTemplate, transaction = null) {
         const rows = await sequelize.query(
             `SELECT dt.*, dtv.id_document_template_version, dtv.version_number, dtv.content_html
                FROM document_templates dt
@@ -469,10 +457,10 @@ class DocumentDao {
                 AND ${collateEq('dt.id_document_template', ':_id_document_template')}
                 AND dt.active = 1
                 AND dt.is_active = 1
-              LIMIT 1`,
+              LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
             {
                 replacements: { _id_business: idBusiness, _id_document_template: idTemplate },
-                type: QueryTypes.SELECT
+                type: QueryTypes.SELECT, transaction
             }
         );
         return rows[0] || null;
@@ -529,7 +517,12 @@ class DocumentDao {
     }
 
     async createDocument(body) {
+        let transaction;
+        const reject = async result => { if (transaction && !transaction.finished) await transaction.rollback(); return result; };
         try {
+            if (body.status && !['BORRADOR', 'PENDIENTE_FIRMA'].includes(body.status)) {
+                return responseData.bad_request('Un documento nuevo debe comenzar como borrador o pendiente de firma.');
+            }
             const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE);
             if (!canCreate) {
                 return responseData.unauthorized('No tienes permiso para crear documentos.');
@@ -540,9 +533,12 @@ class DocumentDao {
                 return responseData.unauthorized('El paciente no pertenece al negocio activo.');
             }
 
-            const template = await this.getTemplateVersion(body.id_business, body.id_document_template);
+            transaction = await sequelize.transaction();
+            await sequelize.query(`SELECT id_person FROM person WHERE id_person = :_id_person AND id_business = :_id_business FOR UPDATE`,
+                { replacements: { _id_person: body.id_person, _id_business: body.id_business }, type: QueryTypes.SELECT, transaction });
+            const template = await this.getTemplateVersion(body.id_business, body.id_document_template, transaction);
             if (!template) {
-                return responseData.bad_request('Plantilla no disponible.');
+                return reject(responseData.bad_request('Plantilla no disponible.'));
             }
 
             const existingOpenDocument = await sequelize.query(
@@ -560,12 +556,12 @@ class DocumentDao {
                         _id_person: body.id_person,
                         _id_document_template: template.id_document_template
                     },
-                    type: QueryTypes.SELECT
+                    type: QueryTypes.SELECT, transaction
                 }
             );
 
             if (existingOpenDocument[0]) {
-                return responseData.bad_request('Ya existe un borrador o documento pendiente de firma de este formato. Continua con el documento existente.');
+                return reject(responseData.bad_request('Ya existe un borrador o documento pendiente de firma de este formato. Continua con el documento existente.'));
             }
 
             if (template.template_type === 'SENSITIVE_DATA_CONSENT') {
@@ -580,18 +576,18 @@ class DocumentDao {
                       LIMIT 1`,
                     {
                         replacements: { _id_business: body.id_business, _id_person: body.id_person },
-                        type: QueryTypes.SELECT
+                        type: QueryTypes.SELECT, transaction
                     }
                 );
 
                 if (existingSensitiveConsent[0] && body.force_new_version !== true) {
-                    return responseData.bad_request('Este paciente ya tiene un consentimiento de datos personales sensibles firmado.');
+                    return reject(responseData.bad_request('Este paciente ya tiene un consentimiento de datos personales sensibles firmado.'));
                 }
             }
 
             const doctorResult = await this.resolveDoctor(body, false);
             if (doctorResult.error) {
-                return doctorResult.error;
+                return reject(doctorResult.error);
             }
 
             const context = await this.buildContext(body, patient, doctorResult.profile);
@@ -644,18 +640,21 @@ class DocumentDao {
                         _id_login: body.id_login,
                         ...snapshot
                     },
-                    type: QueryTypes.INSERT
+                    type: QueryTypes.INSERT, transaction
                 }
             );
 
-            await this.addEvent(idDocument, body.id_business, body.id_login, 'CREATED', 'Documento creado.');
+            await this.addEvent(idDocument, body.id_business, body.id_login, documentRequirements.EVENT, documentRequirements.serialize(template), transaction);
+            await this.addEvent(idDocument, body.id_business, body.id_login, 'CREATED', 'Documento creado.', transaction);
+            await transaction.commit();
             return this.listPatientDocuments(body);
         } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }
 
-    async addEvent(idDocument, idBusiness, idLogin, eventType, notes = null) {
+    async addEvent(idDocument, idBusiness, idLogin, eventType, notes = null, transaction = null) {
         await sequelize.query(
             `INSERT INTO patient_document_events (
                 id_patient_document_event, id_patient_document, id_business, event_type,
@@ -673,7 +672,7 @@ class DocumentDao {
                     _notes: notes,
                     _id_login: idLogin
                 },
-                type: QueryTypes.INSERT
+                type: QueryTypes.INSERT, transaction
             }
         );
     }
@@ -714,6 +713,8 @@ class DocumentDao {
     }
 
     async updateStatus(body, status, eventType, note) {
+        let transaction;
+        const reject = async result => { if (transaction && !transaction.finished) await transaction.rollback(); return result; };
         try {
             const permission = status === 'FIRMADO' ? PERMISSIONS.SIGN : PERMISSIONS.CANCEL;
             const allowed = await this.hasPermission(body.id_login, permission);
@@ -722,15 +723,20 @@ class DocumentDao {
             }
 
             if (status === 'FIRMADO') {
-                const doctorResult = await this.resolveDoctor(body, true);
-                if (doctorResult.error) {
-                    return doctorResult.error;
+                const linked = (await sequelize.query(`SELECT id_person, origin, treatment_plan_id FROM patient_documents
+                    WHERE ${collateEq('id_patient_document', ':_id_patient_document')} AND ${collateEq('id_business', ':_id_business')} AND active=1 LIMIT 1`,
+                    { replacements: { _id_patient_document: body.id_patient_document, _id_business: body.id_business }, type: QueryTypes.SELECT }))[0];
+                if (linked && linked.origin === 'TREATMENT_PLAN' && linked.treatment_plan_id) {
+                    const TreatmentPlanDao = require('./treatmentPlan.dao');
+                    const result = await new TreatmentPlanDao().signPreparedConsent({ ...body, id_person: linked.id_person });
+                    if (result.status !== 200) return result;
+                    return this.listPatientDocuments({ ...body, id_person: linked.id_person });
                 }
             }
 
+            transaction = await sequelize.transaction();
             const documentRows = await sequelize.query(
-                `SELECT pd.id_patient_document, pd.id_person, pd.content_html_snapshot, pd.status,
-                        pd.guardian_name_snapshot, pd.doctor_signature_snapshot,
+                `SELECT pd.*,
                         dt.requires_patient_signature, dt.requires_tutor_signature, dt.requires_doctor_signature,
                         dt.requires_witness1_signature, dt.requires_witness2_signature
                    FROM patient_documents pd
@@ -739,47 +745,64 @@ class DocumentDao {
                   WHERE ${collateEq('pd.id_patient_document', ':_id_patient_document')}
                     AND ${collateEq('pd.id_business', ':_id_business')}
                     AND pd.active = 1
-                  LIMIT 1`,
+                  LIMIT 1 FOR UPDATE`,
                 {
                     replacements: { _id_patient_document: body.id_patient_document, _id_business: body.id_business },
-                    type: QueryTypes.SELECT
+                    type: QueryTypes.SELECT, transaction
                 }
             );
 
             if (!documentRows[0]) {
-                return responseData.bad_request('Documento no encontrado.');
+                return reject(responseData.bad_request('Documento no encontrado.'));
             }
 
+            const document = await documentRequirements.decorate(documentRows[0], body.id_business, transaction);
+
             if (status === 'NO_FIRMADO_POR_NEGATIVA' && documentRows[0].status === 'FIRMADO') {
-                return responseData.bad_request('No se puede registrar negativa en un documento ya firmado.');
+                return reject(responseData.bad_request('No se puede registrar negativa en un documento ya firmado.'));
             }
 
             if (status === 'FIRMADO' && !['BORRADOR', 'PENDIENTE_FIRMA'].includes(documentRows[0].status)) {
-                return responseData.bad_request('Este documento no esta disponible para firma.');
+                return reject(responseData.bad_request('Este documento no esta disponible para firma.'));
             }
 
             let finalStatus = status;
             let eventToRegister = eventType;
             let noteToRegister = note;
 
-            if (body.patient_signature) {
+            if (status === 'FIRMADO') {
+                if (body.responsible_doctor_user_id && body.responsible_doctor_user_id !== document.responsible_doctor_user_id) {
+                    return reject(responseData.bad_request('El doctor responsable debe coincidir con el documento preparado.'));
+                }
+                const doctorResult = await this.resolveDoctor({ ...body, responsible_doctor_user_id: document.responsible_doctor_user_id }, true);
+                if (doctorResult.error) return reject(doctorResult.error);
                 const signatureRole = body.signature_role || 'PATIENT';
                 const existingSignatureRows = await sequelize.query(
                     `SELECT signature_role, signature_image, signed_at
                        FROM patient_document_signatures
                       WHERE ${collateEq('id_patient_document', ':_id_patient_document')}
-                        AND ${collateEq('id_business', ':_id_business')}`,
+                        AND ${collateEq('id_business', ':_id_business')} FOR UPDATE`,
                     {
                         replacements: { _id_patient_document: body.id_patient_document, _id_business: body.id_business },
-                        type: QueryTypes.SELECT
+                        type: QueryTypes.SELECT, transaction
                     }
                 );
 
-                if (existingSignatureRows.some((signature) => signature.signature_role === signatureRole)) {
-                    return responseData.bad_request('Esta firma ya fue capturada para el documento.');
+                const requiredRoles = this.requiredSignatureRoles(document);
+                let signatureImage = null;
+                if (body.patient_signature) {
+                    const validated = validateSignatureImage(body.patient_signature);
+                    if (validated.error) return reject(validated.error);
+                    signatureImage = validated.image;
+                    if (!requiredRoles.includes(signatureRole)) return reject(responseData.bad_request('Este rol de firma no es requerido por el documento.'));
+                    if (existingSignatureRows.some(signature => signature.signature_role === signatureRole)) {
+                        return reject(responseData.bad_request('Esta firma ya fue capturada para el documento.'));
+                    }
+                } else if (!requiredRoles.every(role => this.completedSignatureRoles(document, existingSignatureRows).includes(role))) {
+                    return reject(responseData.bad_request('Captura las firmas requeridas antes de finalizar el documento.'));
                 }
 
-                await sequelize.query(
+                if (signatureImage) await sequelize.query(
                     `INSERT INTO patient_document_signatures (
                         id_patient_document_signature, id_patient_document, id_business, signature_role,
                         signer_name_snapshot, signature_image, signed_at, signed_by_user_id, created_at, created_by
@@ -794,18 +817,17 @@ class DocumentDao {
                             _id_business: body.id_business,
                             _signature_role: signatureRole,
                             _signer_name_snapshot: body.signer_name || null,
-                            _signature_image: body.patient_signature,
+                            _signature_image: signatureImage,
                             _id_login: body.id_login
                         },
-                        type: QueryTypes.INSERT
+                        type: QueryTypes.INSERT, transaction
                     }
                 );
 
-                if (status === 'FIRMADO') {
-                    const requiredRoles = this.requiredSignatureRoles(documentRows[0]);
-                    const completedRoles = this.completedSignatureRoles(documentRows[0], [
+                {
+                    const completedRoles = this.completedSignatureRoles(document, [
                         ...existingSignatureRows,
-                        { signature_role: signatureRole, signature_image: body.patient_signature, signed_at: new Date() }
+                        ...(signatureImage ? [{ signature_role: signatureRole, signature_image: signatureImage, signed_at: new Date() }] : [])
                     ]);
                     const hasAllRequiredSignatures = requiredRoles.every((role) => completedRoles.includes(role));
                     finalStatus = hasAllRequiredSignatures ? 'FIRMADO' : 'PENDIENTE_FIRMA';
@@ -833,13 +855,23 @@ class DocumentDao {
                         _id_login: body.id_login,
                         _refusal_reason: body.refusal_reason || null
                     },
-                    type: QueryTypes.UPDATE
+                    type: QueryTypes.UPDATE, transaction
                 }
             );
 
-            await this.addEvent(body.id_patient_document, body.id_business, body.id_login, eventToRegister, noteToRegister || null);
+            // A local signature/terminal decision invalidates remote requests so
+            // the same outstanding link cannot race a later local action.
+            await sequelize.query(`UPDATE document_signature_requests SET status = 'revoked', revoked_at = NOW(), revoked_by = :_id_login,
+                updated_at = NOW()
+                WHERE id_patient_document = :_id_patient_document AND id_business = :_id_business
+                  AND status IN ('pending', 'opened') ${finalStatus === 'PENDIENTE_FIRMA' ? 'AND signature_role = :_signature_role' : ''}`,
+            { replacements: { _id_patient_document: body.id_patient_document, _id_business: body.id_business, _id_login: body.id_login,
+                _signature_role: body.signature_role || 'PATIENT' }, type: QueryTypes.UPDATE, transaction });
+            await this.addEvent(body.id_patient_document, body.id_business, body.id_login, eventToRegister, noteToRegister || null, transaction);
+            await transaction.commit();
             return this.listPatientDocuments({ id_business: body.id_business, id_login: body.id_login, id_person: documentRows[0].id_person });
         } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }

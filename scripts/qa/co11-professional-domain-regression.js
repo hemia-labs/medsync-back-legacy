@@ -1,0 +1,20 @@
+const assert = require('node:assert/strict');
+const { validateConfig, validateAppointment } = require('../../src/domain/appointments/agendaRules');
+const config = { enabled: true, businessEnabled: true, defaultAppointmentDuration:30, timezone:'America/Mexico_City',
+    workingDays:Array.from({length:7},(_,dayOfWeek)=>({dayOfWeek,enabled:true,timeRanges:[{startTime:'09:00',endTime:'14:00'}]})),blockedDates:[],blockedHours:[] };
+const appointment = {date:'2026-10-19',startTime:'09:00',endTime:'09:30',status:'confirmed'};
+assert.equal(validateConfig(config),'');
+assert.equal(validateAppointment(appointment,config),'');
+assert.match(validateAppointment({...appointment,date:'2026-02-30'},config),/invalido/);
+assert.match(validateAppointment({...appointment,startTime:'08:30',endTime:'09:00'},config),/fuera/);
+assert.match(validateAppointment({...appointment,startTime:'09:05'},config),/fuera/);
+assert.match(validateAppointment(appointment,{...config,enabled:false}),/activa/);
+assert.match(validateAppointment(appointment,{...config,businessEnabled:false}),/activa/);
+assert.match(validateAppointment(appointment,{...config,businessBlockedDates:[{date:appointment.date}]}),/fecha/);
+assert.match(validateAppointment(appointment,{...config,blockedHours:[{repeats:true,repeatType:'weekly',dayOfWeek:1,startTime:'09:00',endTime:'10:00'}]}),/bloqueado/);
+assert.equal(validateAppointment({...appointment,status:'cancelled'},{...config,enabled:false}),'');
+assert.match(validateConfig({...config,workingDays:[config.workingDays[0]]}),/siete/);
+assert.match(validateConfig({...config,timezone:'invalid'}),/Zona/);
+assert.match(validateConfig({...config,blockedHours:[{date:'2026-10-19',startTime:'11:00',endTime:'10:00'}]}),/bloqueo/);
+assert.match(validateConfig({...config,workingDays:config.workingDays.map(d=>({...d,timeRanges:[...d.timeRanges,{startTime:'13:00',endTime:'15:00'}]}))}),/solaparse/);
+console.log('PASS CO11 agenda rules: dates, hours, duration alignment, professional/global closure, weekly absences and recoverable cancellation.');

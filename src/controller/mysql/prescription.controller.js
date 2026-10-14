@@ -8,7 +8,7 @@ class PrescriptionController extends httpResponseHelper {
     getConfig = async (req, res, next) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
-            response = await PrescriptionDao.getConfig(getBusinessIdFromToken(req.tokenDecode));
+            response = await PrescriptionDao.getConfig(getBusinessIdFromToken(req.tokenDecode), req.query.doctor_profile_id, req.tokenDecode.id_login);
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
@@ -121,6 +121,12 @@ class PrescriptionController extends httpResponseHelper {
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
+        res.status(response.status).send(response);
+    }
+
+    prepareOutput = async (req, res) => {
+        const response = await PrescriptionDao.prepareOutput(applyTenantToBody(req, req.body));
+        res.set('Cache-Control', 'no-store');
         res.status(response.status).send(response);
     }
 

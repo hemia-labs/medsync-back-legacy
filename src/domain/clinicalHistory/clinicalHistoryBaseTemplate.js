@@ -97,8 +97,10 @@ const baseClinicalHistoryTemplate = {
             enabled: true,
             order: 6,
             system: true,
+            locked: true,
             fields: [
-                { key: 'allergies', label: 'Alergias', type: 'textarea', required: true },
+                { key: 'allergy_status', label: 'Estado de alergias', type: 'select', required: true, enabled: true, system_core: true, options: ['HAS_ALLERGIES', 'NONE_KNOWN', 'UNKNOWN'] },
+                { key: 'allergies', label: 'Alergias', type: 'textarea', required: false, enabled: true, system_core: true },
                 { key: 'current_medications', label: 'Medicamentos actuales', type: 'textarea', required: false },
                 { key: 'known_adverse_reactions', label: 'Reacciones adversas conocidas', type: 'textarea', required: false }
             ]

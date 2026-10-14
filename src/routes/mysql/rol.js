@@ -4,13 +4,14 @@ const requireTenantOperational = require('../../middleware/requireTenantOperatio
 const { csrfProtection } = require('../../middleware/csrf.middleware');
 const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middleware');
 const RolController = require('../../controller/mysql/rol.controller');
+const requireTenantAdministrator = require('../../middleware/requireTenantAdministrator.middleware');
 
 const csrfProtected = csrfProtection();
 
 router.get('/list', Token.Auth, requireTenantOperational, awaitHandlerFactory(RolController.getRoles));
 
-router.get('/permissions/:id', Token.Auth, requireTenantOperational, awaitHandlerFactory(RolController.getPermissions));
+router.get('/permissions/:id', Token.Auth, requireTenantOperational, requireTenantAdministrator('admin.users'), awaitHandlerFactory(RolController.getPermissions));
 
-router.put('/permissions/:id', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(RolController.savePermissions));
+router.put('/permissions/:id', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.users'), awaitHandlerFactory(RolController.savePermissions));
 
 module.exports = router; 

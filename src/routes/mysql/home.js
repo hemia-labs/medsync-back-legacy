@@ -5,5 +5,6 @@ const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middle
 const HomeContinuityController = require('../../controller/mysql/homeContinuity.controller');
 
 router.get('/continuity-summary', Token.Auth, requireTenantOperational, awaitHandlerFactory(HomeContinuityController.summary));
+router.get('/appointments', Token.Auth, requireTenantOperational, awaitHandlerFactory(HomeContinuityController.appointments));
 
 module.exports = router;

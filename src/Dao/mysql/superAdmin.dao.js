@@ -19,7 +19,10 @@ const {
 } = require('../../config/saasPlans');
 const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
 const LicenseUsageDao = require('./licenseUsage.dao');
+const { getDashboardMetrics } = require('./superAdminDashboard.dao');
 const SecurityConfig = require('../../config/security');
+const { seedTracingPermissions } = require('../../util/tracingPermissions');
+const { seedDashboardPermissions } = require('../../util/dashboardAccess');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -163,15 +166,6 @@ const SESSION_SORT_COLUMNS = {
 };
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
-const BUSINESS_ID_FILTER = {
-    business: 'b.id_business',
-    login: 'l.id_business',
-    sessionLogin: 'sl.id_business',
-    person: 'p.id_business',
-    appointment: 'a.id_business',
-    prescription: 'pr.id_business',
-    clinicalHistory: 'ch.business_id'
-};
 
 function toPositiveInteger(value, fallback) {
     const parsed = Number.parseInt(value, 10);
@@ -417,10 +411,6 @@ function businessScope(column) {
 
 function rangeScope(column) {
     return `${column} >= :_dashboard_from AND ${column} <= :_dashboard_to`;
-}
-
-function appendWhere(base, conditions) {
-    return conditions.length ? `${base} AND ${conditions.join(' AND ')}` : base;
 }
 
 function buildBusinessFilters(query) {
@@ -1248,15 +1238,6 @@ class SuperAdminDao {
         }
     }
 
-    async countMetric(sql, replacements) {
-        const rows = await sequelize.query(sql, {
-            replacements,
-            type: QueryTypes.SELECT
-        });
-
-        return Number(rows && rows[0] ? rows[0].total : 0);
-    }
-
     async plans() {
         try {
             return responseData.success({
@@ -1564,25 +1545,7 @@ class SuperAdminDao {
                 replacements._dashboard_business_id = range.businessId;
             }
 
-            const businessFilters = [];
-            const userFilters = [];
-            const sessionFilters = [];
-            const patientFilters = [];
-            const appointmentFilters = [];
-            const prescriptionFilters = [];
-            const clinicalHistoryFilters = [];
-
-            if (range.businessId) {
-                businessFilters.push(businessScope(BUSINESS_ID_FILTER.business));
-                userFilters.push(businessScope(BUSINESS_ID_FILTER.login));
-                sessionFilters.push(businessScope(BUSINESS_ID_FILTER.sessionLogin));
-                patientFilters.push(businessScope(BUSINESS_ID_FILTER.person));
-                appointmentFilters.push(businessScope(BUSINESS_ID_FILTER.appointment));
-                prescriptionFilters.push(businessScope(BUSINESS_ID_FILTER.prescription));
-                clinicalHistoryFilters.push(businessScope(BUSINESS_ID_FILTER.clinicalHistory));
-            }
-
-            const [
+            const {
                 businesses,
                 activeBusinesses,
                 inactiveBusinesses,
@@ -1607,69 +1570,7 @@ class SuperAdminDao {
                 prescriptionsCreated,
                 clinicalHistoriesCreated,
                 businessesWithoutAdmin,
-                businessesWithoutActivityLast30Days
-            ] = await Promise.all([
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${businessFilters.length ? `WHERE ${businessFilters.join(' AND ')}` : ''}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere('WHERE b.active = 1', businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere('WHERE b.active = 0', businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE LOWER(COALESCE(b.status, '')) = 'suspended'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'trial'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'active'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'past_due'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'suspended'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'cancelled'", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'trial' AND b.trial_ends_at < NOW()", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'trial' AND b.trial_ends_at >= NOW() AND b.trial_ends_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM login l ${userFilters.length ? `WHERE ${userFilters.join(' AND ')}` : ''}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM login l ${appendWhere('WHERE l.active = 1', userFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM login l ${appendWhere('WHERE l.locked = 1', userFilters)}`, replacements),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM \`session\` s
-                       INNER JOIN login sl
-                               ON sl.id_login COLLATE ${TENANT_COLLATION} = s.id_login COLLATE ${TENANT_COLLATION}
-                      ${appendWhere('WHERE s.active = 1 AND s.last = 1', sessionFilters)}`,
-                    replacements
-                ),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere('WHERE b.created_at >= :_dashboard_from AND b.created_at <= :_dashboard_to', businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'trial' AND b.created_at >= :_dashboard_from AND b.created_at <= :_dashboard_to", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM business b ${appendWhere("WHERE b.subscription_status = 'active' AND b.created_at >= :_dashboard_from AND b.created_at <= :_dashboard_to", businessFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM login l ${appendWhere('WHERE l.created_at >= :_dashboard_from AND l.created_at <= :_dashboard_to', userFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM person p ${appendWhere('WHERE p.created_at >= :_dashboard_from AND p.created_at <= :_dashboard_to', patientFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM appointment a ${appendWhere('WHERE a.created_at >= :_dashboard_from AND a.created_at <= :_dashboard_to', appointmentFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM prescription pr ${appendWhere('WHERE pr.created_at >= :_dashboard_from AND pr.created_at <= :_dashboard_to', prescriptionFilters)}`, replacements),
-                this.countMetric(`SELECT COUNT(*) AS total FROM clinical_histories ch ${appendWhere('WHERE ch.created_at >= :_dashboard_from AND ch.created_at <= :_dashboard_to AND ch.deleted_at IS NULL', clinicalHistoryFilters)}`, replacements),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM business b
-                      ${appendWhere(`WHERE NOT EXISTS (
-                            SELECT 1
-                              FROM login al
-                              INNER JOIN rol ar
-                                      ON ar.id_rol COLLATE ${TENANT_COLLATION} = al.id_rol COLLATE ${TENANT_COLLATION}
-                             WHERE al.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                               AND al.active = 1
-                               AND ar.code IN ('admin', 'business_admin')
-                          )`, businessFilters)}`,
-                    replacements
-                ),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM business b
-                      ${appendWhere(`WHERE b.active = 1
-                          AND NOT EXISTS (
-                            SELECT 1
-                              FROM login ul
-                              INNER JOIN \`session\` us
-                                      ON us.id_login COLLATE ${TENANT_COLLATION} = ul.id_login COLLATE ${TENANT_COLLATION}
-                             WHERE ul.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                               AND COALESCE(us.updated_at, us.created_at) >= :_dashboard_from
-                          )`, businessFilters)}`,
-                    replacements
-                )
-            ]);
-
-            const [
+                businessesWithoutActivityLast30Days,
                 businessSeries,
                 userSeries,
                 patientSeries,
@@ -1677,71 +1578,7 @@ class SuperAdminDao {
                 prescriptionSeries,
                 clinicalHistorySeries,
                 topBusinessesByUsage
-            ] = await Promise.all([
-                this.monthlyMetric('business b', 'b.created_at', BUSINESS_ID_FILTER.business, replacements),
-                this.monthlyMetric('login l', 'l.created_at', BUSINESS_ID_FILTER.login, replacements),
-                this.monthlyMetric('person p', 'p.created_at', BUSINESS_ID_FILTER.person, replacements),
-                this.monthlyMetric('appointment a', 'a.created_at', BUSINESS_ID_FILTER.appointment, replacements),
-                this.monthlyMetric('prescription pr', 'pr.created_at', BUSINESS_ID_FILTER.prescription, replacements),
-                this.monthlyMetric('clinical_histories ch', 'ch.created_at', BUSINESS_ID_FILTER.clinicalHistory, replacements, 'ch.deleted_at IS NULL'),
-                sequelize.query(
-                    `SELECT
-                        b.id_business,
-                        b.name,
-                        b.subscription_status,
-                        b.plan,
-                        b.trial_ends_at,
-                        COUNT(DISTINCT l.id_login) AS users,
-                        COUNT(DISTINCT p.id_person) AS patients,
-                        COUNT(DISTINCT a.id_appointment) AS appointments,
-                        COUNT(DISTINCT pr.id_prescription) AS prescriptions,
-                        COUNT(DISTINCT ch.id_clinical_history) AS clinicalHistories,
-                        MAX(activity.activity_at) AS lastActivityAt
-                       FROM business b
-                       LEFT JOIN login l
-                              ON l.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                       LEFT JOIN person p
-                              ON p.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                             AND p.created_at >= :_dashboard_from
-                             AND p.created_at <= :_dashboard_to
-                       LEFT JOIN appointment a
-                              ON a.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                             AND a.created_at >= :_dashboard_from
-                             AND a.created_at <= :_dashboard_to
-                       LEFT JOIN prescription pr
-                              ON pr.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                             AND pr.created_at >= :_dashboard_from
-                             AND pr.created_at <= :_dashboard_to
-                       LEFT JOIN clinical_histories ch
-                              ON ch.business_id COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                             AND ch.created_at >= :_dashboard_from
-                             AND ch.created_at <= :_dashboard_to
-                             AND ch.deleted_at IS NULL
-                       LEFT JOIN (
-                            SELECT ul.id_business COLLATE ${TENANT_COLLATION} AS id_business, COALESCE(us.updated_at, us.created_at) AS activity_at
-                              FROM login ul
-                              INNER JOIN \`session\` us
-                                      ON us.id_login COLLATE ${TENANT_COLLATION} = ul.id_login COLLATE ${TENANT_COLLATION}
-                            UNION ALL
-                            SELECT id_business COLLATE ${TENANT_COLLATION} AS id_business, created_at AS activity_at FROM person
-                            UNION ALL
-                            SELECT id_business COLLATE ${TENANT_COLLATION} AS id_business, created_at AS activity_at FROM appointment
-                            UNION ALL
-                            SELECT id_business COLLATE ${TENANT_COLLATION} AS id_business, created_at AS activity_at FROM prescription
-                            UNION ALL
-                            SELECT business_id COLLATE ${TENANT_COLLATION} AS id_business, created_at AS activity_at FROM clinical_histories WHERE deleted_at IS NULL
-                       ) activity
-                              ON activity.id_business COLLATE ${TENANT_COLLATION} = b.id_business COLLATE ${TENANT_COLLATION}
-                      ${businessFilters.length ? `WHERE ${businessFilters.join(' AND ')}` : ''}
-                      GROUP BY b.id_business, b.name, b.subscription_status, b.plan, b.trial_ends_at
-                      ORDER BY (patients + appointments + prescriptions + clinicalHistories + users) DESC, b.created_at DESC
-                      LIMIT 10`,
-                    {
-                        replacements,
-                        type: QueryTypes.SELECT
-                    }
-                )
-            ]);
+            } = await getDashboardMetrics(replacements, this.monthlyMetric.bind(this));
 
             return responseData.success({
                 totals: {
@@ -2159,6 +1996,9 @@ class SuperAdminDao {
                     }
                 );
 
+                await seedDashboardPermissions(idBusiness, idLogin, transaction);
+
+                await seedTracingPermissions(idBusiness, idLogin, transaction);
                 adminCreated = {
                     id_login: idLogin,
                     name: normalizeString(adminInput.name),
@@ -2244,6 +2084,27 @@ class SuperAdminDao {
         } catch (error) {
             await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        }
+    }
+
+    async businessOptions(query = {}) {
+        try {
+            const pagination = normalizePagination(query);
+            const filters = buildBusinessFilters(query);
+            const rows = await sequelize.query(
+                `SELECT b.id_business, b.name
+                   FROM business b
+                   ${filters.whereSql}
+                   ORDER BY b.name ASC, b.id_business ASC
+                   LIMIT :_limit OFFSET :_offset`,
+                {
+                    replacements: { ...filters.replacements, _limit: pagination.pageSize, _offset: pagination.offset },
+                    type: QueryTypes.SELECT
+                }
+            );
+            return responseData.success({ data: rows }, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) {
+            return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
     }
 

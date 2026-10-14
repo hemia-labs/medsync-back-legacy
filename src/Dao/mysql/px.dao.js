@@ -9,6 +9,8 @@ const {SequelizeException, SQLException} = require('../../util/sequelizeExceptio
 const hellpersFile = require('../../util/file/file')
 const config = require('../../config/config');
 const { uploadFile } = require('../../services/aws/s3');
+const PatientAllergyDao = require('./patientAllergy.dao');
+const { hydrateAllergy, validateReview } = require('../../domain/clinicalHistory/allergyStatus');
 
 const PATIENT_COLLATION = 'utf8mb4_unicode_ci';
 const PATIENT_FAST_SEARCH_MIN_LENGTH = 2;
@@ -46,6 +48,50 @@ const parseJsonField = (value, fallback = {}) => {
  * Clase principal
  */
 class PXDao{
+
+// Administrative editing deliberately never calls the legacy clinical procedure.
+// Child identifiers and extra clinical fields from the browser are not trusted.
+async updateAdministrative(body) {
+    const transaction = await sequelize.transaction();
+    try {
+        const person = body.person;
+        const address = body.address;
+        const replacements = { patient: person.id_person, business: body.id_business, user: body.id_login };
+        const rows = await sequelize.query(`SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business FOR UPDATE`, { replacements, type: QueryTypes.SELECT, transaction });
+        if (!rows.length) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
+        await sequelize.query(`UPDATE person SET name = :name, surname = :surname, birthday = :birthday, age = :age,
+            ocupation = :occupation, rfc = :rfc, telephone = :phone, local_telephone = :localPhone,
+            updated_at = NOW(), updated_by = :user WHERE id_person = :patient AND id_business = :business`, {
+            replacements: { ...replacements, name: person.name, surname: person.surname, birthday: person.birthday,
+                age: person.age, occupation: nullableValue(person.ocupation), rfc: nullableValue(person.rfc),
+                phone: cleanPhone(person.telephone), localPhone: nullableValue(cleanPhone(person.local_telephone)) }, transaction
+        });
+        const addresses = await sequelize.query(`SELECT id_address FROM address WHERE id_person = :patient AND id_business = :business AND last = 1 LIMIT 1`, { replacements, type: QueryTypes.SELECT, transaction });
+        const values = { ...replacements, address: addresses[0] ? addresses[0].id_address : uuidv4(),
+            birthplace: nullableValue(address.place_birth), residence: nullableValue(address.residence), direction: nullableValue(address.direction), cp: nullableValue(address.cp) };
+        if (addresses.length) {
+            await sequelize.query(`UPDATE address SET place_birth = :birthplace, residence = :residence, direction = :direction, cp = :cp,
+                updated_at = NOW(), updated_by = :user WHERE id_address = :address AND id_person = :patient AND id_business = :business`, { replacements: values, transaction });
+        } else {
+            await sequelize.query(`INSERT INTO address (id_address, id_person, id_business, place_birth, residence, direction, cp, last, created_at, created_by)
+                VALUES (:address, :patient, :business, :birthplace, :residence, :direction, :cp, 1, NOW(), :user)`, { replacements: values, transaction });
+        }
+        await transaction.commit();
+        return responseData.success({ id_person: person.id_person }, 'Datos administrativos actualizados.');
+    } catch (error) { await transaction.rollback(); return SequelizeException(error, Messages.DATA_SAVE_ERROR); }
+}
+
+async setArchived(id_person, id_login, id_business, archived) {
+    const transaction = await sequelize.transaction();
+    try {
+        const replacements = { patient: id_person, business: id_business, user: id_login, active: archived ? 0 : 1 };
+        const rows = await sequelize.query(`SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business FOR UPDATE`, { replacements, type: QueryTypes.SELECT, transaction });
+        if (!rows.length) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
+        await sequelize.query(`UPDATE person SET active = :active, updated_by = :user, updated_at = NOW() WHERE id_person = :patient AND id_business = :business`, { replacements, transaction });
+        await transaction.commit();
+        return responseData.success({ id_person, active: replacements.active }, archived ? 'Paciente archivado. Su expediente se conserva.' : 'Paciente restaurado.');
+    } catch (error) { await transaction.rollback(); return SequelizeException(error, Messages.DATA_SAVE_ERROR); }
+}
 
 async pxCreateMinimal(body) {
     const transaction = await sequelize.transaction();
@@ -110,7 +156,7 @@ async pxCreateMinimal(body) {
                     _age: person.age,
                     _ocupation: nullableValue(person.ocupation),
                     _rfc: nullableValue(person.rfc),
-                    _local_telephone: cleanPhone(person.local_telephone),
+                    _local_telephone: nullableValue(cleanPhone(person.local_telephone)),
                     _telephone: cleanPhone(person.telephone),
                     _id_login: body.id_login
                 },
@@ -232,6 +278,11 @@ async pxSave(body) {
         let address = body.address;
         let query = body.query;
         let allergy = body.allergy;
+        allergy = hydrateAllergy(allergy);
+        if (allergy.review_status !== 'UNREVIEWED') {
+            const reviewError = validateReview({ ...allergy, expected_revision: 0 });
+            if (reviewError) return responseData.bad_request(reviewError);
+        }
         let family_parents = null;//JSON.stringify(_family_parents);
         let family_brothers = null;//JSON.stringify(body.family_brothers);
         let family_grandparents = null;//JSON.stringify(body.family_grandparents);
@@ -300,7 +351,7 @@ async pxSave(body) {
                         _age: person.age,
                         _ocupation: person.ocupation,
                         _rfc: person.rfc,
-                        _local_telephone: cleanPhone(person.local_telephone),
+                        _local_telephone: nullableValue(cleanPhone(person.local_telephone)),
                         _telephone: cleanPhone(person.telephone),
                         _name_signature: person.name_signature ? person.name_signature : null,
                         _social_media: social_media,
@@ -365,10 +416,10 @@ async pxSave(body) {
             await sequelize.query(
                 `INSERT INTO allergy (
                     id_allergy, id_business, id_patient, has_allergy, description, active,
-                    is_active, created_at, created_by, updated_at, updated_by
+                    is_active, created_at, created_by, updated_at, updated_by, review_status, revision, reviewed_at, reviewed_by
                  ) VALUES (
                     :_id_allergy, :_id_business, :_id_person, :_has_allergy, :_description, 1,
-                    1, NOW(), :_id_login, NULL, NULL
+                    1, NOW(), :_id_login, NULL, NULL, :_review_status, :_revision, IF(:_revision > 0, NOW(3), NULL), IF(:_revision > 0, :_id_login, NULL)
                  )`,
                 {
                     replacements: {
@@ -376,7 +427,9 @@ async pxSave(body) {
                         _id_business: body.id_business,
                         _id_person: idPerson,
                         _has_allergy: allergy.has_allergy,
-                        _description: Number(allergy.has_allergy) === 1 ? allergy.description : null,
+                        _description: allergy.review_status === 'NONE_KNOWN' ? '' : allergy.description,
+                        _review_status: allergy.review_status,
+                        _revision: allergy.review_status === 'UNREVIEWED' ? 0 : 1,
                         _id_login: body.id_login
                     },
                     type: QueryTypes.INSERT,
@@ -505,6 +558,32 @@ async pxUpdate(body) {
         let pathological_data =  body.pathological_data ? JSON.stringify((body.pathological_data)) : null;
         let social_media =  body.social_media ? JSON.stringify((body.social_media)) : null;
 
+        const belongsToBusiness = await sequelize.query(
+            'SELECT id_person FROM person WHERE id_person = :_id_person AND id_business = :_id_business AND active = 1 LIMIT 1',
+            {
+                replacements: {
+                    _id_person: person.id_person,
+                    _id_business: body.id_business
+                },
+                type: QueryTypes.SELECT
+            }
+        );
+
+        if (!belongsToBusiness || belongsToBusiness.length === 0) {
+            return responseData.notSuccess('Paciente no encontrado para este negocio.');
+        }
+
+        // Prevent swapping child identifiers from another patient or tenant through the legacy procedure.
+        const children = [ ['address', 'id_address', address.id_address], ['query', 'id_query', query.id_query],
+            ...(Array.isArray(body.pathological_data) ? body.pathological_data.filter(item => item.id_pathological_personal).map(item => ['pathological_personal', 'id_pathological_personal', item.id_pathological_personal]) : []) ];
+        for (const [table, key, id] of children) {
+            if (!id) continue;
+            const matches = await sequelize.query(`SELECT ${key} FROM ${table} WHERE ${key} = :child AND id_person = :patient AND id_business = :business LIMIT 1`, {
+                replacements: { child: id, patient: person.id_person, business: body.id_business }, type: QueryTypes.SELECT
+            });
+            if (!matches.length) return responseData.forbidden('Los datos no pertenecen a este paciente. Vuelve a cargar su ficha.');
+        }
+
         if( !person.id_signature && body.files && body.files.file ){
             let pathfile = hellpersFile.base64Toimg(body.files.file)
             if(!pathfile){
@@ -527,20 +606,8 @@ async pxUpdate(body) {
             hellpersFile.deleteFile(pathfile.path);
         }
 
-        const belongsToBusiness = await sequelize.query(
-            'SELECT id_person FROM person WHERE id_person = :_id_person AND id_business = :_id_business LIMIT 1',
-            {
-                replacements: {
-                    _id_person: person.id_person,
-                    _id_business: body.id_business
-                },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        if (!belongsToBusiness || belongsToBusiness.length === 0) {
-            return responseData.notSuccess('Paciente no encontrado para este negocio.');
-        }
+        // Allergies are changed through the shared review endpoint; ignore stale form data.
+        allergy = await PatientAllergyDao.getCurrent(person.id_person, body.id_business);
 
         let result = await sequelize.query(SequelizeSP.SP_PX_UPDATE, {
             replacements: {
@@ -600,29 +667,8 @@ async pxUpdate(body) {
  * Permite obtener un listado de los px
  * @returns Lista de paises
  */
-async pxForceDelete(id_person, id_business) {
-    let response;        
-    try {
-        let result = await sequelize.query(SequelizeSP.SP_PX_FORCE_DELETE, {
-            replacements: {
-                _id_person : id_person,
-                _id_business : id_business
-            },
-            type: QueryTypes.RAW,
-            plain: true
-        });
-
-        if(result){/*Validamos si existe un registro de salida */
-            let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
-        }
-        else{/* regresamos una excepción controlada al no obtener una respuesta */
-            response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
-        }
-    } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
-    }
-    return response;
+async pxForceDelete() {
+    return responseData.forbidden('El borrado definitivo de pacientes esta deshabilitado. Archiva el paciente para conservar su expediente.');
 }
 
 /**
@@ -630,44 +676,22 @@ async pxForceDelete(id_person, id_business) {
  * @returns Lista de paises
  */
 async pxDelete(id_person, id_login, id_business) {
-    let response;        
-    try {
-        let result = await sequelize.query(SequelizeSP.SP_PX_DELETE, {
-            replacements: {
-                _id_person : id_person,
-                _active : 0,
-                _id_login : id_login,
-                _id_business : id_business
-            },
-            type: QueryTypes.RAW,
-            plain: true
-        });
-
-        if(result){/*Validamos si existe un registro de salida */
-            let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
-        }
-        else{/* regresamos una excepción controlada al no obtener una respuesta */
-            response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
-        }
-    } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
-    }
-    return response;
+    return this.setArchived(id_person, id_login, id_business, true);
 }
-
 
 /**
  * Permite obtener un listado de los px
  * @returns Lista de paises
  */
- async getPxSearch(param, id_business) {
+ async getPxSearch(param, id_business, options = {}) {
     let response;        
     try {
         const value = `%${param || ''}%`;
         let result = await sequelize.query(
             `SELECT
                 p.id_person,
+                p.code,
+                p.active,
                 p.name,
                 p.surname,
                 p.rfc,
@@ -677,7 +701,7 @@ async pxDelete(id_person, id_login, id_business) {
                 p.birthday,
                 p.age
              FROM person p
-             WHERE p.active = 1
+             WHERE ${options.includeArchived === true ? 'p.active IN (0, 1)' : 'p.active = 1'}
                AND p.id_business COLLATE ${PATIENT_COLLATION} = :_id_business COLLATE ${PATIENT_COLLATION}
                AND (
                     p.name COLLATE ${PATIENT_COLLATION} LIKE :_value COLLATE ${PATIENT_COLLATION}
@@ -847,20 +871,34 @@ async getFamilyPath() {
  * @param {Number} _id_person id de PX
  * @returns 
  */
-async getPxById(_id_person, id_business) {
+async getPxById(_id_person, id_business, options = {}) {
     let response;        
     try {
+        if (options.clinical !== true) {
+            const records = await sequelize.query(`SELECT
+                JSON_OBJECT('id_person', p.id_person, 'code', p.code, 'fullname', CONCAT_WS(' ', p.name, p.surname),
+                    'name', p.name, 'surname', p.surname, 'birthday', DATE_FORMAT(p.birthday, '%d-%m-%Y'),
+                    'age', p.age, 'active', p.active, 'ocupation', p.ocupation, 'rfc', p.rfc,
+                    'local_telephone', p.local_telephone, 'telephone', p.telephone, 'profile', prx.url) AS person,
+                JSON_OBJECT('id_address', a.id_address, 'place_birth', a.place_birth, 'residence', a.residence,
+                    'direction', a.direction, 'cp', a.cp) AS address
+                FROM person p
+                LEFT JOIN address a ON a.id_person = p.id_person AND a.id_business = p.id_business AND a.last = 1
+                LEFT JOIN profile_px prx ON prx.id_person = p.id_person AND prx.active = 1
+                WHERE p.id_person = :patient AND p.id_business = :business LIMIT 1`, {
+                replacements: { patient: _id_person, business: id_business }, type: QueryTypes.SELECT
+            });
+            return records.length ? responseData.success({ person: parseJsonField(records[0].person), address: parseJsonField(records[0].address), access: { clinical: false } }, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess('Paciente no encontrado.');
+        }
         let result = await sequelize.query(
             `SELECT IFNULL(p.social_media, '{"inputSelected":"","isCheck":false,"text":null}') social_media,
                      JSON_OBJECT('id_address', a.id_address, 'place_birth', a.place_birth, 'residence', a.residence, 'direction', a.direction, 'cp', a.cp) AS address,
                      JSON_OBJECT('id_query', q.id_query, 'reason_consultation', q.reason_consultation, 'current_condition', q.current_condition, 'pulse', q.pulse, 'blood_pressure', q.blood_pressure, 'dia', q.dia, 'oxygenation', q.oxygenation) AS query,
-                     JSON_OBJECT('id_allergy', aller.id_allergy, 'has_allergy', IFNULL(aller.has_allergy, 0), 'description', IFNULL(aller.description, '')) AS allergy,
-                     JSON_OBJECT('id_person', p.id_person, 'code', p.code, 'fullname', CONCAT(p.name, ' ', p.surname), 'name', p.name, 'surname', p.surname, 'birthday', DATE_FORMAT(p.birthday,'%d-%m-%Y'), 'age', p.age, 'ocupation', p.ocupation, 'rfc', p.rfc, 'local_telephone', p.local_telephone, 'telephone', p.telephone, 'id_signature', p.id_signature, 'name_signature', p.name_signature, 'profile', prx.url) AS person
+                     JSON_OBJECT('id_person', p.id_person, 'code', p.code, 'fullname', CONCAT_WS(' ', p.name, p.surname), 'name', p.name, 'surname', p.surname, 'birthday', DATE_FORMAT(p.birthday,'%d-%m-%Y'), 'age', p.age, 'active', p.active, 'ocupation', p.ocupation, 'rfc', p.rfc, 'local_telephone', p.local_telephone, 'telephone', p.telephone, 'id_signature', p.id_signature, 'name_signature', p.name_signature, 'profile', prx.url) AS person
                 FROM person p
-                INNER JOIN address a ON p.id_person = a.id_person AND a.last = 1
-                INNER JOIN query q ON p.id_person = q.id_person AND q.last = 1
+                LEFT JOIN address a ON p.id_person = a.id_person AND a.last = 1
+                LEFT JOIN query q ON p.id_person = q.id_person AND q.last = 1
                 LEFT JOIN profile_px prx ON p.id_person = prx.id_person AND prx.active = 1
-                LEFT JOIN allergy aller ON aller.id_patient = p.id_person
                WHERE p.id_person COLLATE ${PATIENT_COLLATION} = :_id_person COLLATE ${PATIENT_COLLATION}
                  AND p.id_business COLLATE ${PATIENT_COLLATION} = :_id_business COLLATE ${PATIENT_COLLATION}`,
             {
@@ -901,11 +939,12 @@ async getPxById(_id_person, id_business) {
             });
 
             const row = result[0];
-            let sqlmodel = { 
+            let sqlmodel = {
+                access: { clinical: true },
                 person : parseJsonField(row.person),
                 address : parseJsonField(row.address),
                 query : parseJsonField(row.query),
-                allergy : parseJsonField(row.allergy),
+                allergy : await PatientAllergyDao.getCurrent(_id_person, id_business),
                 social_media : parseJsonField(row.social_media, { inputSelected: '', isCheck: false, text: null }),
                 pathological_data : _pathological_data
             }
