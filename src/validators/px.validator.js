@@ -6,6 +6,23 @@ const {
     valid
 } = require('./common.validator');
 
+const normalizePhone = value => String(value || '').replace(/[()\s-]/g, '');
+const validateAdministrativeFormats = (person, address = {}, today = new Date()) => {
+    if (typeof person.name !== 'string' || !person.name.trim() || typeof person.surname !== 'string' || !person.surname.trim()) return invalid('El nombre y el apellido del paciente son obligatorios.');
+    const date = person.birthday;
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return invalid('Ingresa una fecha de nacimiento válida.');
+    const birth = new Date(`${date}T00:00:00`);
+    const formatted = Number.isFinite(birth.getTime()) ? `${birth.getFullYear()}-${String(birth.getMonth() + 1).padStart(2, '0')}-${String(birth.getDate()).padStart(2, '0')}` : '';
+    if (formatted !== date || birth > today) return invalid('La fecha de nacimiento debe ser real y no puede ser futura.');
+    let age = today.getFullYear() - birth.getFullYear();
+    if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) age--;
+    if (!Number.isInteger(Number(person.age)) || Number(person.age) !== age || age < 0 || age > 150) return invalid('La edad debe corresponder con la fecha de nacimiento y ser de hasta 150 años.');
+    if (typeof person.telephone !== 'string' || !/^\d{10}$/.test(normalizePhone(person.telephone))) return invalid('El teléfono de contacto debe tener 10 dígitos.');
+    if (person.local_telephone != null && person.local_telephone !== '' && (typeof person.local_telephone !== 'string' || !/^\d{10}$/.test(normalizePhone(person.local_telephone)))) return invalid('El teléfono local debe tener 10 dígitos.');
+    if (address.cp != null && address.cp !== '' && (typeof address.cp !== 'string' || !/^\d{5}$/.test(address.cp))) return invalid('El código postal debe tener 5 dígitos.');
+    return valid();
+};
+
 const validatePerson = (person, isUpdate = false) => {
     const fields = [
         'name',
@@ -20,7 +37,8 @@ const validatePerson = (person, isUpdate = false) => {
         fields.unshift('id_person');
     }
 
-    return requireFields(person, fields);
+    const required = requireFields(person, fields);
+    return required.isValid ? validateAdministrativeFormats(person) : required;
 };
 
 const validateMinimalPerson = (person) => {
@@ -32,7 +50,8 @@ const validateMinimalPerson = (person) => {
         'telephone'
     ];
 
-    return requireFields(person, fields);
+    const required = requireFields(person, fields);
+    return required.isValid ? validateAdministrativeFormats(person) : required;
 };
 
 const validateAddress = (address, isUpdate = false) => {
@@ -83,7 +102,7 @@ const validatePxPayload = (req, isUpdate = false) => {
         validateAllergy(req.body.allergy, isUpdate)
     ];
 
-    return validators.find((result) => !result.isValid) || valid();
+    return validators.find((result) => !result.isValid) || validateAdministrativeFormats(req.body.person, req.body.address);
 };
 
 const validatePxSave = (req) => {
@@ -96,7 +115,10 @@ const validatePxCreateMinimal = (req) => {
         return personResult;
     }
 
-    return validateMinimalPerson(req.body.person);
+    const result = validateMinimalPerson(req.body.person);
+    if (!result.isValid) return result;
+    if (req.body.address != null && (typeof req.body.address !== 'object' || Array.isArray(req.body.address))) return invalid('Campo invalido: address');
+    return validateAdministrativeFormats(req.body.person, req.body.address || {});
 };
 
 const validatePxUpdate = (req) => {
@@ -127,7 +149,7 @@ const validatePxAdministrative = (req) => {
             if (object[field] != null && (typeof object[field] !== 'string' || object[field].length > 1000)) return invalid(`Campo invalido: ${field}`);
         }
     }
-    return valid();
+    return validateAdministrativeFormats(person, req.body.address);
 };
 
 const validatePxSearch = (req) => {

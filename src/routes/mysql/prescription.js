@@ -6,6 +6,7 @@ const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middle
 const validatePayload = require('../../middleware/validatePayload.middleware');
 const PrescriptionController = require('../../controller/mysql/prescription.controller');
 const {
+    validateList,
     validateConfigSave,
     validatePrescriptionSave,
     validateIssue,
@@ -22,9 +23,9 @@ router.get('/config', Token.Auth, requireTenantOperational, awaitHandlerFactory(
 
 router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, validatePayload(validateConfigSave), awaitHandlerFactory(PrescriptionController.saveConfig));
 
-router.get('/list', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.list));
+router.get('/list', Token.Auth, requireTenantOperational, validatePayload(validateList), awaitHandlerFactory(PrescriptionController.list));
 
-router.get('/patient/:id_person', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.listByPatient));
+router.get('/patient/:id_person', Token.Auth, requireTenantOperational, validatePayload(validateList), awaitHandlerFactory(PrescriptionController.listByPatient));
 
 router.get('/doctors', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.doctors));
 

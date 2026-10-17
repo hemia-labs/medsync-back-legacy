@@ -2,10 +2,31 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const BusinessDao = require('../../Dao/mysql/business.dao');
+const PreparationDao = require('../../Dao/mysql/preparation.dao');
 const { getBusinessIdFromToken } = require('../../util/tenant');
 const { isTenantAdministrator } = require('../../util/effectivePermissions');
+const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
+const responseData = require('../../util/responsedata');
+const { isValidSaasPlan } = require('../../config/saasPlans');
 
 class BusinessController extends httpResponseHelper {
+    licenseUsage = async(req, res) => {
+        let response;
+        try {
+            const license = await getBusinessEffectiveLicense(getBusinessIdFromToken(req.tokenDecode));
+            response = license && !isValidSaasPlan(license.business.plan) ? responseData.error('El plan del consultorio necesita revisión. Solicita ayuda al administrador.') : license ? responseData.success({business:{planName:license.plan.name},license:{professionals:license.limits.professionals,staffUsers:license.limits.staffUsers}}, 'Uso de licencia consultado.')
+                : responseData.notSuccess('No se encontró la licencia del consultorio.');
+        } catch (_) { response = responseData.error('No se pudo consultar el uso de licencia. Intenta de nuevo.'); }
+        res.set('Cache-Control','no-store');
+        res.status(response.status).send(response);
+    }
+
+    preparation = async(req, res) => {
+        const response = await PreparationDao.current(getBusinessIdFromToken(req.tokenDecode), req.tokenDecode && req.tokenDecode.id_login);
+        res.set('Cache-Control', 'no-store');
+        res.status(response.status).send(response);
+    }
+
     current = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {

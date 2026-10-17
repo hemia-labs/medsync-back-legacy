@@ -708,6 +708,7 @@ async pxDelete(id_person, id_login, id_business) {
                  OR p.surname COLLATE ${PATIENT_COLLATION} LIKE :_value COLLATE ${PATIENT_COLLATION}
                  OR p.telephone COLLATE ${PATIENT_COLLATION} LIKE :_value COLLATE ${PATIENT_COLLATION}
                  OR p.local_telephone COLLATE ${PATIENT_COLLATION} LIKE :_value COLLATE ${PATIENT_COLLATION}
+                 OR p.code COLLATE ${PATIENT_COLLATION} LIKE :_value COLLATE ${PATIENT_COLLATION}
                )
              ORDER BY p.created_at DESC, p.name ASC`,
             {

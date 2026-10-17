@@ -292,8 +292,15 @@ class OdontogramDao {
 
     async getHistoryv1(id_person) {
         try {
+            // Odontogram DATETIME values are written by the Sequelize UTC session
+            // (NOW()). Preserve the legacy field and expose the instant plus the
+            // clinic timezone; clients must not treat the UTC day as a local day.
             const rows = await this.queryV1(`SELECT chart.id_odontogramv1, chart.active, type.code, type.description,
-                DATE_FORMAT(chart.created_at,'%d-%m-%Y %h:%i:%s') AS created_at
+                DATE_FORMAT(chart.created_at,'%d-%m-%Y %H:%i:%s') AS created_at,
+                DATE_FORMAT(chart.created_at,'%Y-%m-%dT%H:%i:%s.000Z') AS created_at_utc,
+                COALESCE((SELECT config.timezone FROM appointment_config config
+                    WHERE ${eq('config.id_business', 'chart.id_business')} AND config.doctor_profile_id IS NULL AND config.active=1
+                    ORDER BY config.created_at DESC LIMIT 1), 'America/Mexico_City') AS timezone
                 FROM odontogramv1 chart INNER JOIN cat_type_tooth type ON ${eq('type.code', 'chart.type')}
                 WHERE ${eq('chart.id_person', ':patient')} AND chart.is_active=1
                 ORDER BY chart.created_at, chart.id_odontogramv1`, { patient: id_person });

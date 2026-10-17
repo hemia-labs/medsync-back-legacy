@@ -25,7 +25,7 @@ const PERMISSIONS = {
     CONFIG: 'prescriptions.config'
 };
 
-const PROFESSIONAL_PROFILE_MESSAGE = 'Para emitir recetas, completa el perfil profesional del doctor en Configuracion > Personal y usuarios > Perfil profesional.';
+const PROFESSIONAL_PROFILE_MESSAGE = 'Para emitir recetas, el doctor debe completar su identidad, cédula y firma en Configuración > Mi perfil profesional. Después, actualiza los doctores de la receta; puedes conservarla como borrador.';
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
 
