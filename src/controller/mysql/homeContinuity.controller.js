@@ -10,11 +10,20 @@ class HomeContinuityController extends httpResponseHelper {
         try {
             response = await HomeContinuityDao.summary(
                 getBusinessIdFromToken(req.tokenDecode),
-                req.tokenDecode ? req.tokenDecode.id_login : null
+                req.tokenDecode ? req.tokenDecode.id_login : null,
+                { scope: req.query.scope }
             );
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
+        res.status(response.status).send(response);
+    }
+
+    appointments = async(req, res) => {
+        const response = await HomeContinuityDao.appointments(
+            getBusinessIdFromToken(req.tokenDecode), req.tokenDecode.id_login,
+            { scope: req.query.scope, date: req.query.date }
+        );
         res.status(response.status).send(response);
     }
 }

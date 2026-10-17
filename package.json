@@ -11,23 +11,24 @@
     "qa:security-auth-cookies": "node scripts/qa/security-auth-cookies-whitebox-audit.js",
     "qa:authz-fase0": "node scripts/qa/authz-fase0-regression.js",
     "qa:security-idor": "node scripts/qa/security-multitenant-idor-suite.js",
-    "qa:security-headers": "node scripts/qa/security-headers-http-regression.js"
+    "qa:security-headers": "node scripts/qa/security-headers-http-regression.js",
+    "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js"
   },
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22.12 <23"
   },
   "keywords": [
     "example",
     "heroku"
   ],
   "dependencies": {
-    "aws-sdk": "^2.1320.0",
-    "axios": "^1.18.0",
+    "aws-sdk": "2.1693.0",
+    "axios": "1.20.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "~1.4.4",
     "debug": "~2.6.9",
     "ejs": "^3.1.5",
-    "express": "^4.22.2",
+    "express": "4.22.3",
     "express-session": "^1.17.1",
     "express-validator": "^6.9.2",
     "fs-extra": "^9.1.0",
@@ -35,16 +36,23 @@
     "jsonwebtoken": "^9.0.3",
     "jwt-decode": "^3.1.2",
     "method-override": "^3.0.0",
-    "morgan": "~1.9.1",
-    "mysql2": "^3.22.5",
+    "morgan": "1.12.1",
+    "mysql2": "3.24.6",
     "node-localstorage": "^2.1.6",
-    "nodemailer": "^9.0.0",
-    "passport": "^0.4.1",
-    "passport-local": "^1.0.0",
-    "sequelize": "^6.6.2",
-    "uuid": "^8.3.2"
+    "nodemailer": "10.1.1",
+    "sanitize-html": "2.18.1",
+    "sequelize": "6.37.8",
+    "uuid": "11.1.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22"
+    "nodemon": "3.1.14"
+  },
+  "overrides": {
+    "aws-sdk": {
+      "uuid": "$uuid"
+    },
+    "sequelize": {
+      "uuid": "$uuid"
+    }
   }
 }

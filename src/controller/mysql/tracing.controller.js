@@ -2,9 +2,15 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const TracingDao = require('../../Dao/mysql/tracing.Dao');
-const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
+const { applyTenantToBody } = require('../../util/tenant');
 
 class TracingController extends httpResponseHelper{
+  revisions = async (req, res) => {
+    const response = await TracingDao.revisions(applyTenantToBody(req, {
+      id_person: req.params.id_person, id_tracing: req.params.id_tracing
+    }));
+    res.status(response.status).send(response);
+  }
 
 /**
  * Función que permite obtener la lista de Seguimiento de un PX
@@ -17,10 +23,9 @@ class TracingController extends httpResponseHelper{
  */
   getTracing = async(req, res, next) =>{
     let _id_person =  req.params.id_person;
-    let _id_business = getBusinessIdFromToken(req.tokenDecode);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await TracingDao.GetTracing(_id_person, _id_business);
+        response = await TracingDao.GetTracing(applyTenantToBody(req, { id_person: _id_person }));
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }
@@ -37,11 +42,9 @@ class TracingController extends httpResponseHelper{
  * @author Humberto Trinidad Domínguez
  */
 nextQuote = async(req, res, next) =>{
-    let _date =  req.params.date;
-    let _id_business = getBusinessIdFromToken(req.tokenDecode);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await TracingDao.nextQuote(_date, _id_business);
+        response = await TracingDao.nextQuote(applyTenantToBody(req, {}));
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }

@@ -1,3 +1,6 @@
+const effectivePermissions = require('../../util/effectivePermissions');
+const { seedTracingPermissions } = require('../../util/tracingPermissions');
+const { seedDashboardPermissions } = require('../../util/dashboardAccess');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const SequelizeSP = require('../../util/sequelize.sp.util');
@@ -128,6 +131,9 @@ class UserDao{
             }
         );
 
+        await seedDashboardPermissions(body.id_business, idLogin);
+
+        await seedTracingPermissions(body.id_business, idLogin);
         let result = await sequelize.query(
             `SELECT
                 l.id_login,
@@ -253,6 +259,10 @@ async updateUser(body,id_login) {
 
         if(result){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
+            if (!SQLValid.hasError) {
+                await seedDashboardPermissions(targetBusiness, id_login);
+                await seedTracingPermissions(targetBusiness, id_login);
+            }
             response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_SAVE_SUCCESSFULLY) : responseData.notSuccess(SQLValid.message);
         }
         else{/* regresamos una excepción controlada al no obtener una respuesta */
@@ -493,6 +503,9 @@ async saveProfessionalProfile(body) {
             );
         }
 
+        await seedDashboardPermissions(body.id_business, targetLogin);
+
+        await seedTracingPermissions(body.id_business, targetLogin);
         return this.getProfessionalProfile(targetLogin, body.id_business, body.id_login);
     } catch (error) {
         return SequelizeException(error, Messages.DATA_SAVE_ERROR);
@@ -500,31 +513,8 @@ async saveProfessionalProfile(body) {
 }
 
 async hasPermission(idLogin, permission) {
-    if (!idLogin) {
-        return false;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false});
     }
-
-    const result = await sequelize.query(
-        `SELECT 1
-           FROM login l
-           INNER JOIN permission_rol pr ON pr.id_rol COLLATE utf8mb4_unicode_ci = l.id_rol COLLATE utf8mb4_unicode_ci AND pr.active = 1
-           INNER JOIN cat_permission cp ON cp.id_cat_permission COLLATE utf8mb4_unicode_ci = pr.id_cat_permission COLLATE utf8mb4_unicode_ci
-          WHERE l.id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
-            AND l.active = 1
-            AND cp.code COLLATE utf8mb4_unicode_ci = :_permission COLLATE utf8mb4_unicode_ci
-            AND cp.active = 1
-          LIMIT 1`,
-        {
-            replacements: {
-                _id_login: idLogin,
-                _permission: permission
-            },
-            type: QueryTypes.SELECT
-        }
-    );
-
-    return result.length > 0;
-}
 
 
 }

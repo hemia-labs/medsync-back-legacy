@@ -1,9 +1,11 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
+const { resolveProfessional } = require('../../util/professionalContext');
 
 const STATUS = {
     DRAFT: 'draft',
@@ -28,25 +30,39 @@ const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
 
 class PrescriptionDao {
-    async getConfig(id_business) {
+    async getConfig(id_business, doctorProfileId = null, idLogin = null) {
         try {
             if (!id_business) {
                 return responseData.unauthorized('No hay negocio activo para consultar configuracion de recetas.');
             }
 
+            const resolved = await resolveProfessional({ id_business, id_login: idLogin }, doctorProfileId);
+            if (resolved.error) return doctorProfileId ? resolved.error : responseData.success(null, 'Selecciona un doctor para consultar su configuracion.');
+            const doctor = resolved.doctor;
+            if (!(await this.hasPermission(idLogin, PERMISSIONS.CONFIG))) return responseData.forbidden('No tienes permiso para configurar recetas.');
+            if (doctor.id_login !== idLogin && !(await effectivePermissions.isTenantAdministrator(idLogin, id_business, 'admin.config'))) return responseData.forbidden('Solo puedes configurar tus propias recetas.');
             const result = await sequelize.query(
                 `SELECT *
                    FROM prescription_config
                   WHERE ${collateEq('id_business', ':_id_business')}
+                    AND doctor_profile_id = :_doctor_profile_id
                     AND active = 1
                   LIMIT 1`,
                 {
-                    replacements: { _id_business: id_business },
+                    replacements: { _id_business: id_business, _doctor_profile_id: doctor.id_doctor_professional_profile },
                     type: QueryTypes.SELECT
                 }
             );
 
-            return responseData.success(result[0] || null, Messages.DATA_GET_SUCCESSFULLY);
+            let initial = result[0];
+            if (!initial) {
+                const shared = await sequelize.query(`SELECT * FROM prescription_config WHERE ${collateEq('id_business', ':_id_business')} AND doctor_profile_id IS NULL AND active = 1 LIMIT 1`, {
+                    replacements: { _id_business: id_business }, type: QueryTypes.SELECT
+                });
+                initial = shared[0] || {};
+            }
+            return responseData.success({ ...initial, id_prescription_config: result[0] ? result[0].id_prescription_config : null, doctor_profile_id: doctor.id_doctor_professional_profile,
+                doctor_profile: doctor }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
@@ -63,15 +79,23 @@ class PrescriptionDao {
                 return responseData.unauthorized('No tienes permiso para configurar recetas.');
             }
 
+            const resolved = await resolveProfessional(body, body.doctor_profile_id);
+            if (resolved.error) return resolved.error;
+            const doctor = resolved.doctor;
+            if (doctor.id_login !== body.id_login && !(await effectivePermissions.isTenantAdministrator(body.id_login, body.id_business, 'admin.config'))) {
+                return responseData.forbidden('Solo puedes configurar tus propias recetas.');
+            }
+
             const idConfig = body.id_prescription_config || uuidv4();
             const current = await sequelize.query(
                 `SELECT id_prescription_config
                    FROM prescription_config
                   WHERE ${collateEq('id_business', ':_id_business')}
+                    AND doctor_profile_id = :_doctor_profile_id
                     AND active = 1
                   LIMIT 1`,
                 {
-                    replacements: { _id_business: body.id_business },
+                    replacements: { _id_business: body.id_business, _doctor_profile_id: doctor.id_doctor_professional_profile },
                     type: QueryTypes.SELECT
                 }
             );
@@ -79,6 +103,7 @@ class PrescriptionDao {
             const replacements = {
                 _id_prescription_config: current[0] ? current[0].id_prescription_config : idConfig,
                 _id_business: body.id_business,
+                _doctor_profile_id: doctor.id_doctor_professional_profile,
                 _doctor_name: body.doctor_name || null,
                 _professional_license: body.professional_license || null,
                 _university: body.university || null,
@@ -128,13 +153,13 @@ class PrescriptionDao {
             } else {
                 await sequelize.query(
                     `INSERT INTO prescription_config (
-                        id_prescription_config, id_business, doctor_name, professional_license, university,
+                        id_prescription_config, id_business, doctor_profile_id, doctor_name, professional_license, university,
                         specialty, specialty_license, clinic_name, clinic_address, clinic_phone,
                         signature_image, header_image, background_image, footer_note, template_mode,
                         background_opacity, show_specialty, show_university, show_footer_note,
                         active, created_at, created_by
                     ) VALUES (
-                        :_id_prescription_config, :_id_business, :_doctor_name, :_professional_license, :_university,
+                        :_id_prescription_config, :_id_business, :_doctor_profile_id, :_doctor_name, :_professional_license, :_university,
                         :_specialty, :_specialty_license, :_clinic_name, :_clinic_address, :_clinic_phone,
                         :_signature_image, :_header_image, :_background_image, :_footer_note, :_template_mode,
                         :_background_opacity, :_show_specialty, :_show_university, :_show_footer_note,
@@ -144,7 +169,7 @@ class PrescriptionDao {
                 );
             }
 
-            return this.getConfig(body.id_business);
+            return this.getConfig(body.id_business, doctor.id_doctor_professional_profile, body.id_login);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
@@ -295,6 +320,11 @@ class PrescriptionDao {
 
             const payload = body.prescription || body;
             const isUpdate = Boolean(payload.id_prescription);
+            const createRequestId = !isUpdate ? payload.create_request_id : null;
+            if (createRequestId != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(createRequestId)) {
+                await transaction.rollback();
+                return responseData.bad_request('Identificador de captura de receta invalido.');
+            }
             const permission = isUpdate ? PERMISSIONS.EDIT_DRAFT : PERMISSIONS.CREATE;
             const canSave = await this.hasPermission(body.id_login, permission);
             if (!canSave) {
@@ -314,12 +344,34 @@ class PrescriptionDao {
                 return responseData.bad_request('Doctor emisor invalido.');
             }
 
-            const idPrescription = payload.id_prescription || uuidv4();
+            const idPrescription = payload.id_prescription || createRequestId || uuidv4();
+            if (createRequestId) {
+                // Serialize retries for this patient's capture. The browser preserves
+                // this UUID when the first committed response is lost.
+                await sequelize.query(`SELECT id_person FROM person WHERE ${collateEq('id_person', ':_id_person')}
+                    AND ${collateEq('id_business', ':_id_business')} FOR UPDATE`, {
+                    replacements: { _id_person: payload.id_person, _id_business: body.id_business }, type: QueryTypes.SELECT, transaction
+                });
+                const existing = await sequelize.query(`SELECT * FROM prescription WHERE ${collateEq('id_prescription', ':_id_prescription')}
+                    AND ${collateEq('id_business', ':_id_business')} FOR UPDATE`, {
+                    replacements: { _id_prescription: idPrescription, _id_business: body.id_business }, type: QueryTypes.SELECT, transaction
+                });
+                if (existing[0]) {
+                    const current = existing[0];
+                    const items = await this.getItems(idPrescription, body.id_business, transaction, true);
+                    const matches = current.active === 1 && current.created_by === body.id_login
+                        && current.status !== STATUS.CANCELLED && this.matchesCreateRequest(payload, current, items);
+                    await transaction.rollback();
+                    if (!matches) return { status: 409, data: { code: 'PRESCRIPTION_CREATE_CONFLICT' },
+                        message: 'Esta captura de receta ya se guardo con otro contenido o estado. Revisa la receta existente antes de continuar.' };
+                    return this.getById({ id_prescription: idPrescription, id_business: body.id_business, id_login: body.id_login });
+                }
+            }
             let folio = payload.folio;
             let previousStatus = null;
 
             if (isUpdate) {
-                const current = await this.getPrescription(idPrescription, body.id_business, transaction);
+                const current = await this.getPrescription(idPrescription, body.id_business, transaction, true);
                 if (!current) {
                     await transaction.rollback();
                     return responseData.notSuccess('Receta no encontrada.');
@@ -403,12 +455,24 @@ class PrescriptionDao {
                 return responseData.unauthorized('No tienes permiso para emitir recetas.');
             }
 
-            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction);
+            // Serialize emission attempts, including a retry after a lost HTTP response.
+            await sequelize.query(
+                `SELECT id_prescription FROM prescription
+                  WHERE ${collateEq('id_prescription', ':_id_prescription')}
+                    AND ${collateEq('id_business', ':_id_business')} AND active = 1
+                  FOR UPDATE`,
+                { replacements: { _id_prescription: body.id_prescription, _id_business: body.id_business }, type: QueryTypes.SELECT, transaction }
+            );
+            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction, true);
             if (!prescription) {
                 await transaction.rollback();
                 return responseData.notSuccess('Receta no encontrada.');
             }
 
+            if (prescription.status === STATUS.ISSUED && prescription.issuer_doctor_id === body.id_login && prescription.issued_by === body.id_login) {
+                await transaction.commit();
+                return this.getById(body);
+            }
             if (prescription.status !== STATUS.DRAFT) {
                 await transaction.rollback();
                 return responseData.bad_request('Solo se pueden emitir recetas en borrador.');
@@ -420,14 +484,14 @@ class PrescriptionDao {
                 return responseData.unauthorized('El negocio no esta activo para emitir recetas.');
             }
 
-            const items = await this.getItems(body.id_prescription, body.id_business, transaction);
+            const items = await this.getItems(body.id_prescription, body.id_business, transaction, true);
             const itemValidation = this.validateItemsForIssue(items);
             if (!itemValidation.isValid) {
                 await transaction.rollback();
                 return responseData.bad_request(itemValidation.message);
             }
 
-            const config = await this.getRawConfig(body.id_business, transaction);
+            const config = await this.getRawConfig(body.id_business, transaction, prescription.issuer_doctor_id);
             const configValidation = this.validateConfigForIssue(config);
             if (!configValidation.isValid) {
                 await transaction.rollback();
@@ -539,7 +603,7 @@ class PrescriptionDao {
                 return responseData.unauthorized('No tienes permiso para cancelar recetas.');
             }
 
-            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction);
+            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction, true);
             if (!prescription) {
                 await transaction.rollback();
                 return responseData.notSuccess('Receta no encontrada.');
@@ -593,18 +657,22 @@ class PrescriptionDao {
     }
 
     async deleteDraft(body) {
+        let transaction;
         try {
             const canEdit = await this.hasPermission(body.id_login, PERMISSIONS.EDIT_DRAFT);
             if (!canEdit) {
                 return responseData.unauthorized('No tienes permiso para eliminar borradores.');
             }
 
-            const prescription = await this.getPrescription(body.id_prescription, body.id_business);
+            transaction = await sequelize.transaction();
+            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction, true);
             if (!prescription) {
+                await transaction.rollback();
                 return responseData.notSuccess('Receta no encontrada.');
             }
 
             if (prescription.status !== STATUS.DRAFT) {
+                await transaction.rollback();
                 return responseData.bad_request('No se pueden eliminar recetas emitidas o canceladas.');
             }
 
@@ -622,7 +690,8 @@ class PrescriptionDao {
                         _id_business: body.id_business,
                         _id_login: body.id_login
                     },
-                    type: QueryTypes.UPDATE
+                    type: QueryTypes.UPDATE,
+                    transaction
                 }
             );
 
@@ -633,10 +702,13 @@ class PrescriptionDao {
                 action: 'deleted_draft',
                 previous_status: STATUS.DRAFT,
                 new_status: STATUS.DRAFT
-            });
+            }, transaction);
 
+            await transaction.commit();
+            transaction = null;
             return responseData.success({ id_prescription: body.id_prescription }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
+            if (transaction) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }
@@ -691,18 +763,45 @@ class PrescriptionDao {
         }
     }
 
-    async auditAction(body) {
+    async prepareOutput(body, includeContent = true) {
+        let transaction;
         try {
+            if (!['printed', 'downloaded', 'pdf_generated'].includes(body.action)) return responseData.bad_request('Acción de receta inválida.');
+            if (!body.id_business) return responseData.forbidden('No hay consultorio activo.');
             const permission = body.action === 'printed' ? PERMISSIONS.PRINT : PERMISSIONS.DOWNLOAD;
             const canAudit = await this.hasPermission(body.id_login, permission);
-            if (!canAudit) {
-                return responseData.unauthorized('No tienes permiso para esta accion de receta.');
-            }
+            const access = await this.getViewAccess(body.id_login);
+            if (!canAudit || (!access.canViewOwn && !access.canViewAll)) return responseData.forbidden('No tienes permiso para imprimir o generar PDF de esta receta.');
 
-            const prescription = await this.getPrescription(body.id_prescription, body.id_business);
+            transaction = await sequelize.transaction();
+            // Serialize output authorization with issue/cancel. Never use a previously loaded DTO.
+            await sequelize.query(`SELECT id_prescription FROM prescription WHERE ${collateEq('id_prescription', ':_id_prescription')}
+                AND ${collateEq('id_business', ':_id_business')} AND active = 1 FOR UPDATE`, {
+                replacements: { _id_prescription: body.id_prescription, _id_business: body.id_business }, type: QueryTypes.SELECT, transaction
+            });
+            const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction, true);
             if (!prescription) {
+                await transaction.rollback();
                 return responseData.notSuccess('Receta no encontrada.');
             }
+            if (!access.canViewAll && prescription.issuer_doctor_id !== body.id_login && prescription.created_by !== body.id_login) {
+                await transaction.rollback();
+                return responseData.forbidden('No tienes permiso para consultar esta receta.');
+            }
+            if (prescription.status !== STATUS.ISSUED) {
+                await transaction.rollback();
+                return responseData.bad_request(prescription.status === STATUS.CANCELLED
+                    ? 'Esta receta está cancelada. Solo puedes consultarla en el histórico; no se permite imprimir ni generar PDF.'
+                    : 'Solo las recetas emitidas pueden imprimirse o generar PDF. Emite la receta antes de continuar.', {
+                    id_prescription: prescription.id_prescription, status: prescription.status,
+                    cancellation_reason: prescription.cancellation_reason || null, cancelled_at: prescription.cancelled_at || null
+                });
+            }
+            let content;
+            if (includeContent) content = {
+                prescription: { ...prescription, items: await this.getItems(body.id_prescription, body.id_business, transaction, true) },
+                config: await this.getRawConfig(body.id_business, transaction, prescription.issuer_doctor_id) || {}
+            };
 
             await this.audit({
                 id_business: body.id_business,
@@ -712,13 +811,18 @@ class PrescriptionDao {
                 previous_status: prescription.status,
                 new_status: prescription.status,
                 metadata: body.metadata || null
-            });
+            }, transaction);
 
-            return responseData.success({ id_prescription: body.id_prescription, action: body.action }, Messages.DATA_GET_SUCCESSFULLY);
+            await transaction.commit();
+            transaction = null;
+            return responseData.success(content || { id_prescription: body.id_prescription, action: body.action }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
+            if (transaction) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }
+
+    async auditAction(body) { return this.prepareOutput(body, false); }
 
     prescriptionReplacements(payload, body, idPrescription, folio) {
         return {
@@ -733,6 +837,23 @@ class PrescriptionDao {
             _notes: payload.notes || null,
             _previous_prescription_id: payload.previous_prescription_id || null
         };
+    }
+
+    matchesCreateRequest(payload, current, storedItems) {
+        const text = value => value === null || value === undefined || value === '' ? '' : String(value);
+        const date = value => value instanceof Date
+            ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+            : text(value).slice(0, 10);
+        for (const field of ['id_person', 'issuer_doctor_id', 'diagnosis', 'notes', 'previous_prescription_id']) {
+            if (text(payload[field]) !== text(current[field])) return false;
+        }
+        if (date(payload.issue_date || new Date().toISOString().slice(0, 10)) !== date(current.issue_date)) return false;
+        const fields = ['generic_name', 'commercial_name', 'presentation', 'concentration', 'pharmaceutical_form',
+            'dose', 'administration_route', 'frequency', 'duration', 'quantity', 'indications'];
+        const normalize = items => (items || []).map((item, index) => ({
+            order: Number(item.sort_order || index + 1), values: fields.map(field => text(item[field]))
+        })).sort((a, b) => a.order - b.order);
+        return JSON.stringify(normalize(payload.items)) === JSON.stringify(normalize(storedItems));
     }
 
     async replaceItems(idPrescription, idBusiness, items, transaction) {
@@ -831,30 +952,7 @@ class PrescriptionDao {
     }
 
     async hasPermission(idLogin, permission) {
-        if (!idLogin) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-               INNER JOIN permission_rol pr ON ${collateEq('pr.id_rol', 'l.id_rol')} AND pr.active = 1
-               INNER JOIN cat_permission cp ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND l.active = 1
-                AND ${collateEq('cp.code', ':_permission')}
-                AND cp.active = 1
-              LIMIT 1`,
-            {
-                replacements: {
-                    _id_login: idLogin,
-                    _permission: permission
-                },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false});
     }
 
     async getPatient(idPerson, idBusiness, transaction = null) {
@@ -934,7 +1032,20 @@ class PrescriptionDao {
         return result[0] || null;
     }
 
-    async getPrescription(idPrescription, idBusiness, transaction = null) {
+    async getPrescription(idPrescription, idBusiness, transaction = null, lock = false) {
+        let current = null;
+        if (lock) {
+            // Lock only the prescription, not the presentation joins. A plain
+            // repeatable-read projection below may be older; current owns all
+            // persisted prescription fields and the issued doctor's snapshot.
+            const rows = await sequelize.query(`SELECT * FROM prescription
+                WHERE ${collateEq('id_prescription', ':_id_prescription')}
+                  AND ${collateEq('id_business', ':_id_business')} AND active = 1 LIMIT 1 FOR UPDATE`, {
+                replacements: { _id_prescription: idPrescription, _id_business: idBusiness }, type: QueryTypes.SELECT, transaction
+            });
+            if (!rows[0]) return null;
+            current = rows[0];
+        }
         const result = await sequelize.query(
             `SELECT p.*,
                     TRIM(CONCAT(IFNULL(person.name, ''), ' ', IFNULL(person.surname, ''))) AS patient_name,
@@ -965,16 +1076,17 @@ class PrescriptionDao {
             }
         );
 
+        if (current) return { ...result[0], ...current, doctor_name: current.doctor_name_snapshot || (result[0] && result[0].doctor_name) || null };
         return result[0] || null;
     }
 
-    async getItems(idPrescription, idBusiness, transaction = null) {
+    async getItems(idPrescription, idBusiness, transaction = null, lock = false) {
         return sequelize.query(
             `SELECT *
                FROM prescription_item
               WHERE ${collateEq('id_prescription', ':_id_prescription')}
                 AND ${collateEq('id_business', ':_id_business')}
-              ORDER BY sort_order ASC, created_at ASC`,
+              ORDER BY sort_order ASC, created_at ASC${lock ? ' FOR UPDATE' : ''}`,
             {
                 replacements: {
                     _id_prescription: idPrescription,
@@ -986,15 +1098,16 @@ class PrescriptionDao {
         );
     }
 
-    async getRawConfig(idBusiness, transaction = null) {
+    async getRawConfig(idBusiness, transaction = null, doctorLoginId = null) {
         const result = await sequelize.query(
             `SELECT *
                FROM prescription_config
               WHERE ${collateEq('id_business', ':_id_business')}
+                AND doctor_profile_id = (SELECT id_doctor_professional_profile FROM doctor_professional_profile WHERE id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci AND id_login COLLATE utf8mb4_unicode_ci = :_doctor_login COLLATE utf8mb4_unicode_ci LIMIT 1)
                 AND active = 1
               LIMIT 1`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _doctor_login: doctorLoginId },
                 type: QueryTypes.SELECT,
                 transaction
             }

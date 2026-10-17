@@ -6,6 +6,8 @@ const { csrfProtection } = require('../../middleware/csrf.middleware');
 const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middleware');
 const UserController = require('../../controller/mysql/user.controller');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.post('/create', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('admin.users', { resource: 'user.create' }), awaitHandlerFactory(UserController.SaveUser));
@@ -18,7 +20,7 @@ router.get('/professional-profile/me', Token.Auth, requireTenantOperational, awa
 
 router.get('/professional-profile/:id', Token.Auth, requireTenantOperational, requireSelfOrPermission('admin.users', { resource: 'user.professional_profile.view' }), awaitHandlerFactory(UserController.getProfessionalProfile));
 
-router.post('/professional-profile/:id', Token.Auth, csrfProtected, requireTenantOperational, requireSelfOrPermission('admin.users', { resource: 'user.professional_profile.save' }), awaitHandlerFactory(UserController.saveProfessionalProfile));
+router.post('/professional-profile/:id', Token.Auth, csrfProtected, requireTenantOperational, requireSelfOrPermission('admin.users', { resource: 'user.professional_profile.save' }), protectedBodyParser, awaitHandlerFactory(UserController.saveProfessionalProfile));
 
 router.put('/update/:id', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('admin.users', { resource: 'user.update' }), awaitHandlerFactory(UserController.UpdateUser));
 

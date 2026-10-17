@@ -34,6 +34,11 @@ class SuperAdminController extends httpResponseHelper {
         res.status(response.status).send(response);
     }
 
+    businessOptions = async(req, res) => {
+        const response = await SuperAdminDao.businessOptions(req.query || {});
+        res.status(response.status).send(response);
+    }
+
     dashboardSummary = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {

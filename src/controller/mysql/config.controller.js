@@ -2,6 +2,7 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const ConfigDao = require('../../Dao/mysql/config.dao');
+const responseData = require('../../util/responsedata');
 const { applyTenantToBody, DEFAULT_BUSINESS_ID, getBusinessIdFromToken } = require('../../util/tenant');
 
 class ConfigController extends httpResponseHelper{
@@ -96,6 +97,16 @@ themeList = async(req, res, next) =>{
   }
 
 themeGet = async(req, res, next) =>{
+    // Only an actually anonymous request may use public branding. An invalid
+    // session must not silently replace the current tenant's theme with it.
+    if (req.authTokenInvalid) {
+        const accessExpired = ['TokenExpiredError', 'missing_access_with_refresh'].includes(req.authTokenError);
+        const code = accessExpired ? 'AUTH_ACCESS_EXPIRED'
+            : req.authTokenError === 'inactive_session' ? 'AUTH_SESSION_INVALID' : 'AUTH_ACCESS_INVALID';
+        const denied = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code });
+        res.status(denied.status).send(denied);
+        return;
+    }
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
             response = await ConfigDao.theme_get(getBusinessIdFromToken(req.tokenDecode) || DEFAULT_BUSINESS_ID);

@@ -101,10 +101,10 @@ module.exports = {
     SP_UI_THEME_SAVE : 'CALL SP_ui_theme_save(:_code,:_id_login,:_id_business);',
     SP_CLINICAL_MODULE_CONFIG_GET : 'CALL SP_clinical_module_config_get(:_id_business);',
     SP_CLINICAL_MODULE_CONFIG_SAVE : 'CALL SP_clinical_module_config_save(:_config,:_id_login,:_id_business);',
-    SP_APPOINTMENT_CONFIG_GET : 'CALL SP_appointment_config_get(:_id_business);',
-    SP_APPOINTMENT_CONFIG_SAVE : 'CALL SP_appointment_config_save(:_config,:_id_login,:_id_business);',
+    SP_APPOINTMENT_CONFIG_GET : 'CALL SP_appointment_config_get(:_id_business,:_doctor_profile_id);',
+    SP_APPOINTMENT_CONFIG_SAVE : 'CALL SP_appointment_config_save(:_config,:_id_login,:_id_business,:_doctor_profile_id);',
     SP_APPOINTMENT_SAVE : 'CALL SP_appointment_save(:_appointment,:_id_login,:_id_business);',
-    SP_APPOINTMENT_LIST : 'CALL SP_appointment_list(:_date_from,:_date_to,:_id_person,:_id_business);',
+    SP_APPOINTMENT_LIST : 'CALL SP_appointment_list(:_date_from,:_date_to,:_id_person,:_id_business,:_doctor_profile_id);',
     SP_APPOINTMENT_DELETE : 'CALL SP_appointment_delete(:_id_appointment,:_id_login,:_id_business);',
     /**Obtiene la configuración de los tipos de odontograma */
     SP_CAT_TYPE_TOOTH_GET : 'CALL SP_Cat_Type_Tooth_Get();',

@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
@@ -76,30 +77,7 @@ class BusinessDao {
     }
 
     async hasPermission(idLogin, permission) {
-        if (!idLogin) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-               INNER JOIN permission_rol pr ON pr.id_rol COLLATE utf8mb4_unicode_ci = l.id_rol COLLATE utf8mb4_unicode_ci AND pr.active = 1
-               INNER JOIN cat_permission cp ON cp.id_cat_permission COLLATE utf8mb4_unicode_ci = pr.id_cat_permission COLLATE utf8mb4_unicode_ci
-              WHERE l.id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
-                AND l.active = 1
-                AND cp.code COLLATE utf8mb4_unicode_ci = :_permission COLLATE utf8mb4_unicode_ci
-                AND cp.active = 1
-              LIMIT 1`,
-            {
-                replacements: {
-                    _id_login: idLogin,
-                    _permission: permission
-                },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false});
     }
 }
 

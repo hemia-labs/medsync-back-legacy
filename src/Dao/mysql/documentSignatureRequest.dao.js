@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -18,6 +19,8 @@ const {
 } = require('../../services/documentSignature/documentSignatureRequest.constants');
 const EmailService = require('../../services/email/email.service');
 const documentSignatureEmailTemplate = require('../../services/email/templates/documentSignatureEmail.template');
+const planConsentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
+const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
@@ -173,28 +176,7 @@ function formatEmailDateTime(value) {
 
 class DocumentSignatureRequestDao {
     async hasPermission(idLogin, permission) {
-        if (!idLogin || !permission) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-              INNER JOIN permission_rol pr ON ${collateEq('pr.id_rol', 'l.id_rol')} AND pr.active = 1
-              INNER JOIN cat_permission cp ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND ${collateEq('cp.code', ':_permission')}
-                AND l.active = 1
-                AND cp.active = 1
-                AND cp.is_active = 1
-              LIMIT 1`,
-            {
-                replacements: { _id_login: idLogin, _permission: permission },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
     }
 
     async assertRequestPermission(body) {
@@ -251,7 +233,7 @@ class DocumentSignatureRequestDao {
 
     async getDocumentForRequest(idBusiness, idPatientDocument, transaction = null, forUpdate = false) {
         const rows = await sequelize.query(
-            `SELECT pd.id_patient_document, pd.id_business, pd.id_person, pd.document_type,
+            `SELECT pd.id_patient_document, pd.id_business, pd.id_person, pd.document_type, pd.origin, pd.treatment_plan_id,
                     pd.status, pd.active, pd.guardian_name_snapshot, pd.doctor_signature_snapshot,
                     dt.requires_patient_signature, dt.requires_tutor_signature, dt.requires_doctor_signature,
                     dt.requires_witness1_signature, dt.requires_witness2_signature
@@ -272,7 +254,8 @@ class DocumentSignatureRequestDao {
             }
         );
 
-        return rows[0] || null;
+        const document = await documentRequirements.decorate(rows[0], idBusiness, transaction);
+        return document ? planConsentDocuments.decorate(document, transaction) : null;
     }
 
     async getDocumentSignatures(idBusiness, idPatientDocument, transaction = null) {
@@ -460,6 +443,15 @@ class DocumentSignatureRequestDao {
             if (!document) {
                 await transaction.rollback();
                 return responseData.bad_request('Documento no encontrado.');
+            }
+
+            if (planConsentDocuments.isLinked(document)) {
+                const canUsePlan = await this.hasPermission(body.id_login, 'treatments.view') &&
+                    (await this.hasPermission(body.id_login, 'treatments.consent.view') || await this.hasPermission(body.id_login, 'treatments.consent.sign'));
+                if (!canUsePlan || !await planConsentDocuments.assertCurrent(document, transaction)) {
+                    await transaction.rollback();
+                    return forbidden('No puedes solicitar firma para esta versión del plan. Consulta el plan y prepara una versión vigente.');
+                }
             }
 
             const patientBelongsToTenant = await this.validatePatientTenant(document, transaction);

@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const Auth = require('../../models/mysql/auth.model');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -561,31 +562,12 @@ const handleRefreshTokenReuse = async (row, tokenFingerprint) => {
     );
 };
 
-const getRolePermissions = async (idRol) => {
-    if (!idRol) {
-        return [];
-    }
-
-    return sequelize.query(
-        `SELECT cp.code
-           FROM permission_rol pr
-           INNER JOIN cat_permission cp
-                   ON cp.id_cat_permission = pr.id_cat_permission
-                  AND cp.active = 1
-          WHERE pr.id_rol = :_id_rol
-            AND pr.active = 1
-          ORDER BY cp.value, cp.sec`,
-        {
-            replacements: { _id_rol: idRol },
-            type: QueryTypes.SELECT
-        }
-    );
-};
+const getRolePermissions = async (idLogin) => effectivePermissions.rows(idLogin);
 
 const buildAuthPayload = async (authRow, fallbackIdLogin) => {
     const idLogin = authRow.id_login || fallbackIdLogin;
     const role = await getLoginRole(idLogin);
-    const permissionRows = await getRolePermissions(role ? role.id_rol : null);
+    const permissionRows = await getRolePermissions(idLogin);
     const permissions = permissionRows.map((item) => item.code);
 
     return {

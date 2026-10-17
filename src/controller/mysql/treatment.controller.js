@@ -192,6 +192,26 @@ DeleteTreatment = async(req, res, next) =>{
     res.status(response.status).send(response);
   }
 
+  UpdateTreatmentPlan = async(req, res) => {
+    const response = await TreatmentDao.updatePlan(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+
+  GetSigningDoctors = async(req, res) => {
+    const response = await TreatmentDao.signingDoctors(applyTenantToBody(req, { id_person: req.params.id_person }));
+    res.status(response.status).send(response);
+  }
+
+  PrepareConsentDocument = async(req, res) => {
+    const response = await TreatmentDao.prepareConsentDocument(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+
+  SignPreparedConsent = async(req, res) => {
+    const response = await TreatmentDao.signPreparedConsent(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+
   SavePlanTreatment = async(req, res, next) =>{
     let _body = applyTenantToBody(req, req.body);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);

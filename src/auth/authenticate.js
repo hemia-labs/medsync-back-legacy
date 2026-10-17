@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const configjwt = require('../config/jwt');
 const AuthCookieConfig = require('../config/authCookie.config');
 const { getHeaders } = require('../util/headers');
+const activePrincipal = require('./activePrincipal');
 
 //Colocar en false para productivo
 const Istest = false;
@@ -48,12 +49,18 @@ var Auth = require('express').Router();
         return isD2CookieAuthEnabled() ? getAccessCookieToken(req) : getAuthorizationToken(req);
   }
 
+  function hasRefreshCookie(req) {
+        if (!isD2CookieAuthEnabled()) return false;
+        const names = AuthCookieConfig.getCookieNames(AuthCookieConfig.assertAuthCookieConfig());
+        return Boolean(req && req.cookies && req.cookies[names.refresh]);
+  }
+
 /**
  * Verifica el token
  */
-  Auth.use((req, res, next) => {
+  Auth.use(async (req, res, next) => {
       const token = getAuthToken(req);
-      let response = responseData.unauthorized("Token Invalido.");;
+      let response = responseData.unauthorized('Token Invalido.', { code: 'AUTH_ACCESS_INVALID' });
 
       if (Istest)
       {
@@ -62,40 +69,65 @@ var Auth = require('express').Router();
       }
 
       if (token) {
-        jwt.verify(token, configjwt.key, { algorithms: ['HS256'] }, (err, decoded) => {
-          if (err) {
-            res.status(response.status).send(response);
-          } else {
-            req.tokenDecode = decoded;
-            next();
+        let decoded;
+        try { decoded = jwt.verify(token, configjwt.key, { algorithms: ['HS256'] }); }
+        catch (error) {
+          if (error.name === 'TokenExpiredError') {
+            response = responseData.unauthorized('El acceso ha vencido.', { code: 'AUTH_ACCESS_EXPIRED' });
           }
-        });
+          res.status(response.status).send(response); return;
+        }
+        try {
+          const principal = await activePrincipal(decoded);
+          if (!principal) {
+            response = responseData.unauthorized('La sesion ya no esta activa.', { code: 'AUTH_SESSION_INVALID' });
+            res.status(response.status).send(response); return;
+          }
+          req.tokenDecode = principal;
+          next();
+        } catch (error) { next(error); }
       } else {
+        // Presence only permits the client to attempt the refresh endpoint. It
+        // never authorizes this request or supplies identity from an old token.
+        if (hasRefreshCookie(req)) {
+          response = responseData.unauthorized('El acceso ha vencido.', { code: 'AUTH_ACCESS_EXPIRED' });
+        }
         res.status(response.status).send(response);
       }
   });
 
   var OptionalAuth = require('express').Router();
-  OptionalAuth.use((req, res, next) => {
+  OptionalAuth.use(async (req, res, next) => {
       const token = getAuthToken(req);
       req.authTokenPresent = Boolean(token);
       req.authTokenInvalid = false;
       req.authTokenSource = isD2CookieAuthEnabled() ? 'cookie' : 'authorization';
 
       if (!token) {
+        if (hasRefreshCookie(req)) {
+          req.authTokenInvalid = true;
+          req.authTokenError = 'missing_access_with_refresh';
+        }
         next();
         return;
       }
 
-      jwt.verify(token, configjwt.key, { algorithms: ['HS256'] }, (err, decoded) => {
-        if (!err) {
-          req.tokenDecode = decoded;
-        } else {
+      let decoded;
+      try { decoded = jwt.verify(token, configjwt.key, { algorithms: ['HS256'] }); }
+      catch (error) {
+        req.authTokenInvalid = true;
+        req.authTokenError = error.name || 'invalid_token';
+        next(); return;
+      }
+      try {
+        const principal = await activePrincipal(decoded);
+        if (principal) req.tokenDecode = principal;
+        else {
           req.authTokenInvalid = true;
-          req.authTokenError = err.name || 'invalid_token';
+          req.authTokenError = 'inactive_session';
         }
         next();
-      });
+      } catch (error) { next(error); }
   });
 
 

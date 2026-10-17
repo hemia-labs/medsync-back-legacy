@@ -1,9 +1,10 @@
+const effectivePermissions = require('../../util/effectivePermissions');
+const { resolveDashboardAccess, PERMISSIONS } = require('../../util/dashboardAccess');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
-const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
 const LicenseUsageDao = require('./licenseUsage.dao');
 const {
     DASHBOARD_ACCESS_PERMISSIONS,
@@ -226,7 +227,7 @@ function percentage(numerator, denominator) {
     const normalizedDenominator = Number(denominator || 0);
 
     if (normalizedDenominator <= 0) {
-        return 0;
+        return null;
     }
 
     return Number(((normalizedNumerator / normalizedDenominator) * 100).toFixed(2));
@@ -274,638 +275,305 @@ function safeRoleRows(rows) {
         }));
 }
 
+const unavailable = (reason, fields) => ({ available: false, reason, ...Object.fromEntries(fields.map(key => [key, null])) });
+const ownScope = access => access.scope.mode === 'own';
+const publicAccess = access => ({ families: access.families, scope: access.scope, canSelectTenant: access.canSelectTenant,
+    canSelectOwn: Boolean(access.doctorProfile), administrativeTeam: Boolean(access.administrativeTeam) });
+const PRESCRIPTION_ISSUED_AT = "COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00'))";
+
+// An author/capturist is not necessarily the professional responsible for care.
+function professionalScope(access, alias, profileField, loginField = null) {
+    if (!ownScope(access)) return '';
+    const profile = collateEq(`${alias}.${profileField}`, ':_doctor_profile');
+    const legacy = loginField ? ` OR (NULLIF(${alias}.${profileField}, '') IS NULL AND ${collateEq(`${alias}.${loginField}`, ':_doctor_login')})` : '';
+    return ` AND (${profile}${legacy})`;
+}
+function replacementsFor(idBusiness, range, access) {
+    return { _id_business: idBusiness, _from: range.fromDateTime, _to: range.toDateTime,
+        _from_date: range.from, _to_date: range.to, _doctor_profile: access.scope.doctorProfileId || null,
+        _doctor_login: access.scope.idLogin || null };
+}
+function dashboardFor(license, access) {
+    const dashboard = getEffectiveDashboardCapabilities(license.plan ? license.plan.code : null);
+    const { administrative, clinical, financial } = access.families;
+    const team = Boolean(access.administrativeTeam);
+    const allowed = { planStatus: team, licenseUsage: team, administrativeAlerts: team, basicActivity: administrative || clinical,
+        trends: administrative || clinical, operationalAnalysis: administrative || clinical || financial,
+        teamBreakdown: team, professionalBreakdown: clinical, branchBreakdown: false, advancedReports: team };
+    Object.keys(dashboard.capabilities).forEach(key => { dashboard.capabilities[key] = Boolean(dashboard.capabilities[key] && allowed[key]); });
+    dashboard.access = publicAccess(access);
+    return dashboard;
+}
+function metricDefinitions(access) {
+    const own = ownScope(access);
+    return {
+        patientsCreated: { available: !own, dateBasis: 'person.created_at', reason: own ? 'El expediente es compartido y no tiene propietario médico.' : null },
+        appointmentsCreated: { available: true, dateBasis: 'appointment.created_at', attribution: 'doctor_profile_id' },
+        appointmentsScheduled: { available: true, dateBasis: 'appointment.appointment_date', attribution: 'doctor_profile_id' },
+        prescriptionsIssued: { available: true, dateBasis: 'issued_at (issue_date para registros antiguos)', attribution: 'doctor emisor', excludesCancelled: true },
+        clinicalHistoriesFinalized: { available: true, dateBasis: 'finalized_at', attribution: 'doctor responsable' }
+    };
+}
+
 class BusinessDashboardDao {
     async canAccessTenantDashboard(idLogin) {
-        if (!idLogin) {
-            return false;
-        }
-
-        const rows = await sequelize.query(
-            `SELECT cp.code
-               FROM login l
-              INNER JOIN permission_rol pr
-                      ON ${collateEq('pr.id_rol', 'l.id_rol')}
-                     AND pr.active = 1
-              INNER JOIN cat_permission cp
-                      ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-                     AND cp.active = 1
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND cp.code IN (:_permissions)
-              LIMIT 1`,
-            {
-                replacements: {
-                    _id_login: idLogin,
-                    _permissions: DASHBOARD_ACCESS_PERMISSIONS
-                },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return Boolean(rows && rows.length);
+        const rows = await effectivePermissions.rows(idLogin);
+        const navigation = [...DASHBOARD_ACCESS_PERMISSIONS, PERMISSIONS.administrative, PERMISSIONS.clinical, PERMISSIONS.financial];
+        return rows.some(row => navigation.includes(row.code));
     }
 
-    async resolveDashboardContext(idBusiness, featureCode, auditContext = {}) {
-        const featureValidation = await assertPlanFeature(idBusiness, featureCode, auditContext);
-
-        if (featureValidation.error) {
-            return {
-                error: featureValidation.error
-            };
-        }
-
-        return {
-            license: featureValidation.license,
-            dashboard: featureValidation.dashboard
-        };
+    async resolveDashboardContext(idBusiness, featureCode, auditContext = {}, query = {}) {
+        const access = await resolveDashboardAccess(idBusiness, auditContext.actorLoginId, { scope: query.scope });
+        if (access.error) return access;
+        if (featureCode === 'team_usage_metrics' && !access.administrativeTeam) return { error: responseData.forbidden('No tienes permiso para consultar el equipo del consultorio.') };
+        if (featureCode === 'professional_activity_metrics' && !access.families.clinical) return { error: responseData.forbidden('No tienes permiso para consultar indicadores clínicos.') };
+        if (featureCode === 'trends' && !access.families.administrative && !access.families.clinical) return { error: responseData.forbidden('No tienes permiso para consultar estas tendencias.') };
+        const feature = await assertPlanFeature(idBusiness, featureCode, auditContext);
+        if (feature.error) return { error: feature.error };
+        return { license: feature.license, access, dashboard: dashboardFor(feature.license, access) };
     }
 
-    async summary(idBusiness, query = {}) {
+    async summary(idBusiness, query = {}, auditContext = {}) {
         const range = normalizeRange(query);
-
-        if (range.error) {
-            return range.error;
-        }
-
+        if (range.error) return range.error;
         try {
-            const license = await getBusinessEffectiveLicense(idBusiness);
+            const context = await this.resolveDashboardContext(idBusiness, 'basic_dashboard', auditContext, query);
+            if (context.error) return context.error;
+            const { access, license, dashboard } = context;
+            const activity = await this.activityTotals(idBusiness, range, access);
+            return responseData.success({ range: { from: range.from, to: range.to }, access: publicAccess(access),
+                business: access.administrativeTeam ? buildBusinessPayload(license) : { id_business: idBusiness, name: (license.business || {}).name || null },
+                ...(access.administrativeTeam ? { license: buildLicensePayload(license) } : {}),
+                activity, metricDefinitions: this.allowedDefinitions(access), dashboard, alerts: [] }, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
+    }
 
-            if (!license) {
-                return responseData.bad_request('Negocio invalido para consultar dashboard.');
-            }
+    allowedDefinitions(access) {
+        const definitions = metricDefinitions(access);
+        if (!access.families.administrative) ['patientsCreated', 'appointmentsCreated', 'appointmentsScheduled'].forEach(key => delete definitions[key]);
+        if (!access.families.clinical) ['prescriptionsIssued', 'clinicalHistoriesFinalized'].forEach(key => delete definitions[key]);
+        return definitions;
+    }
 
-            const replacements = {
-                _id_business: idBusiness,
-                _from: range.fromDateTime,
-                _to: range.toDateTime,
-                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES
-            };
-
-            const [
-                patientsCreatedRows,
-                appointmentsCreatedRows,
-                prescriptionsIssuedRows,
-                clinicalHistoriesFinalizedRows
-            ] = await Promise.all([
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM person p
-                      WHERE ${collateEq('p.id_business', ':_id_business')}
-                        AND p.created_at >= :_from
-                        AND p.created_at <= :_to`,
-                    replacements
-                ),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.created_at >= :_from
-                        AND a.created_at <= :_to`,
-                    replacements
-                ),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM prescription pr
-                      WHERE ${collateEq('pr.id_business', ':_id_business')}
-                        AND pr.status = 'issued'
-                        AND COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00')) >= :_from
-                        AND COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00')) <= :_to`,
-                    replacements
-                ),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM clinical_histories ch
-                      WHERE ${collateEq('ch.business_id', ':_id_business')}
-                        AND ch.status = 'FINALIZED'
-                        AND ch.finalized_at >= :_from
-                        AND ch.finalized_at <= :_to
-                        AND ch.deleted_at IS NULL`,
-                    replacements
-                )
-            ]);
-
-            return responseData.success({
-                range: {
-                    from: range.from,
-                    to: range.to
-                },
-                business: buildBusinessPayload(license),
-                license: buildLicensePayload(license),
-                activity: {
-                    patientsCreated: countFromRows(patientsCreatedRows),
-                    appointmentsCreated: countFromRows(appointmentsCreatedRows),
-                    prescriptionsIssued: countFromRows(prescriptionsIssuedRows),
-                    clinicalHistoriesFinalized: countFromRows(clinicalHistoriesFinalizedRows)
-                },
-                dashboard: getEffectiveDashboardCapabilities(license.plan ? license.plan.code : null),
-                alerts: []
-            }, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            return SequelizeException(error, Messages.DATA_GET_ERROR);
+    activityQueries(access) {
+        const queries = {};
+        if (access.families.administrative) {
+            queries.patientsCreated = ownScope(access) ? null : `SELECT COUNT(*) AS total FROM person p
+                WHERE ${collateEq('p.id_business', ':_id_business')} AND p.created_at >= :_from AND p.created_at <= :_to`;
+            queries.appointmentsCreated = `SELECT COUNT(*) AS total FROM appointment a
+                WHERE ${collateEq('a.id_business', ':_id_business')} ${professionalScope(access, 'a', 'doctor_profile_id')}
+                  AND a.active = 1 AND a.created_at >= :_from AND a.created_at <= :_to`;
         }
+        if (access.families.clinical) {
+            queries.prescriptionsIssued = `SELECT COUNT(*) AS total FROM prescription pr
+                WHERE ${collateEq('pr.id_business', ':_id_business')} ${professionalScope(access, 'pr', 'issuer_doctor_profile_id', 'issuer_doctor_id')}
+                  AND pr.active = 1 AND pr.status = 'issued' AND ${PRESCRIPTION_ISSUED_AT} >= :_from AND ${PRESCRIPTION_ISSUED_AT} <= :_to`;
+            queries.clinicalHistoriesFinalized = `SELECT COUNT(*) AS total FROM clinical_histories ch
+                WHERE ${collateEq('ch.business_id', ':_id_business')} ${professionalScope(access, 'ch', 'doctor_responsible_profile_id', 'doctor_responsible_user_id')}
+                  AND ch.status = 'FINALIZED' AND ch.deleted_at IS NULL AND ch.finalized_at >= :_from AND ch.finalized_at <= :_to`;
+        }
+        return queries;
+    }
+
+    async activityTotals(idBusiness, range, access) {
+        const replacements = replacementsFor(idBusiness, range, access);
+        const entries = await Promise.all(Object.entries(this.activityQueries(access)).map(async ([key, sql]) => [key, sql ? countFromRows(await this.countMetric(sql, replacements)) : null]));
+        return Object.fromEntries(entries);
     }
 
     async trends(idBusiness, query = {}, auditContext = {}) {
-        const range = normalizeRange(query);
-
-        if (range.error) {
-            return range.error;
-        }
-
-        const granularityResult = normalizeGranularity(query.granularity);
-
-        if (granularityResult.error) {
-            return granularityResult.error;
-        }
-
+        const range = normalizeRange(query), parsed = normalizeGranularity(query.granularity);
+        if (range.error || parsed.error) return range.error || parsed.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'trends', auditContext);
-
-            if (context.error) {
-                return context.error;
-            }
-
-            const { granularity } = granularityResult;
-            const periods = buildPeriods(range, granularity);
-            const seriesByPeriod = {};
-
-            periods.forEach((period) => {
-                seriesByPeriod[period] = {
-                    period,
-                    patientsCreated: 0,
-                    appointmentsCreated: 0,
-                    appointmentsScheduled: 0,
-                    prescriptionsIssued: 0,
-                    clinicalHistoriesFinalized: 0
-                };
-            });
-
-            const replacements = {
-                _id_business: idBusiness,
-                _from: range.fromDateTime,
-                _to: range.toDateTime,
-                _from_date: range.from,
-                _to_date: range.to
-            };
-
-            const prescriptionIssueDate = "COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00'))";
-
-            const [
-                patientsRows,
-                appointmentsCreatedRows,
-                appointmentsScheduledRows,
-                prescriptionsIssuedRows,
-                clinicalHistoriesFinalizedRows
-            ] = await Promise.all([
-                this.aggregateMetricByPeriod(
-                    `SELECT ${periodExpression('p.created_at', granularity)} AS period,
-                            COUNT(*) AS total
-                       FROM person p
-                      WHERE ${collateEq('p.id_business', ':_id_business')}
-                        AND p.created_at >= :_from
-                        AND p.created_at <= :_to
-                      GROUP BY period
-                      ORDER BY period`,
-                    replacements
-                ),
-                this.aggregateMetricByPeriod(
-                    `SELECT ${periodExpression('a.created_at', granularity)} AS period,
-                            COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.created_at >= :_from
-                        AND a.created_at <= :_to
-                      GROUP BY period
-                      ORDER BY period`,
-                    replacements
-                ),
-                this.aggregateMetricByPeriod(
-                    `SELECT ${periodExpression('a.appointment_date', granularity)} AS period,
-                            COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.appointment_date >= :_from_date
-                        AND a.appointment_date <= :_to_date
-                      GROUP BY period
-                      ORDER BY period`,
-                    replacements
-                ),
-                this.aggregateMetricByPeriod(
-                    `SELECT ${periodExpression(prescriptionIssueDate, granularity)} AS period,
-                            COUNT(*) AS total
-                       FROM prescription pr
-                      WHERE ${collateEq('pr.id_business', ':_id_business')}
-                        AND pr.status = 'issued'
-                        AND ${prescriptionIssueDate} >= :_from
-                        AND ${prescriptionIssueDate} <= :_to
-                      GROUP BY period
-                      ORDER BY period`,
-                    replacements
-                ),
-                this.aggregateMetricByPeriod(
-                    `SELECT ${periodExpression('ch.finalized_at', granularity)} AS period,
-                            COUNT(*) AS total
-                       FROM clinical_histories ch
-                      WHERE ${collateEq('ch.business_id', ':_id_business')}
-                        AND ch.status = 'FINALIZED'
-                        AND ch.finalized_at >= :_from
-                        AND ch.finalized_at <= :_to
-                        AND ch.deleted_at IS NULL
-                      GROUP BY period
-                      ORDER BY period`,
-                    replacements
-                )
-            ]);
-
-            this.applyPeriodRows(seriesByPeriod, patientsRows, 'patientsCreated');
-            this.applyPeriodRows(seriesByPeriod, appointmentsCreatedRows, 'appointmentsCreated');
-            this.applyPeriodRows(seriesByPeriod, appointmentsScheduledRows, 'appointmentsScheduled');
-            this.applyPeriodRows(seriesByPeriod, prescriptionsIssuedRows, 'prescriptionsIssued');
-            this.applyPeriodRows(seriesByPeriod, clinicalHistoriesFinalizedRows, 'clinicalHistoriesFinalized');
-
-            return responseData.success({
-                range: {
-                    from: range.from,
-                    to: range.to
-                },
-                granularity,
-                weekPeriodFormat: granularity === 'week' ? 'YYYY-MM-DD, lunes de inicio de semana' : null,
-                series: periods.map((period) => seriesByPeriod[period])
-            }, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            return SequelizeException(error, Messages.DATA_GET_ERROR);
-        }
+            const context = await this.resolveDashboardContext(idBusiness, 'trends', auditContext, query);
+            if (context.error) return context.error;
+            const { access } = context, { granularity } = parsed;
+            const periods = buildPeriods(range, granularity), queries = this.activityQueries(access);
+            if (access.families.administrative) queries.appointmentsScheduled = `SELECT COUNT(*) AS total FROM appointment a
+                WHERE ${collateEq('a.id_business', ':_id_business')} ${professionalScope(access, 'a', 'doctor_profile_id')}
+                  AND a.active = 1 AND a.appointment_date >= :_from_date AND a.appointment_date <= :_to_date`;
+            const dates = { patientsCreated: 'p.created_at', appointmentsCreated: 'a.created_at', appointmentsScheduled: 'a.appointment_date',
+                prescriptionsIssued: PRESCRIPTION_ISSUED_AT, clinicalHistoriesFinalized: 'ch.finalized_at' };
+            const series = Object.fromEntries(periods.map(period => [period, { period, ...Object.fromEntries(Object.entries(queries).map(([key, sql]) => [key, sql ? 0 : null])) }]));
+            const replacements = replacementsFor(idBusiness, range, access);
+            await Promise.all(Object.entries(queries).map(async ([key, sql]) => {
+                if (!sql) return;
+                const grouped = sql.replace('SELECT COUNT(*) AS total', `SELECT ${periodExpression(dates[key], granularity)} AS period, COUNT(*) AS total`) + ' GROUP BY period ORDER BY period';
+                const rows = await this.countMetric(grouped, replacements);
+                rows.forEach(row => { if (series[row.period]) series[row.period][key] = Number(row.total || 0); });
+            }));
+            return responseData.success({ range: { from: range.from, to: range.to }, access: publicAccess(access), metricDefinitions: this.allowedDefinitions(access),
+                granularity, weekPeriodFormat: granularity === 'week' ? 'YYYY-MM-DD, lunes de inicio de semana' : null,
+                series: periods.map(period => series[period]) }, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
     async operationalSummary(idBusiness, query = {}, auditContext = {}) {
         const range = normalizeRange(query);
-
-        if (range.error) {
-            return range.error;
-        }
-
+        if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'operational_analysis', auditContext);
-
-            if (context.error) {
-                return context.error;
+            const context = await this.resolveDashboardContext(idBusiness, 'operational_analysis', auditContext, query);
+            if (context.error) return context.error;
+            const { access } = context, families = access.families, previousRange = buildPreviousRange(range);
+            const replacements = replacementsFor(idBusiness, range, access);
+            const result = { range: { from: range.from, to: range.to }, previousRange: { from: previousRange.from, to: previousRange.to },
+                access: publicAccess(access), periodComparison: {}, decisionMetrics: {}, alerts: [] };
+            const [currentActivity, previousActivity] = await Promise.all([this.activityTotals(idBusiness, range, access), this.activityTotals(idBusiness, previousRange, access)]);
+            Object.keys(currentActivity).forEach(key => { result.periodComparison[key] = currentActivity[key] === null ? null : compareMetric(currentActivity[key], previousActivity[key]); });
+            if (families.administrative) {
+                const [rows, retained] = await Promise.all([
+                    this.countMetric(`SELECT COALESCE(a.status, 'unknown') AS status, COUNT(*) AS total FROM appointment a
+                        WHERE ${collateEq('a.id_business', ':_id_business')} ${professionalScope(access, 'a', 'doctor_profile_id')}
+                          AND a.active = 1 AND a.appointment_date >= :_from_date AND a.appointment_date <= :_to_date
+                        GROUP BY COALESCE(a.status, 'unknown') ORDER BY status`, replacements),
+                    this.firstVisitRetentionSummary(replacements, access)
+                ]);
+                const byStatus = countByStatus(APPOINTMENT_STATUSES, rows), scheduled = byStatus.reduce((sum, row) => sum + row.count, 0);
+                result.appointments = { total: currentActivity.appointmentsCreated, scheduled, byStatus, dateBasis: 'Estado actual de citas programadas en el periodo' };
+                const health = { scheduled };
+                [['completed', 'completed'], ['cancelled', 'cancelled'], ['noShow', 'no_show'], ['pendingConfirmation', 'pending_confirmation']].forEach(([key, status]) => {
+                    health[key] = countStatus(byStatus, status); health[`${key}Rate`] = percentage(health[key], scheduled);
+                });
+                result.decisionMetrics.appointmentHealth = health;
+                const retention = retained[0] || {}, firstVisitPatients = Number(retention.firstVisitPatients || 0), retainedPatients = Number(retention.retainedPatients || 0);
+                result.decisionMetrics.retention = { available: true, firstVisitPatients, retainedPatients, retentionRate: percentage(retainedPatients, firstVisitPatients),
+                    definition: 'Pacientes cuya primera cita completada ocurrió en el periodo y que completaron otra antes de su cierre; excluye citas futuras.', observationEnd: range.to };
             }
-
-            const previousRange = buildPreviousRange(range);
-            const currentReplacements = {
-                _id_business: idBusiness,
-                _from: range.fromDateTime,
-                _to: range.toDateTime,
-                _from_date: range.from,
-                _to_date: range.to
-            };
-
-            const [
-                appointmentsTotalRows,
-                appointmentsScheduledRows,
-                appointmentsStatusRows,
-                prescriptionsRows,
-                clinicalHistoryRows,
-                retentionRows,
-                followUpRows,
-                treatmentEconomicsRows,
-                currentActivity,
-                previousActivity
-            ] = await Promise.all([
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.created_at >= :_from
-                        AND a.created_at <= :_to`,
-                    currentReplacements
-                ),
-                this.countMetric(
-                    `SELECT COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.appointment_date >= :_from_date
-                        AND a.appointment_date <= :_to_date`,
-                    currentReplacements
-                ),
-                this.countMetric(
-                    `SELECT COALESCE(a.status, 'unknown') AS status,
-                            COUNT(*) AS total
-                       FROM appointment a
-                      WHERE ${collateEq('a.id_business', ':_id_business')}
-                        AND a.appointment_date >= :_from_date
-                        AND a.appointment_date <= :_to_date
-                      GROUP BY COALESCE(a.status, 'unknown')
-                      ORDER BY status`,
-                    currentReplacements
-                ),
-                this.prescriptionStatusSummary(currentReplacements),
-                this.clinicalHistoryStatusSummary(currentReplacements),
-                this.firstVisitRetentionSummary(currentReplacements),
-                this.followUpCoverageSummary(currentReplacements),
-                this.treatmentEconomicsSummary(currentReplacements),
-                this.activityTotals(idBusiness, range),
-                this.activityTotals(idBusiness, previousRange)
-            ]);
-
-            const prescriptionByStatus = countByStatus(PRESCRIPTION_STATUSES, prescriptionsRows);
-            const clinicalHistoryByStatus = countByStatus(CLINICAL_HISTORY_STATUSES, clinicalHistoryRows);
-            const clinicalDrafts = countStatus(clinicalHistoryByStatus, 'DRAFT');
-            const appointmentByStatus = countByStatus(APPOINTMENT_STATUSES, appointmentsStatusRows);
-            const scheduledAppointments = countFromRows(appointmentsScheduledRows);
-            const completedAppointments = countStatus(appointmentByStatus, 'completed');
-            const cancelledAppointments = countStatus(appointmentByStatus, 'cancelled');
-            const noShowAppointments = countStatus(appointmentByStatus, 'no_show');
-            const pendingConfirmationAppointments = countStatus(appointmentByStatus, 'pending_confirmation');
-            const retention = retentionRows && retentionRows[0] ? retentionRows[0] : {};
-            const followUps = followUpRows && followUpRows[0] ? followUpRows[0] : {};
-            const treatmentEconomics = treatmentEconomicsRows && treatmentEconomicsRows[0] ? treatmentEconomicsRows[0] : {};
-            const firstVisitPatients = Number(retention.firstVisitPatients || 0);
-            const retainedPatients = Number(retention.retainedPatients || 0);
-            const dueFollowUps = Number(followUps.dueFollowUps || 0);
-            const scheduledFollowUps = Number(followUps.scheduledFollowUps || 0);
-            const patientsWithEstimatedTreatment = Number(treatmentEconomics.patientsWithEstimatedTreatment || 0);
-            const treatmentItemsWithCost = Number(treatmentEconomics.treatmentItemsWithCost || 0);
-            const totalEstimatedTreatmentValue = Number(treatmentEconomics.totalEstimatedTreatmentValue || 0);
-            const averageTreatmentValuePerPatient = Number(treatmentEconomics.averageTreatmentValuePerPatient || 0);
-
-            return responseData.success({
-                range: {
-                    from: range.from,
-                    to: range.to
-                },
-                previousRange: {
-                    from: previousRange.from,
-                    to: previousRange.to
-                },
-                appointments: {
-                    total: countFromRows(appointmentsTotalRows),
-                    scheduled: countFromRows(appointmentsScheduledRows),
-                    byStatus: appointmentByStatus
-                },
-                prescriptions: {
-                    total: (prescriptionByStatus || []).reduce((acc, item) => acc + Number(item.count || 0), 0),
-                    issued: countStatus(prescriptionByStatus, 'issued'),
-                    drafts: countStatus(prescriptionByStatus, 'draft'),
-                    cancelled: countStatus(prescriptionByStatus, 'cancelled'),
-                    byStatus: prescriptionByStatus
-                },
-                clinicalHistories: {
-                    total: (clinicalHistoryByStatus || []).reduce((acc, item) => acc + Number(item.count || 0), 0),
-                    finalized: countStatus(clinicalHistoryByStatus, 'FINALIZED'),
-                    drafts: clinicalDrafts,
-                    pending: (clinicalHistoryByStatus || [])
-                        .filter((item) => item.status !== 'FINALIZED')
-                        .reduce((acc, item) => acc + Number(item.count || 0), 0),
-                    byStatus: clinicalHistoryByStatus
-                },
-                periodComparison: {
-                    patientsCreated: compareMetric(currentActivity.patientsCreated, previousActivity.patientsCreated),
-                    appointmentsCreated: compareMetric(currentActivity.appointmentsCreated, previousActivity.appointmentsCreated),
-                    prescriptionsIssued: compareMetric(currentActivity.prescriptionsIssued, previousActivity.prescriptionsIssued),
-                    clinicalHistoriesFinalized: compareMetric(currentActivity.clinicalHistoriesFinalized, previousActivity.clinicalHistoriesFinalized)
-                },
-                decisionMetrics: {
-                    appointmentHealth: {
-                        scheduled: scheduledAppointments,
-                        completed: completedAppointments,
-                        completedRate: percentage(completedAppointments, scheduledAppointments),
-                        cancelled: cancelledAppointments,
-                        cancelledRate: percentage(cancelledAppointments, scheduledAppointments),
-                        noShow: noShowAppointments,
-                        noShowRate: percentage(noShowAppointments, scheduledAppointments),
-                        pendingConfirmation: pendingConfirmationAppointments,
-                        pendingConfirmationRate: percentage(pendingConfirmationAppointments, scheduledAppointments)
-                    },
-                    retention: {
-                        firstVisitPatients,
-                        retainedPatients,
-                        retentionRate: percentage(retainedPatients, firstVisitPatients)
-                    },
-                    followUps: {
-                        due: dueFollowUps,
-                        scheduled: scheduledFollowUps,
-                        coverageRate: percentage(scheduledFollowUps, dueFollowUps)
-                    },
-                    treatmentEconomics: {
-                        patientsWithEstimatedTreatment,
-                        treatmentItemsWithCost,
-                        totalEstimatedTreatmentValue,
-                        averageTreatmentValuePerPatient
-                    }
-                },
-                alerts: []
-            }, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            return SequelizeException(error, Messages.DATA_GET_ERROR);
-        }
+            if (families.clinical) {
+                const [prescriptions, histories] = await Promise.all([this.prescriptionStatusSummary(replacements, access), this.clinicalHistoryStatusSummary(replacements, access)]);
+                const p = countByStatus(PRESCRIPTION_STATUSES, prescriptions), h = countByStatus(CLINICAL_HISTORY_STATUSES, histories);
+                result.prescriptions = { total: p.reduce((sum, row) => sum + row.count, 0), issued: countStatus(p, 'issued'), drafts: countStatus(p, 'draft'), cancelled: countStatus(p, 'cancelled'), byStatus: p,
+                    dateBasis: 'Estado actual de recetas creadas en el periodo' };
+                result.clinicalHistories = { total: h.reduce((sum, row) => sum + row.count, 0), finalized: countStatus(h, 'FINALIZED'), drafts: countStatus(h, 'DRAFT'), pending: countStatus(h, 'DRAFT'), byStatus: h,
+                    dateBasis: 'Estado actual de historias creadas en el periodo' };
+                if (ownScope(access)) result.decisionMetrics.followUps = unavailable('Los seguimientos actuales no tienen un doctor responsable atribuible.', ['due', 'scheduled', 'coverageRate']);
+                else {
+                    const follow = (await this.followUpCoverageSummary(replacements))[0] || {}, due = Number(follow.dueFollowUps || 0), scheduled = Number(follow.scheduledFollowUps || 0);
+                    result.decisionMetrics.followUps = { available: true, due, scheduled, coverageRate: percentage(scheduled, due),
+                        definition: 'Seguimientos activos con próxima fecha en el periodo y alguna cita vinculada vigente en esa fecha o después.' };
+                }
+            }
+            if (families.financial) {
+                const fields = ['patientsWithEstimatedTreatment', 'treatmentItemsWithCost', 'totalEstimatedTreatmentValue', 'averageTreatmentValuePerPatient'];
+                if (ownScope(access)) result.decisionMetrics.treatmentEconomics = unavailable('Los tratamientos no tienen un doctor responsable atribuible; no se puede calcular un importe propio.', fields);
+                else {
+                    const row = (await this.treatmentEconomicsSummary(replacements))[0] || {};
+                    result.decisionMetrics.treatmentEconomics = { available: true, ...Object.fromEntries(fields.map(key => [key, Number(row[key] || 0)])),
+                        definition: 'Costos estimados de tratamientos creados en el periodo, vigentes y con costo positivo; no representa cobros ni ingresos.', revenueAvailable: false };
+                    if (!Number(row.patientsWithEstimatedTreatment || 0)) result.decisionMetrics.treatmentEconomics.averageTreatmentValuePerPatient = null;
+                }
+            }
+            return responseData.success(result, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
     async professionalBreakdown(idBusiness, query = {}, auditContext = {}) {
         const range = normalizeRange(query);
-
-        if (range.error) {
-            return range.error;
-        }
-
+        if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'professional_activity_metrics', auditContext);
-
-            if (context.error) {
-                return context.error;
-            }
-
-            const replacements = {
-                _id_business: idBusiness,
-                _from: range.fromDateTime,
-                _to: range.toDateTime,
-                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES
-            };
-
-            const rows = await this.professionalActivityRows(replacements);
-            const items = (rows || []).map((row, index) => ({
-                professionalKey: `professional-${index + 1}`,
-                label: `Profesional ${index + 1}`,
-                roleLabel: row.roleLabel || 'Rol sin etiqueta',
-                prescriptionsIssued: Number(row.prescriptionsIssued || 0),
-                clinicalHistoriesCreated: Number(row.clinicalHistoriesCreated || 0),
-                clinicalHistoriesUpdated: Number(row.clinicalHistoriesUpdated || 0),
-                clinicalHistoriesFinalized: Number(row.clinicalHistoriesFinalized || 0),
-                documentsSigned: 0
-            }));
-
-            return responseData.success({
-                range: {
-                    from: range.from,
-                    to: range.to
-                },
-                displayMode: 'safeAlias',
-                items
-            }, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            return SequelizeException(error, Messages.DATA_GET_ERROR);
-        }
+            const context = await this.resolveDashboardContext(idBusiness, 'professional_activity_metrics', auditContext, query);
+            if (context.error) return context.error;
+            const rows = await this.professionalActivityRows(replacementsFor(idBusiness, range, context.access), context.access);
+            const items = rows.map(row => ({ professionalKey: row.actorKey, label: row.actorKey === 'unassigned' ? 'Sin profesional responsable registrado' : row.professionalName || 'Profesional sin nombre registrado',
+                roleLabel: row.actorKey === 'unassigned' ? 'Atribución no disponible' : 'Profesional responsable',
+                prescriptionsIssued: Number(row.prescriptionsIssued || 0), clinicalHistoriesFinalized: Number(row.clinicalHistoriesFinalized || 0),
+                clinicalHistoriesCreated: null, clinicalHistoriesUpdated: null, documentsSigned: null }));
+            return responseData.success({ range: { from: range.from, to: range.to }, access: publicAccess(context.access), displayMode: 'responsibleProfessional', items,
+                definition: 'Recetas vigentes emitidas e historias finalizadas, atribuidas al profesional responsable; no mide productividad ni captura del personal.',
+                unavailableMetrics: { documentsSigned: 'Métrica no implementada.', clinicalHistoriesCreated: 'La captura no equivale a atención médica.', clinicalHistoriesUpdated: 'La edición no equivale a atención médica.' } }, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
     async teamBreakdown(idBusiness, query = {}, auditContext = {}) {
         const range = normalizeRange(query);
-
-        if (range.error) {
-            return range.error;
-        }
-
+        if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'team_usage_metrics', auditContext);
-
-            if (context.error) {
-                return context.error;
-            }
-
-            const replacements = {
-                _id_business: idBusiness,
-                _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES,
-                _ignored_roles: LicenseUsageDao.IGNORED_ROLE_CODES
-            };
-
-            const [usersRows, rolesRows] = await Promise.all([
-                this.teamUserTotals(replacements),
-                this.teamRoleDistribution(replacements)
-            ]);
-
-            const users = usersRows && usersRows[0] ? usersRows[0] : {};
-            const limits = context.license && context.license.limits ? context.license.limits : {};
-
-            return responseData.success({
-                range: {
-                    from: range.from,
-                    to: range.to
-                },
-                users: {
-                    active: Number(users.active || 0),
-                    inactive: Number(users.inactive || 0),
-                    professionals: Number(users.professionals || 0),
-                    staffUsers: Number(users.auxiliaryUsers || 0),
-                    auxiliaryUsers: Number(users.auxiliaryUsers || 0)
-                },
-                roles: safeRoleRows(rolesRows),
-                license: {
-                    professionals: buildLicenseUsagePayload(limits.professionals),
-                    staffUsers: buildLicenseUsagePayload(limits.staffUsers || limits.auxiliaryUsers),
-                    auxiliaryUsers: buildLicenseUsagePayload(limits.auxiliaryUsers)
-                }
+            const context = await this.resolveDashboardContext(idBusiness, 'team_usage_metrics', auditContext, query);
+            if (context.error) return context.error;
+            const replacements = { _id_business: idBusiness, _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES, _ignored_roles: LicenseUsageDao.IGNORED_ROLE_CODES };
+            const [rows, roles] = await Promise.all([this.teamUserTotals(replacements), this.teamRoleDistribution(replacements)]);
+            const users = rows[0] || {}, limits = context.license.limits || {};
+            return responseData.success({ range: { from: range.from, to: range.to }, asOf: new Date().toISOString(), dateBasis: 'Estado actual; no depende del periodo seleccionado', access: publicAccess(context.access),
+                users: { active: Number(users.active || 0), inactive: Number(users.inactive || 0), professionals: Number(users.professionals || 0), staffUsers: Number(users.auxiliaryUsers || 0), auxiliaryUsers: Number(users.auxiliaryUsers || 0) },
+                roles: safeRoleRows(roles), license: { professionals: buildLicenseUsagePayload(limits.professionals), staffUsers: buildLicenseUsagePayload(limits.staffUsers || limits.auxiliaryUsers), auxiliaryUsers: buildLicenseUsagePayload(limits.auxiliaryUsers) }
             }, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            return SequelizeException(error, Messages.DATA_GET_ERROR);
-        }
+        } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
-    async countMetric(sql, replacements) {
-        return sequelize.query(sql, {
-            replacements,
-            type: QueryTypes.SELECT
-        });
+    async countMetric(sql, replacements) { return sequelize.query(sql, { replacements, type: QueryTypes.SELECT }); }
+
+    async prescriptionStatusSummary(replacements, access) {
+        return this.countMetric(`SELECT COALESCE(pr.status, 'unknown') AS status, COUNT(*) AS total FROM prescription pr
+            WHERE ${collateEq('pr.id_business', ':_id_business')} ${professionalScope(access, 'pr', 'issuer_doctor_profile_id', 'issuer_doctor_id')}
+              AND pr.active = 1 AND pr.created_at >= :_from AND pr.created_at <= :_to GROUP BY COALESCE(pr.status, 'unknown') ORDER BY status`, replacements);
     }
-
-    async professionalActivityRows(replacements) {
-        const prescriptionIssueDate = "COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00'))";
-        const prescriptionActor = `CASE
-            WHEN NULLIF(pr.issuer_doctor_profile_id, '') IS NOT NULL THEN CONCAT('profile:', pr.issuer_doctor_profile_id)
-            WHEN NULLIF(pr.issuer_doctor_id, '') IS NOT NULL THEN CONCAT('doctor:', pr.issuer_doctor_id)
-            WHEN NULLIF(pr.issued_by, '') IS NOT NULL THEN CONCAT('login:', pr.issued_by)
-            WHEN NULLIF(pr.created_by, '') IS NOT NULL THEN CONCAT('login:', pr.created_by)
-            ELSE NULL
-        END`;
-        const clinicalHistoryActor = `CASE
-            WHEN NULLIF(ch.doctor_responsible_profile_id, '') IS NOT NULL THEN CONCAT('profile:', ch.doctor_responsible_profile_id)
-            WHEN NULLIF(ch.doctor_responsible_user_id, '') IS NOT NULL THEN CONCAT('login:', ch.doctor_responsible_user_id)
-            WHEN NULLIF(ch.finalized_by_user_id, '') IS NOT NULL THEN CONCAT('login:', ch.finalized_by_user_id)
-            WHEN NULLIF(ch.created_by_user_id, '') IS NOT NULL THEN CONCAT('login:', ch.created_by_user_id)
-            ELSE NULL
-        END`;
-
-        return this.countMetric(
-            `SELECT activity.actor_key AS actorKey,
-                    SUM(activity.prescriptionsIssued) AS prescriptionsIssued,
-                    SUM(activity.clinicalHistoriesCreated) AS clinicalHistoriesCreated,
-                    SUM(activity.clinicalHistoriesUpdated) AS clinicalHistoriesUpdated,
-                    SUM(activity.clinicalHistoriesFinalized) AS clinicalHistoriesFinalized,
-                    CASE
-                        WHEN SUM(CASE
-                            WHEN profile_dpp.id_doctor_professional_profile IS NOT NULL
-                              OR login_dpp.id_doctor_professional_profile IS NOT NULL
-                              OR LOWER(COALESCE(r.code, '')) IN (:_professional_roles)
-                            THEN 1 ELSE 0
-                        END) > 0 THEN 'Profesionales'
-                        WHEN SUM(CASE WHEN l.id_login IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN 'Usuarios internos'
-                        ELSE 'Rol sin etiqueta'
-                    END AS roleLabel,
-                    SUM(activity.prescriptionsIssued
-                        + activity.clinicalHistoriesCreated
-                        + activity.clinicalHistoriesUpdated
-                        + activity.clinicalHistoriesFinalized) AS totalActivity
-               FROM (
-                    SELECT prescriptions.actor_key COLLATE utf8mb4_unicode_ci AS actor_key,
-                           COUNT(*) AS prescriptionsIssued,
-                           0 AS clinicalHistoriesCreated,
-                           0 AS clinicalHistoriesUpdated,
-                           0 AS clinicalHistoriesFinalized
-                      FROM (
-                            SELECT ${prescriptionActor} AS actor_key
-                              FROM prescription pr
-                             WHERE ${collateEq('pr.id_business', ':_id_business')}
-                               AND pr.status = 'issued'
-                               AND ${prescriptionIssueDate} >= :_from
-                               AND ${prescriptionIssueDate} <= :_to
-                           ) prescriptions
-                     WHERE prescriptions.actor_key IS NOT NULL
-                     GROUP BY prescriptions.actor_key COLLATE utf8mb4_unicode_ci
-                    UNION ALL
-                    SELECT clinical.actor_key COLLATE utf8mb4_unicode_ci AS actor_key,
-                           0 AS prescriptionsIssued,
-                           0 AS clinicalHistoriesCreated,
-                           0 AS clinicalHistoriesUpdated,
-                           COUNT(*) AS clinicalHistoriesFinalized
-                      FROM (
-                            SELECT ${clinicalHistoryActor} AS actor_key
-                              FROM clinical_histories ch
-                             WHERE ${collateEq('ch.business_id', ':_id_business')}
-                               AND ch.status = 'FINALIZED'
-                               AND ch.finalized_at >= :_from
-                               AND ch.finalized_at <= :_to
-                               AND ch.deleted_at IS NULL
-                           ) clinical
-                     WHERE clinical.actor_key IS NOT NULL
-                     GROUP BY clinical.actor_key COLLATE utf8mb4_unicode_ci
-                    UNION ALL
-                    SELECT CONCAT('login:', che.user_id) COLLATE utf8mb4_unicode_ci AS actor_key,
-                           0 AS prescriptionsIssued,
-                           SUM(CASE WHEN che.event_type = 'CREATED' THEN 1 ELSE 0 END) AS clinicalHistoriesCreated,
-                           SUM(CASE WHEN che.event_type = 'UPDATED' THEN 1 ELSE 0 END) AS clinicalHistoriesUpdated,
-                           0 AS clinicalHistoriesFinalized
-                      FROM clinical_history_events che
-                     WHERE ${collateEq('che.business_id', ':_id_business')}
-                       AND che.created_at >= :_from
-                       AND che.created_at <= :_to
-                       AND che.event_type IN ('CREATED', 'UPDATED')
-                       AND NULLIF(che.user_id, '') IS NOT NULL
-                     GROUP BY CONCAT('login:', che.user_id) COLLATE utf8mb4_unicode_ci
-               ) activity
-              LEFT JOIN login l
-                ON activity.actor_key COLLATE utf8mb4_unicode_ci = CONCAT('login:', l.id_login) COLLATE utf8mb4_unicode_ci
-               AND ${collateEq('l.id_business', ':_id_business')}
-              LEFT JOIN rol r
-                ON ${collateEq('r.id_rol', 'l.id_rol')}
-              LEFT JOIN doctor_professional_profile login_dpp
-                ON ${collateEq('login_dpp.id_login', 'l.id_login')}
-               AND ${collateEq('login_dpp.id_business', ':_id_business')}
-              LEFT JOIN doctor_professional_profile profile_dpp
-                ON activity.actor_key COLLATE utf8mb4_unicode_ci = CONCAT('profile:', profile_dpp.id_doctor_professional_profile) COLLATE utf8mb4_unicode_ci
-               AND ${collateEq('profile_dpp.id_business', ':_id_business')}
-              GROUP BY activity.actor_key
-              ORDER BY totalActivity DESC, activity.actor_key`,
-            replacements
-        );
+    async clinicalHistoryStatusSummary(replacements, access) {
+        return this.countMetric(`SELECT COALESCE(ch.status, 'unknown') AS status, COUNT(*) AS total FROM clinical_histories ch
+            WHERE ${collateEq('ch.business_id', ':_id_business')} ${professionalScope(access, 'ch', 'doctor_responsible_profile_id', 'doctor_responsible_user_id')}
+              AND ch.deleted_at IS NULL AND ch.created_at >= :_from AND ch.created_at <= :_to GROUP BY COALESCE(ch.status, 'unknown') ORDER BY status`, replacements);
     }
-
+    async firstVisitRetentionSummary(replacements, access) {
+        return this.countMetric(`SELECT COUNT(*) AS firstVisitPatients, COALESCE(SUM(CASE WHEN EXISTS (
+            SELECT 1 FROM appointment later_appointment
+             WHERE ${collateEq('later_appointment.id_business', ':_id_business')}
+               AND ${collateEq('later_appointment.id_person', 'first_visits.id_person')}
+               ${professionalScope(access, 'later_appointment', 'doctor_profile_id')}
+               AND later_appointment.active = 1 AND later_appointment.status = 'completed'
+               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) > first_visits.firstAppointmentAt
+               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) <= :_to
+               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) <= NOW()
+        ) THEN 1 ELSE 0 END), 0) AS retainedPatients FROM (
+            SELECT a.id_person, MIN(TIMESTAMP(a.appointment_date, a.start_time)) AS firstAppointmentAt FROM appointment a
+             WHERE ${collateEq('a.id_business', ':_id_business')} ${professionalScope(access, 'a', 'doctor_profile_id')}
+               AND a.active = 1 AND a.id_person IS NOT NULL AND a.status = 'completed'
+               AND TIMESTAMP(a.appointment_date, a.start_time) <= NOW() GROUP BY a.id_person
+        ) first_visits WHERE first_visits.firstAppointmentAt >= :_from AND first_visits.firstAppointmentAt <= :_to`, replacements);
+    }
+    async followUpCoverageSummary(replacements) {
+        return this.countMetric(`SELECT COUNT(DISTINCT t.id_tracing) AS dueFollowUps,
+            COUNT(DISTINCT CASE WHEN a.id_appointment IS NOT NULL THEN t.id_tracing END) AS scheduledFollowUps
+            FROM tracing t LEFT JOIN appointment a ON ${collateEq('a.id_business', 't.id_business')}
+             AND ${collateEq('a.id_tracing', 't.id_tracing')} AND a.active = 1
+             AND a.status IN ('pending_confirmation', 'confirmed', 'completed') AND a.appointment_date >= t.quote_date_after
+            WHERE ${collateEq('t.id_business', ':_id_business')} AND t.status = 'active'
+             AND t.quote_date_after >= :_from_date AND t.quote_date_after <= :_to_date`, replacements);
+    }
+    async treatmentEconomicsSummary(replacements) {
+        return this.countMetric(`SELECT COUNT(*) AS patientsWithEstimatedTreatment,
+            COALESCE(SUM(patient_totals.treatmentItemsWithCost), 0) AS treatmentItemsWithCost,
+            COALESCE(SUM(patient_totals.estimatedValue), 0) AS totalEstimatedTreatmentValue,
+            COALESCE(AVG(patient_totals.estimatedValue), 0) AS averageTreatmentValuePerPatient FROM (
+                SELECT pt.id_person, COUNT(*) AS treatmentItemsWithCost, SUM(pt.cost) AS estimatedValue
+                FROM patient_treatment pt INNER JOIN treatment_plan tp
+                  ON ${collateEq('tp.id_treatment_plan', 'pt.id_treatment_plan')} AND ${collateEq('tp.id_business', 'pt.id_business')}
+                WHERE ${collateEq('pt.id_business', ':_id_business')} AND pt.active = 1 AND tp.active = 1
+                  AND pt.created_at >= :_from AND pt.created_at <= :_to AND pt.cost > 0 AND pt.status NOT IN ('cancelled', 'deleted')
+                GROUP BY pt.id_person
+            ) patient_totals`, replacements);
+    }
+    async professionalActivityRows(replacements, access) {
+        // Resolve legacy responsible logins to the same profile key, avoiding two
+        // rows for one doctor. Never attribute by created_by/issued_by/event user.
+        const actor = (alias, profile, login) => `COALESCE(CONCAT('profile:', NULLIF(${alias}.${profile}, '')), CONCAT('profile:', NULLIF(dpp.id_doctor_professional_profile, '')), CONCAT('login:', NULLIF(${alias}.${login}, ''))) COLLATE ${TENANT_COLLATION}`;
+        return this.countMetric(`SELECT COALESCE(activity.actor_key, 'unassigned') AS actorKey, MAX(activity.professional_name) AS professionalName,
+            SUM(activity.prescriptionsIssued) AS prescriptionsIssued, SUM(activity.clinicalHistoriesFinalized) AS clinicalHistoriesFinalized
+            FROM (
+                SELECT ${actor('pr', 'issuer_doctor_profile_id', 'issuer_doctor_id')} AS actor_key,
+                    COALESCE(NULLIF(dpp.professional_name, ''), NULLIF(pr.doctor_name_snapshot, '') COLLATE ${TENANT_COLLATION}) COLLATE ${TENANT_COLLATION} AS professional_name,
+                    1 AS prescriptionsIssued, 0 AS clinicalHistoriesFinalized FROM prescription pr
+                LEFT JOIN doctor_professional_profile dpp ON ${collateEq('dpp.id_business', 'pr.id_business')} AND ${collateEq('dpp.id_login', 'pr.issuer_doctor_id')}
+                WHERE ${collateEq('pr.id_business', ':_id_business')} ${professionalScope(access, 'pr', 'issuer_doctor_profile_id', 'issuer_doctor_id')}
+                  AND pr.active = 1 AND pr.status = 'issued' AND ${PRESCRIPTION_ISSUED_AT} >= :_from AND ${PRESCRIPTION_ISSUED_AT} <= :_to
+                UNION ALL
+                SELECT ${actor('ch', 'doctor_responsible_profile_id', 'doctor_responsible_user_id')} AS actor_key,
+                    COALESCE(NULLIF(dpp.professional_name, ''), NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ch.responsible_snapshot_json, '$.professional_name')), '')) COLLATE ${TENANT_COLLATION} AS professional_name,
+                    0 AS prescriptionsIssued, 1 AS clinicalHistoriesFinalized FROM clinical_histories ch
+                LEFT JOIN doctor_professional_profile dpp ON ${collateEq('dpp.id_business', 'ch.business_id')} AND ${collateEq('dpp.id_login', 'ch.doctor_responsible_user_id')}
+                WHERE ${collateEq('ch.business_id', ':_id_business')} ${professionalScope(access, 'ch', 'doctor_responsible_profile_id', 'doctor_responsible_user_id')}
+                  AND ch.status = 'FINALIZED' AND ch.deleted_at IS NULL AND ch.finalized_at >= :_from AND ch.finalized_at <= :_to
+            ) activity GROUP BY activity.actor_key
+            ORDER BY professionalName, actorKey`, replacements);
+    }
     async teamUserTotals(replacements) {
         return this.countMetric(
             `SELECT
@@ -978,181 +646,6 @@ class BusinessDashboardDao {
         );
     }
 
-    async aggregateMetricByPeriod(sql, replacements) {
-        return this.countMetric(sql, replacements);
-    }
-
-    applyPeriodRows(seriesByPeriod, rows, metricKey) {
-        (rows || []).forEach((row) => {
-            const period = String(row.period || '');
-
-            if (seriesByPeriod[period]) {
-                seriesByPeriod[period][metricKey] = Number(row.total || 0);
-            }
-        });
-    }
-
-    async prescriptionStatusSummary(replacements) {
-        return this.countMetric(
-            `SELECT COALESCE(pr.status, 'unknown') AS status,
-                    COUNT(*) AS total
-               FROM prescription pr
-              WHERE ${collateEq('pr.id_business', ':_id_business')}
-                AND pr.created_at >= :_from
-                AND pr.created_at <= :_to
-              GROUP BY COALESCE(pr.status, 'unknown')
-              ORDER BY status`,
-            replacements
-        );
-    }
-
-    async clinicalHistoryStatusSummary(replacements) {
-        return this.countMetric(
-            `SELECT COALESCE(ch.status, 'unknown') AS status,
-                    COUNT(*) AS total
-               FROM clinical_histories ch
-              WHERE ${collateEq('ch.business_id', ':_id_business')}
-                AND ch.created_at >= :_from
-                AND ch.created_at <= :_to
-                AND ch.deleted_at IS NULL
-              GROUP BY COALESCE(ch.status, 'unknown')
-              ORDER BY status`,
-            replacements
-        );
-    }
-
-    async firstVisitRetentionSummary(replacements) {
-        return this.countMetric(
-            `SELECT COUNT(*) AS firstVisitPatients,
-                    SUM(CASE WHEN EXISTS (
-                        SELECT 1
-                          FROM appointment later_appointment
-                         WHERE ${collateEq('later_appointment.id_business', ':_id_business')}
-                           AND ${collateEq('later_appointment.id_person', 'first_visits.id_person')}
-                           AND later_appointment.active = 1
-                           AND later_appointment.appointment_date > first_visits.firstAppointmentDate
-                           AND later_appointment.status NOT IN ('cancelled', 'no_show', 'rescheduled')
-                         LIMIT 1
-                    ) THEN 1 ELSE 0 END) AS retainedPatients
-               FROM (
-                    SELECT a.id_person,
-                           MIN(a.appointment_date) AS firstAppointmentDate
-                      FROM appointment a
-                     WHERE ${collateEq('a.id_business', ':_id_business')}
-                       AND a.active = 1
-                       AND a.id_person IS NOT NULL
-                       AND a.status NOT IN ('cancelled', 'no_show', 'rescheduled')
-                     GROUP BY a.id_person
-               ) first_visits
-              WHERE first_visits.firstAppointmentDate >= :_from_date
-                AND first_visits.firstAppointmentDate <= :_to_date`,
-            replacements
-        );
-    }
-
-    async followUpCoverageSummary(replacements) {
-        return this.countMetric(
-            `SELECT COUNT(DISTINCT t.id_tracing) AS dueFollowUps,
-                    COUNT(DISTINCT CASE WHEN a.id_appointment IS NOT NULL THEN t.id_tracing END) AS scheduledFollowUps
-               FROM tracing t
-          LEFT JOIN appointment a
-                 ON ${collateEq('a.id_business', 't.id_business')}
-                AND ${collateEq('a.id_tracing', 't.id_tracing')}
-                AND a.active = 1
-                AND a.status NOT IN ('cancelled', 'no_show')
-              WHERE ${collateEq('t.id_business', ':_id_business')}
-                AND t.quote_date_after >= :_from_date
-                AND t.quote_date_after <= :_to_date`,
-            replacements
-        );
-    }
-
-    async treatmentEconomicsSummary(replacements) {
-        return this.countMetric(
-            `SELECT COUNT(*) AS patientsWithEstimatedTreatment,
-                    COALESCE(SUM(patient_totals.treatmentItemsWithCost), 0) AS treatmentItemsWithCost,
-                    COALESCE(SUM(patient_totals.estimatedValue), 0) AS totalEstimatedTreatmentValue,
-                    COALESCE(AVG(patient_totals.estimatedValue), 0) AS averageTreatmentValuePerPatient
-               FROM (
-                    SELECT pt.id_person,
-                           COUNT(*) AS treatmentItemsWithCost,
-                           SUM(CASE WHEN pt.cost > 0 THEN pt.cost ELSE 0 END) AS estimatedValue
-                      FROM patient_treatment pt
-                INNER JOIN treatment_plan tp
-                        ON ${collateEq('tp.id_treatment_plan', 'pt.id_treatment_plan')}
-                       AND ${collateEq('tp.id_business', 'pt.id_business')}
-                     WHERE ${collateEq('pt.id_business', ':_id_business')}
-                       AND pt.active = 1
-                       AND tp.active = 1
-                       AND pt.created_at >= :_from
-                       AND pt.created_at <= :_to
-                       AND pt.cost IS NOT NULL
-                       AND pt.cost > 0
-                       AND pt.status NOT IN ('cancelled', 'deleted')
-                     GROUP BY pt.id_person
-               ) patient_totals`,
-            replacements
-        );
-    }
-
-    async activityTotals(idBusiness, range) {
-        const replacements = {
-            _id_business: idBusiness,
-            _from: range.fromDateTime,
-            _to: range.toDateTime
-        };
-        const prescriptionIssueDate = "COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00'))";
-
-        const [
-            patientsCreatedRows,
-            appointmentsCreatedRows,
-            prescriptionsIssuedRows,
-            clinicalHistoriesFinalizedRows
-        ] = await Promise.all([
-            this.countMetric(
-                `SELECT COUNT(*) AS total
-                   FROM person p
-                  WHERE ${collateEq('p.id_business', ':_id_business')}
-                    AND p.created_at >= :_from
-                    AND p.created_at <= :_to`,
-                replacements
-            ),
-            this.countMetric(
-                `SELECT COUNT(*) AS total
-                   FROM appointment a
-                  WHERE ${collateEq('a.id_business', ':_id_business')}
-                    AND a.created_at >= :_from
-                    AND a.created_at <= :_to`,
-                replacements
-            ),
-            this.countMetric(
-                `SELECT COUNT(*) AS total
-                   FROM prescription pr
-                  WHERE ${collateEq('pr.id_business', ':_id_business')}
-                    AND pr.status = 'issued'
-                    AND ${prescriptionIssueDate} >= :_from
-                    AND ${prescriptionIssueDate} <= :_to`,
-                replacements
-            ),
-            this.countMetric(
-                `SELECT COUNT(*) AS total
-                   FROM clinical_histories ch
-                  WHERE ${collateEq('ch.business_id', ':_id_business')}
-                    AND ch.status = 'FINALIZED'
-                    AND ch.finalized_at >= :_from
-                    AND ch.finalized_at <= :_to
-                    AND ch.deleted_at IS NULL`,
-                replacements
-            )
-        ]);
-
-        return {
-            patientsCreated: countFromRows(patientsCreatedRows),
-            appointmentsCreated: countFromRows(appointmentsCreatedRows),
-            prescriptionsIssued: countFromRows(prescriptionsIssuedRows),
-            clinicalHistoriesFinalized: countFromRows(clinicalHistoriesFinalizedRows)
-        };
-    }
 }
 
 module.exports = new BusinessDashboardDao();

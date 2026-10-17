@@ -14,6 +14,9 @@ const {
 
 const csrfProtected = csrfProtection();
 
+router.get('/patient/:patientId/intake', Token.Auth, requireTenantOperational, validatePayload(validatePatientParam), awaitHandlerFactory(ClinicalHistoryController.getIntake));
+router.put('/patient/:patientId/intake', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validatePatientParam), awaitHandlerFactory(ClinicalHistoryController.saveIntake));
+
 router.get('/patient/:patientId/versions', Token.Auth, requireTenantOperational, validatePayload(validatePatientParam), awaitHandlerFactory(ClinicalHistoryController.versionsByPatient));
 router.get('/patient/:patientId', Token.Auth, requireTenantOperational, validatePayload(validatePatientParam), awaitHandlerFactory(ClinicalHistoryController.latestByPatient));
 router.post('/draft', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateDraftCreate), awaitHandlerFactory(ClinicalHistoryController.createDraft));

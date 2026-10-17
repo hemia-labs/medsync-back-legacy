@@ -80,12 +80,12 @@ class BusinessDashboardController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 
         try {
-            const context = await this.resolveTenantDashboardContext(req, res);
+            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'scope']);
             if (!context) {
                 return;
             }
 
-            response = await BusinessDashboardDao.summary(context.idBusiness, req.query || {});
+            response = await BusinessDashboardDao.summary(context.idBusiness, req.query || {}, buildAuditContext(req));
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
@@ -97,7 +97,7 @@ class BusinessDashboardController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 
         try {
-            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'granularity']);
+            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'granularity', 'scope']);
             if (!context) {
                 return;
             }
@@ -114,7 +114,7 @@ class BusinessDashboardController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 
         try {
-            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to']);
+            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'scope']);
             if (!context) {
                 return;
             }
@@ -131,7 +131,7 @@ class BusinessDashboardController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 
         try {
-            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to']);
+            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'scope']);
             if (!context) {
                 return;
             }
@@ -148,7 +148,7 @@ class BusinessDashboardController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 
         try {
-            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to']);
+            const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'scope']);
             if (!context) {
                 return;
             }

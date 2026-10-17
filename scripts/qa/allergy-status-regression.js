@@ -1,0 +1,45 @@
+const assert = require('node:assert/strict');
+const { baseClinicalHistoryTemplate } = require('../../src/domain/clinicalHistory/clinicalHistoryBaseTemplate');
+const { hydrateAllergy, validateReview, applyCurrentAllergy, protectAllergyCore } = require('../../src/domain/clinicalHistory/allergyStatus');
+const connectionPath = require.resolve('../../src/db/Sequelize.connection');
+require.cache[connectionPath] = { id: connectionPath, filename: connectionPath, loaded: true, exports: {} };
+const templates = require('../../src/Dao/mysql/clinicalHistoryTemplate.dao');
+const histories = require('../../src/Dao/mysql/clinicalHistory.dao');
+
+assert.equal(hydrateAllergy({ has_allergy: null }).review_status, 'UNREVIEWED');
+assert.equal(hydrateAllergy({ has_allergy: 0 }).review_status, 'NONE_KNOWN');
+assert.equal(hydrateAllergy({ review_status: 'UNKNOWN', has_allergy: null }).review_status, 'UNKNOWN');
+assert.ok(validateReview({ review_status: 'UNKNOWN', description: '', expected_revision: 0 }));
+assert.ok(validateReview({ review_status: 'HAS_ALLERGIES', description: 'x'.repeat(5001), expected_revision: 0 }));
+assert.ok(validateReview({ review_status: 'NONE_KNOWN', description: '', expected_revision: -1 }));
+for (const status of ['HAS_ALLERGIES', 'NONE_KNOWN', 'UNKNOWN']) assert.equal(validateReview({ review_status: status, description: status === 'NONE_KNOWN' ? '' : 'Dato QA', expected_revision: 0 }), '');
+const original = { consultation: { reason: 'Conservar' }, allergies_medications: { allergies: 'Niega alergias.', current_medications: 'Conservar medicamentos' } };
+const revised = applyCurrentAllergy(original, { review_status: 'UNKNOWN', description: 'No se pudo entrevistar', revision: 2 });
+assert.equal(original.allergies_medications.allergies, 'Niega alergias.');
+assert.equal(revised.allergies_medications.legacy_allergies, 'Niega alergias.');
+assert.equal(revised.consultation.reason, 'Conservar');
+assert.equal(revised.allergies_medications.current_medications, 'Conservar medicamentos');
+assert.equal(revised.allergies_medications.allergy_status, 'UNKNOWN');
+for (const variation of ['remove_section', 'disable_section', 'remove_status', 'optional_status', 'disable_status', 'wrong_type']) {
+    const schema = structuredClone(baseClinicalHistoryTemplate);
+    const section = schema.sections.find(s => s.key === 'allergies_medications');
+    const field = section.fields.find(f => f.key === 'allergy_status');
+    if (variation === 'remove_section') schema.sections = schema.sections.filter(s => s !== section);
+    if (variation === 'disable_section') section.enabled = false;
+    if (variation === 'remove_status') section.fields = section.fields.filter(f => f !== field);
+    if (variation === 'optional_status') field.required = false;
+    if (variation === 'disable_status') field.enabled = false;
+    if (variation === 'wrong_type') field.type = 'text';
+    assert.equal(templates.validateSchema(schema).ok, false, variation);
+    const repaired = protectAllergyCore(schema);
+    assert.equal(templates.validateSchema(repaired).ok, true, 'Existing template compatibility');
+}
+const missingCore = histories.validateRequiredFieldsFromTemplate({ template_snapshot_json: { sections: [] }, clinical_snapshot_json: { allergies_medications: { allergies: 'Niega alergias.' } } });
+assert.ok(protectAllergyCore(null).sections.some(section => section.key === 'consultation'), 'Missing old schema retains the full base form');
+const shortTemplate = protectAllergyCore({ sections: [{ key: 'allergies_medications', fields: [{ key: 'allergy_status', label: 'Estado personalizado', help_text: 'Ayuda del doctor' }] }] });
+assert.equal(shortTemplate.sections[0].fields[0].label, 'Estado personalizado');
+assert.equal(shortTemplate.sections[0].fields[0].help_text, 'Ayuda del doctor');
+assert.ok(shortTemplate.sections[0].fields.some(f => f.key === 'allergies' && f.enabled), 'Allergy detail remains available in short templates and printed snapshots');
+assert.equal(missingCore.ok, false);
+assert.ok(missingCore.missing.includes('Estado de alergias'));
+console.log('PASS CD13: explicit states, conditional detail, protected templates, old-draft compatibility and snapshot preservation. No DB writes.');

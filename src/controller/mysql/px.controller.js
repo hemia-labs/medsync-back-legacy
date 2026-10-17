@@ -2,9 +2,26 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const PxDao = require('../../Dao/mysql/px.dao');
+const PatientAllergyDao = require('../../Dao/mysql/patientAllergy.dao');
+const { hasPermission } = require('../../util/effectivePermissions');
 const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
 
 class PxController extends httpResponseHelper{
+
+updateAdministrative = async(req, res) => {
+    const response = await PxDao.updateAdministrative(applyTenantToBody(req, { ...req.body }));
+    res.status(response.status).send(response);
+}
+
+pxRestore = async(req, res) => {
+    const response = await PxDao.setArchived(req.body.id_person, req.tokenDecode.id_login, getBusinessIdFromToken(req.tokenDecode), false);
+    res.status(response.status).send(response);
+}
+
+updateAllergies = async(req, res) => {
+    const response = await PatientAllergyDao.update(applyTenantToBody(req, { ...req.body }));
+    res.status(response.status).send(response);
+}
 
 /**
  * Permite registrar un px
@@ -123,7 +140,8 @@ getPxSearch = async(req, res, next) =>{
 
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await PxDao.getPxSearch(_param, id_business);
+        const includeArchived = req.body.include_archived === true && await hasPermission(req.tokenDecode.id_login, 'px.new');
+        response = await PxDao.getPxSearch(_param, id_business, { includeArchived });
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }
@@ -202,7 +220,8 @@ getFamilyPath = async(req, res, next) =>{
     let id_business = getBusinessIdFromToken(req.tokenDecode);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        response = await PxDao.getPxById(id, id_business);
+        const clinical = await hasPermission(req.tokenDecode.id_login, 'clinical_history.view');
+        response = await PxDao.getPxById(id, id_business, { clinical });
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }

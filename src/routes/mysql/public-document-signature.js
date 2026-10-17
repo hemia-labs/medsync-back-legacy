@@ -1,4 +1,6 @@
 const router = require('express').Router();
+const { publicSignatureBodyParser } = require('../../middleware/requestBody.middleware');
+const publicSignatureBodyAccess = require('../../middleware/publicSignatureBodyAccess.middleware');
 const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middleware');
 const noStore = require('../../middleware/noStore.middleware');
 const publicRateLimit = require('../../middleware/publicRateLimit.middleware');
@@ -31,6 +33,6 @@ const publicSignatureSignRateLimit = publicRateLimit({
 router.use(noStore);
 
 router.get('/:token', publicSignatureGetRateLimit, awaitHandlerFactory(PublicDocumentSignatureController.Get));
-router.post('/:token/sign', publicSignatureSignRateLimit, awaitHandlerFactory(PublicDocumentSignatureController.Sign));
+router.post('/:token/sign', publicSignatureSignRateLimit, publicSignatureBodyAccess, publicSignatureBodyParser, awaitHandlerFactory(PublicDocumentSignatureController.Sign));
 
 module.exports = router;

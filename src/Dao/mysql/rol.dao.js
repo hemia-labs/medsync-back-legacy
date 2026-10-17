@@ -1,12 +1,10 @@
-const Rol = require('../../models/mysql/rol.model');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
-const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
-const {v4: uuidv4 } = require('uuid');
 const AdminAuditDao = require('./adminAudit.dao');
+const { isTenantAdministrator, ADMIN_ROLES } = require('../../util/effectivePermissions');
 const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
 const {
     getPermissionLicensingRule,
@@ -139,17 +137,16 @@ async function getBusinessPlanCode(idBusiness) {
     return license && license.plan && license.plan.code ? license.plan.code : 'basic';
 }
 
-async function getCurrentRolePermissionCodes(idRol, transaction = null) {
+async function getCurrentRolePermissionCodes(idRol, idBusiness, transaction = null) {
     const rows = await sequelize.query(
         `SELECT cp.code
-           FROM permission_rol pr
-           INNER JOIN cat_permission cp
-                   ON cp.id_cat_permission = pr.id_cat_permission
-                  AND cp.active = 1
-          WHERE pr.id_rol = :_id_rol
-            AND pr.active = 1`,
+           FROM cat_permission cp
+           LEFT JOIN permission_rol pr ON pr.id_cat_permission = cp.id_cat_permission AND pr.id_rol = :_id_rol
+           LEFT JOIN business_role_permission bp ON bp.id_cat_permission = cp.id_cat_permission
+                AND bp.id_rol = :_id_rol AND bp.id_business = :_id_business
+          WHERE cp.active = 1 AND COALESCE(bp.active, pr.active, 0) = 1`,
         {
-            replacements: { _id_rol: idRol },
+            replacements: { _id_rol: idRol, _id_business:idBusiness },
             type: QueryTypes.SELECT,
             transaction
         }
@@ -199,6 +196,7 @@ async getPermissions(idRol, context = {}) {
     let response;
 
     try {
+        if (!(await isTenantAdministrator(context.actorLoginId, context.idBusiness, 'admin.users'))) return responseData.forbidden('Solo el administrador autorizado del consultorio puede consultar accesos.');
         const role = await getRoleById(idRol);
         if (!role || isForbiddenTenantRole(role)) {
             return responseData.notSuccess('Rol no encontrado.');
@@ -213,16 +211,18 @@ async getPermissions(idRol, context = {}) {
                 cp.description,
                 cp.value AS module,
                 cp.sec,
-                CASE WHEN pr.id_permission_rol IS NOT NULL AND pr.active = 1 THEN 1 ELSE 0 END AS allowed
+                COALESCE(bp.active, pr.active, 0) AS allowed
              FROM cat_permission cp
              LEFT JOIN permission_rol pr
                ON pr.id_cat_permission = cp.id_cat_permission
               AND pr.id_rol = :_id_rol
-              AND pr.active = 1
+             LEFT JOIN business_role_permission bp
+               ON bp.id_cat_permission = cp.id_cat_permission
+              AND bp.id_rol = :_id_rol AND bp.id_business = :_id_business
              WHERE cp.active = 1
              ORDER BY cp.value ASC, cp.sec ASC, cp.name ASC`,
             {
-                replacements: { _id_rol: idRol },
+                replacements: { _id_rol: idRol, _id_business:context.idBusiness },
                 type: QueryTypes.SELECT
             }
         );
@@ -244,6 +244,8 @@ async savePermissions(idRol, permissions, context = {}) {
     let response;
 
     try {
+        if (!(await isTenantAdministrator(context.actorLoginId, context.idBusiness, 'admin.users'))) return responseData.forbidden('Solo el administrador autorizado del consultorio puede modificar accesos.');
+        if (!Array.isArray(permissions)) return responseData.bad_request('Envia la lista de permisos del puesto.');
         const role = await getRoleById(idRol);
         if (!role || isForbiddenTenantRole(role)) {
             return forbiddenPlanResponse({
@@ -256,6 +258,9 @@ async savePermissions(idRol, permissions, context = {}) {
 
         const planCode = await getBusinessPlanCode(context.idBusiness);
         const rawRequestedCodes = normalizePermissionList(permissions);
+        const adminRole = ADMIN_ROLES.includes(normalizePermissionCode(role.code));
+        if (!adminRole && rawRequestedCodes.some(code => code === 'admin.config' || code === 'admin.users')) return responseData.forbidden('La administracion del consultorio se reserva al puesto administrador.');
+        if (adminRole && !['admin.config','admin.users'].every(code => rawRequestedCodes.includes(code))) return responseData.forbidden('El puesto administrador debe conservar los accesos a configuracion y personal.');
         const forbiddenPlatformCodes = rawRequestedCodes.filter((code) => isPlatformPermission(code));
         const selectedCodes = rawRequestedCodes.filter((code) => !isPlatformPermission(code));
         const allPermissions = await sequelize.query(
@@ -267,7 +272,7 @@ async savePermissions(idRol, permissions, context = {}) {
         );
         const allowedCatalogCodes = new Set(allPermissions.map((permission) => normalizePermissionCode(permission.code)));
         const requestedCodes = selectedCodes.filter((code) => allowedCatalogCodes.has(code));
-        const currentCodes = await getCurrentRolePermissionCodes(idRol);
+        const currentCodes = await getCurrentRolePermissionCodes(idRol, context.idBusiness);
         const diff = diffPermissions(currentCodes, requestedCodes, planCode);
         const forbiddenPermissions = uniqueCodes(diff.forbidden_permissions.concat(forbiddenPlatformCodes));
         const premiumPermissionsRequested = uniqueCodes(diff.premium_permissions_requested.concat(
@@ -308,51 +313,20 @@ async savePermissions(idRol, permissions, context = {}) {
         const selected = new Set(requestedCodes);
 
         await sequelize.transaction(async (transaction) => {
+            // Serialize edits within a consultorio; never mutate the shared defaults.
+            await sequelize.query('SELECT id_business FROM business WHERE id_business = :_id_business FOR UPDATE', {
+                replacements:{_id_business:context.idBusiness},type:QueryTypes.SELECT,transaction
+            });
             for (const permission of allPermissions) {
-                if (isPlatformPermission(permission.code)) {
-                    continue;
-                }
-                const active = selected.has(normalizePermissionCode(permission.code)) ? 1 : 0;
-                const current = await sequelize.query(
-                    'SELECT id_permission_rol FROM permission_rol WHERE id_rol = :_id_rol AND id_cat_permission = :_id_cat_permission LIMIT 1',
-                    {
-                        replacements: {
-                            _id_rol: idRol,
-                            _id_cat_permission: permission.id_cat_permission
-                        },
-                        type: QueryTypes.SELECT,
-                        transaction
-                    }
-                );
-
-                if (current && current.length > 0) {
-                    await sequelize.query(
-                        'UPDATE permission_rol SET active = :_active WHERE id_permission_rol = :_id_permission_rol',
-                        {
-                            replacements: {
-                                _active: active,
-                                _id_permission_rol: current[0].id_permission_rol
-                            },
-                            type: QueryTypes.UPDATE,
-                            transaction
-                        }
-                    );
-                }
-                else {
-                    await sequelize.query(
-                        'INSERT INTO permission_rol (id_permission_rol, id_rol, id_cat_permission, active) VALUES (:_id_permission_rol, :_id_rol, :_id_cat_permission, :_active)',
-                        {
-                            replacements: {
-                                _id_permission_rol: uuidv4(),
-                                _id_rol: idRol,
-                                _id_cat_permission: permission.id_cat_permission,
-                                _active: active
-                            },
-                            type: QueryTypes.INSERT,
-                            transaction
-                        }
-                    );
-                }
+                if (isPlatformPermission(permission.code)) continue;
+                await sequelize.query(`INSERT INTO business_role_permission
+                    (id_business,id_rol,id_cat_permission,active,updated_by)
+                    VALUES (:_id_business,:_id_rol,:_id_cat_permission,:_active,:_actor)
+                    ON DUPLICATE KEY UPDATE active=VALUES(active),updated_by=VALUES(updated_by),updated_at=NOW()`, {
+                    replacements:{_id_business:context.idBusiness,_id_rol:idRol,_id_cat_permission:permission.id_cat_permission,
+                        _active:selected.has(normalizePermissionCode(permission.code)) ? 1 : 0,_actor:context.actorLoginId},
+                    type:QueryTypes.INSERT,transaction
+                });
             }
         });
 

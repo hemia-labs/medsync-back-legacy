@@ -12,6 +12,7 @@ router.get('/dashboard/summary', Token.Auth, requireRole('super_admin'), awaitHa
 router.get('/jobs/saas/status', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.saasJobsStatus));
 router.post('/jobs/saas/trial-lifecycle/run', Token.Auth, csrfProtected, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.runSaasTrialLifecycleJob));
 router.get('/plans', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.plans));
+router.get('/business-options', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.businessOptions));
 router.get('/businesses', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.businesses));
 router.get('/businesses/:id/license-summary', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.businessLicenseSummary));
 router.get('/businesses/:id/license-overrides', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.businessLicenseOverrides));

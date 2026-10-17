@@ -14,11 +14,13 @@ const {
     validateAuditAction
 } = require('../../validators/prescription.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.get('/config', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.getConfig));
 
-router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateConfigSave), awaitHandlerFactory(PrescriptionController.saveConfig));
+router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, validatePayload(validateConfigSave), awaitHandlerFactory(PrescriptionController.saveConfig));
 
 router.get('/list', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.list));
 
@@ -37,5 +39,6 @@ router.post('/cancel', Token.Auth, csrfProtected, requireTenantOperational, vali
 router.delete('/draft', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateDeleteDraft), awaitHandlerFactory(PrescriptionController.deleteDraft));
 
 router.post('/audit-action', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateAuditAction), awaitHandlerFactory(PrescriptionController.auditAction));
+router.post('/output', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateAuditAction), awaitHandlerFactory(PrescriptionController.prepareOutput));
 
 module.exports = router;

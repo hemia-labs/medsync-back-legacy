@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -5,6 +6,7 @@ const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const { ALLOWED_FIELD_TYPES, baseClinicalHistoryTemplate } = require('../../domain/clinicalHistory/clinicalHistoryBaseTemplate');
+const { protectAllergyCore } = require('../../domain/clinicalHistory/allergyStatus');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
@@ -46,28 +48,7 @@ const stringifySchema = (schema) => {
 
 class ClinicalHistoryTemplateDao {
     async hasPermission(idLogin, permission) {
-        if (!idLogin || !permission) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-              INNER JOIN permission_rol pr ON ${collateEq('pr.id_rol', 'l.id_rol')} AND pr.active = 1
-              INNER JOIN cat_permission cp ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND ${collateEq('cp.code', ':_permission')}
-                AND l.active = 1
-                AND cp.active = 1
-                AND cp.is_active = 1
-              LIMIT 1`,
-            {
-                replacements: { _id_login: idLogin, _permission: permission },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
     }
 
     hydrate(row) {
@@ -79,7 +60,7 @@ class ClinicalHistoryTemplateDao {
             ...row,
             is_system_template: Number(row.is_system_template) === 1,
             is_active: Number(row.is_active) === 1,
-            schema_json: parseJson(row.schema_json, { sections: [] })
+            schema_json: protectAllergyCore(parseJson(row.schema_json, { sections: [] }))
         };
     }
 
@@ -96,6 +77,12 @@ class ClinicalHistoryTemplateDao {
 
         if (!Array.isArray(parsed.sections)) {
             return { ok: false, message: 'schema_json.sections debe ser un arreglo.' };
+        }
+
+        const allergySection = parsed.sections.find(section => section && section.key === 'allergies_medications');
+        const allergyStatus = allergySection && Array.isArray(allergySection.fields) && allergySection.fields.find(field => field && field.key === 'allergy_status');
+        if (!allergySection || allergySection.enabled !== true || !allergyStatus || allergyStatus.enabled === false || allergyStatus.required !== true || allergyStatus.type !== 'select') {
+            return { ok: false, message: 'El estado de alergias es obligatorio del sistema y debe permanecer activo en todas las plantillas.' };
         }
 
         const lockedSections = (baseClinicalHistoryTemplate.sections || [])
@@ -142,7 +129,7 @@ class ClinicalHistoryTemplateDao {
             return { ok: false, message: `No se puede eliminar la sección obligatoria del sistema: ${missingLockedSection}` };
         }
 
-        return { ok: true, schema: parsed };
+        return { ok: true, schema: protectAllergyCore(parsed) };
     }
 
     async addEvent(templateId, businessId, userId, eventType, metadata = null, transaction = null) {

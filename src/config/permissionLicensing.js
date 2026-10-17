@@ -208,6 +208,11 @@ const PERMISSION_LICENSING_CATEGORIES = Object.freeze({
 });
 
 const PERMISSION_RULE_OVERRIDES = Object.freeze({
+    'dashboard.operations': Object.freeze({ module: 'Indicadores', description: 'Indicadores operativos autorizados.', category: 'basic_permission' }),
+    'dashboard.clinical': Object.freeze({ module: 'Indicadores', description: 'Agregados clinicos; no otorga lectura del expediente.', category: 'clinical_read_permission' }),
+    'dashboard.financial': Object.freeze({ module: 'Indicadores', description: 'Indicadores economicos con autorizacion explicita.', category: 'basic_permission' }),
+    'dashboard.scope.all': Object.freeze({ module: 'Indicadores', description: 'Alcance institucional de las familias autorizadas.', category: 'basic_permission' }),
+    'clinical_history.intake': Object.freeze({ module: 'Historia clinica', description: 'Captura inicial limitada a motivo y relato del paciente; sin diagnostico, finalizacion ni firma.', category: 'clinical_write_permission' }),
     dashboard: Object.freeze({ module: 'General', description: 'Acceso a dashboard basico.', category: 'basic_permission' }),
     'px.new': Object.freeze({ module: 'Pacientes', description: 'Alta de paciente.', category: 'clinical_write_permission' }),
     'px.all': Object.freeze({ module: 'Pacientes', description: 'Busqueda y apertura de expediente.', category: 'clinical_read_permission' }),
@@ -216,6 +221,9 @@ const PERMISSION_RULE_OVERRIDES = Object.freeze({
     'px.tab.odontogram': Object.freeze({ module: 'Expediente del paciente', description: 'Tab de odontograma.', category: 'clinical_read_permission' }),
     'px.tab.photos': Object.freeze({ module: 'Expediente del paciente', description: 'Tab de fotos.', category: 'clinical_read_permission' }),
     'px.tab.monitoring': Object.freeze({ module: 'Expediente del paciente', description: 'Tab de seguimiento.', category: 'clinical_read_permission' }),
+    'tracing.create': Object.freeze({ module: 'Seguimiento', description: 'Capturar seguimientos.', category: 'clinical_write_permission' }),
+    'tracing.correct': Object.freeze({ module: 'Seguimiento', description: 'Corregir conservando versiones.', category: 'clinical_write_permission' }),
+    'tracing.cancel': Object.freeze({ module: 'Seguimiento', description: 'Anular conservando contenido.', category: 'legal_trace_permission' }),
     'px.tab.treatment': Object.freeze({ module: 'Expediente del paciente', description: 'Tab de tratamiento.', category: 'clinical_read_permission' }),
     'px.photos.manager': Object.freeze({ module: 'Pacientes', description: 'Administrador de fotos.', category: 'clinical_write_permission' }),
     'px.radiography': Object.freeze({ module: 'Pacientes', description: 'Radiografias.', category: 'clinical_read_permission' }),

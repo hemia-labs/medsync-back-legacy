@@ -2,9 +2,20 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const ClinicalHistoryDao = require('../../Dao/mysql/clinicalHistory.dao');
+const ClinicalIntakeDao = require('../../Dao/mysql/clinicalIntake.dao');
 const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
 
 class ClinicalHistoryController extends httpResponseHelper {
+    getIntake = async (req, res) => {
+        const response = await ClinicalIntakeDao.get(applyTenantToBody(req, { patient_id: req.params.patientId }));
+        res.status(response.status).send(response);
+    }
+
+    saveIntake = async (req, res) => {
+        const response = await ClinicalIntakeDao.save(applyTenantToBody(req, { ...(req.body || {}), patient_id: req.params.patientId }));
+        res.status(response.status).send(response);
+    }
+
     latestByPatient = async (req, res, next) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {

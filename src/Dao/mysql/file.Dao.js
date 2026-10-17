@@ -29,6 +29,14 @@ const FILE_COLLATION = 'utf8mb4_unicode_ci';
  */
 class FilesDao{
 
+async ownsPatient(body) {
+    if (!body.id_person || !body.id_business) return false;
+    const rows = await sequelize.query('SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business AND active = 1 LIMIT 1', {
+        replacements: { patient: body.id_person, business: body.id_business }, type: QueryTypes.SELECT
+    });
+    return rows.length > 0;
+}
+
 /**
  * Permite obtener el catalogo de los buckets actuales
  * @returns Lista
@@ -53,6 +61,8 @@ async uploadFile(body) {
     let response;    
     let file;    
     try {
+
+        if (!await this.ownsPatient(body)) return responseData.notSuccess('Paciente no disponible para este consultorio.');
 
         let bucket = getBucketbyCode(body.code_cat_files)
         if(!bucket) throw new Error("No se indico un repositorio valido para la imagen")
@@ -108,6 +118,8 @@ async uploaProfilePhoto(body) {
     let file;    
     try {
 
+        if (!await this.ownsPatient(body)) return responseData.notSuccess('Paciente no disponible para este consultorio.');
+
 
         file = hellpersFile.base64Toimg(body.file)
         if(!file) throw new Error("Excepción al guardar la imagen")
@@ -158,9 +170,10 @@ async uploaProfilePhoto(body) {
  * @param {String} id_person id del px
  * @returns 
  */
-async getfiles(id_person, id_business) {
+async getfiles(id_person, id_business, options = {}) {
     let response;
     try {
+        if (!Array.isArray(options.codes) || !options.codes.length) return responseData.forbidden('No tienes permiso para estos archivos del paciente.');
         if (!id_person || !id_business) {
             return responseData.notSuccess('Paciente no encontrado para este negocio.');
         }
@@ -210,13 +223,14 @@ async getfiles(id_person, id_business) {
                 AND f.id_person COLLATE ${FILE_COLLATION} = :_id_person COLLATE ${FILE_COLLATION}
                 AND f.id_business COLLATE ${FILE_COLLATION} = :_id_business COLLATE ${FILE_COLLATION}
                 AND f.active = 1
-              WHERE cf.active = 1
+              WHERE cf.active = 1 AND cf.code IN (:_codes)
               GROUP BY cf.id_cat_files, cf.code, cf.description
               ORDER BY cf.description ASC`,
             {
             replacements: {
                 _id_person : id_person,
-                _id_business : id_business
+                _id_business : id_business,
+                _codes: options.codes
             },
             type: QueryTypes.SELECT
         });
@@ -277,6 +291,11 @@ async deleteFile(body) {
         }
 
 
+        const fileRows = await sequelize.query(`SELECT f.id_files FROM files f INNER JOIN cat_files c ON c.id_cat_files = f.id_cat_files
+            WHERE f.id_person = :patient AND f.id_business = :business AND f.url = :url AND c.code = :code AND f.active = 1 LIMIT 1`, {
+            replacements: { patient: body.id_person, business: body.id_business, url: body.key, code: body.code_cat_files }, type: QueryTypes.SELECT
+        });
+        if (!fileRows.length) return responseData.notSuccess('Archivo no encontrado para este paciente.');
         let bucket = getBucketbyCode(body.code_cat_files)
         if(!bucket) throw new Error("No se indico un repositorio valido para la imagen")
 

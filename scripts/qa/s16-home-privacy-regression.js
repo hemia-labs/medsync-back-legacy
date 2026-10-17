@@ -1,0 +1,58 @@
+const assert = require('node:assert/strict');
+const connectionPath = require.resolve('../../src/db/Sequelize.connection');
+const userPath = require.resolve('../../src/Dao/mysql/user.dao');
+let granted = new Set(), queries = [];
+let families = { administrative: true, clinical: true };
+const db = { async query(sql, options) {
+    queries.push({ sql, options });
+    if (sql.includes('AS recentPatients')) return [{ recentPatients: 2, withoutClinicalHistory: 1, withoutNextAppointment: 1 }];
+    if (sql.includes('AS patientsNew')) return [{ patientsNew: 2, prescriptionsIssued: 3, clinicalHistoriesFinalized: 4, documentsCreated: 5 }];
+    if (sql.includes('COUNT(*) AS total')) return [{ total: 2 }];
+    if (sql.includes('AS patientId')) return [{ patientId: 'qa', name: 'QA', withoutClinicalHistory: 1, withoutNextAppointment: 1 }];
+    return [];
+} };
+require.cache[connectionPath] = { id: connectionPath, filename: connectionPath, loaded: true, exports: db };
+require.cache[userPath] = { id: userPath, filename: userPath, loaded: true, exports: { hasPermission: async (id, code) => granted.has(code) } };
+const accessPath = require.resolve('../../src/util/dashboardAccess');
+require.cache[accessPath] = { id: accessPath, filename: accessPath, loaded: true, exports: { resolveDashboardAccess: async () => ({ families, scope: { mode: 'tenant', idLogin: null } }) } };
+const dao = require('../../src/Dao/mysql/homeContinuity.dao');
+async function summary(codes) {
+    queries = []; granted = new Set(codes);
+    const result = await dao.summary('tenant', 'actor');
+    assert.equal(result.status, 200, result.message);
+    return result.data.sections;
+}
+(async () => {
+    const reception = await summary(['px.all', 'px.dates']);
+    assert.equal(reception.drafts.available, false);
+    assert.deepEqual(reception.pulse.cards.map(c => c.key), ['patients']);
+    assert.deepEqual(reception.recentPatients.cards.map(c => c.key), ['recent', 'withoutAppointment']);
+    assert.ok(!JSON.stringify(reception.recentPatients.items).includes('sin historia'));
+    assert.ok(!queries.some(q => /FROM (clinical_histories|prescription|patient_documents|document_signature_requests)\b/.test(q.sql)), 'Reception must not even query clinical tables');
+    const empty = await summary([]);
+    assert.ok(Object.values(empty).every(section => !section.available));
+    assert.ok(!queries.some(q => /FROM /i.test(q.sql)), 'No readable module, no clinical or patient reads');
+    const clinical = await summary(['px.all', 'clinical_history.view']);
+    assert.equal(clinical.drafts.cards[0].value, 2, 'SELECT array must be read correctly');
+    assert.equal(clinical.drafts.total, 2);
+    assert.deepEqual(clinical.pulse.cards.map(c => c.key), ['patients', 'histories']);
+    assert.ok(!queries.some(q => /FROM appointment\b/.test(q.sql)));
+    const navigationOnly = await summary(['px.all', 'prescriptions.global']);
+    assert.equal(navigationOnly.drafts.available, false, 'Navigation is not authorization to read prescriptions');
+    assert.ok(!queries.some(q => /FROM prescription\b/.test(q.sql)));
+    const own = await summary(['prescriptions.view.own', 'prescriptions.global']);
+    assert.equal(own.drafts.items.length, 0, 'Patient identity requires patient read');
+    assert.ok(queries.filter(q => /FROM prescription\b/.test(q.sql)).every(q => q.sql.includes('pr.issuer_doctor_id') && q.options.replacements._id_login === 'actor'));
+    const signOnly = await summary(['px.all', 'documents.sign']);
+    assert.equal(signOnly.signatures.available, false, 'Signing permission does not disclose document titles');
+    assert.equal(signOnly.signatures.items.length, 0);
+    families = { administrative: true, clinical: false };
+    const restricted = await summary(['px.all', 'px.dates', 'clinical_history.view', 'documents.view', 'prescriptions.view.all']);
+    assert.equal(restricted.drafts.available, false);
+    assert.equal(restricted.signatures.available, false);
+    assert.ok(!queries.some(q => /FROM (clinical_histories|prescription|patient_documents|document_signature_requests)\b/.test(q.sql)), 'Module read does not bypass denied metric family');
+    families = { administrative: false, clinical: false };
+    const noFamilies = await summary(['px.all', 'px.dates', 'clinical_history.view']);
+    assert.ok(Object.values(noFamilies).every(section => !section.available));
+    console.log('PASS S16/S17 Home: administrative/clinical projections, denied tables not queried, own prescriptions scope, draft counts, signing does not imply read. Mock DB, real DAO.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

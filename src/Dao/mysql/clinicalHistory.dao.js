@@ -1,3 +1,4 @@
+const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -5,9 +6,26 @@ const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const ClinicalHistoryTemplateDao = require('./clinicalHistoryTemplate.dao');
+const PatientAllergyDao = require('./patientAllergy.dao');
+const { applyCurrentAllergy, protectAllergyCore, STATUS: ALLERGY_STATUS } = require('../../domain/clinicalHistory/allergyStatus');
+const { revisionConflict, professionalSnapshot, historicalIdentityUnavailable } = require('../../domain/clinicalHistory/historyIntegrity');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
+
+// Optional metadata must not hide an existing history, or cross tenant boundaries.
+const historyWithMetadata = `SELECT ch.*, creator.name AS created_by_name, editor.name AS updated_by_name,
+       cht.name AS template_name, chtv.version_number AS template_version_number
+  FROM clinical_histories ch
+  LEFT JOIN login creator ON ${collateEq('creator.id_login', 'ch.created_by_user_id')}
+       AND ${collateEq('creator.id_business', 'ch.business_id')}
+  LEFT JOIN login editor ON ${collateEq('editor.id_login', 'ch.updated_by_user_id')}
+       AND ${collateEq('editor.id_business', 'ch.business_id')}
+  LEFT JOIN clinical_history_template_versions chtv
+       ON ${collateEq('chtv.id_clinical_history_template_version', 'ch.template_version_id')}
+  LEFT JOIN clinical_history_templates cht
+       ON ${collateEq('cht.id_clinical_history_template', 'chtv.clinical_history_template_id')}
+       AND (cht.business_id IS NULL OR ${collateEq('cht.business_id', 'ch.business_id')})`;
 
 const STATUS = {
     DRAFT: 'DRAFT',
@@ -71,32 +89,23 @@ const stringifyJson = (value) => {
 };
 
 class ClinicalHistoryDao {
+    async lockHistory(history, businessId, transaction) {
+        if (!await PatientAllergyDao.lockPatient(history.patient_id, businessId, transaction)) return false;
+        const rows = await sequelize.query(`SELECT * FROM clinical_histories WHERE ${collateEq('id_clinical_history', ':id')}
+            AND ${collateEq('business_id', ':business')} AND deleted_at IS NULL FOR UPDATE`,
+            { replacements: { id: history.id_clinical_history, business: businessId }, type: QueryTypes.SELECT, transaction });
+        if (!rows[0]) return false;
+        Object.assign(history, rows[0]);
+        return true;
+    }
+    async lockDraft(history, businessId, transaction) {
+        return await this.lockHistory(history, businessId, transaction) && history.status === STATUS.DRAFT;
+    }
     async hasPermission(idLogin, permission) {
-        if (!idLogin || !permission) {
-            return false;
-        }
-
-        const result = await sequelize.query(
-            `SELECT 1
-               FROM login l
-              INNER JOIN permission_rol pr ON ${collateEq('pr.id_rol', 'l.id_rol')} AND pr.active = 1
-              INNER JOIN cat_permission cp ON ${collateEq('cp.id_cat_permission', 'pr.id_cat_permission')}
-              WHERE ${collateEq('l.id_login', ':_id_login')}
-                AND ${collateEq('cp.code', ':_permission')}
-                AND l.active = 1
-                AND cp.active = 1
-                AND cp.is_active = 1
-              LIMIT 1`,
-            {
-                replacements: { _id_login: idLogin, _permission: permission },
-                type: QueryTypes.SELECT
-            }
-        );
-
-        return result.length > 0;
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
     }
 
-    async getPatient(patientId, businessId, transaction = null) {
+    async getPatient(patientId, businessId, transaction = null, includeArchived = false) {
         const rows = await sequelize.query(
             `SELECT p.id_person, p.id_business, p.name, p.surname,
                     CONCAT(COALESCE(p.name, ''), ' ', COALESCE(p.surname, '')) AS full_name,
@@ -109,7 +118,7 @@ class ClinicalHistoryDao {
                 AND a.last = 1
               WHERE ${collateEq('p.id_person', ':_id_person')}
                 AND ${collateEq('p.id_business', ':_id_business')}
-                AND p.active = 1
+                ${includeArchived ? '' : 'AND p.active = 1'}
               LIMIT 1`,
             {
                 replacements: { _id_person: patientId, _id_business: businessId },
@@ -138,7 +147,7 @@ class ClinicalHistoryDao {
               WHERE ${collateEq('l.id_login', ':_id_login')}
                 AND ${collateEq('l.id_business', ':_id_business')}
                 AND l.active = 1
-              LIMIT 1`,
+              LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
             {
                 replacements: { _id_login: userId, _id_business: businessId },
                 type: QueryTypes.SELECT,
@@ -167,6 +176,9 @@ class ClinicalHistoryDao {
     }
 
     async getDoctorForHistory(history, transaction = null) {
+        if (history && history.status !== STATUS.DRAFT) {
+            return parseJson(history.responsible_snapshot_json) || historicalIdentityUnavailable(history.doctor_responsible_user_id, history.doctor_responsible_profile_id);
+        }
         if (!history || (!history.doctor_responsible_profile_id && !history.doctor_responsible_user_id)) {
             return null;
         }
@@ -251,16 +263,16 @@ class ClinicalHistoryDao {
     async validateFinalizer(body, transaction = null) {
         const canFinalize = await this.hasPermission(body.id_login, PERMISSIONS.FINALIZE);
         if (!canFinalize) {
-            return { error: responseData.unauthorized('No tienes permiso para finalizar historias clinicas.') };
+            return { error: responseData.forbidden('No tienes permiso para finalizar historias clinicas.') };
         }
 
         const profile = await this.getDoctorProfile(body.id_business, body.id_login, transaction);
         const role = profile && profile.rol ? String(profile.rol).toLowerCase() : '';
         if (!profile || !FINALIZER_ROLES.includes(role)) {
-            return { error: responseData.unauthorized('Solo un doctor o administrador puede finalizar historias clinicas.') };
+            return { error: responseData.forbidden('Solo un doctor o administrador puede finalizar historias clinicas.') };
         }
 
-        if (!profile.id_doctor_professional_profile || Number(profile.professional_profile_active) !== 1) {
+        if (!profile.id_doctor_professional_profile || Number(profile.professional_profile_active) !== 1 || !profile.professional_name || !profile.professional_license) {
             return { error: responseData.bad_request('Para finalizar la historia clinica, el usuario debe tener perfil profesional activo.') };
         }
 
@@ -327,25 +339,29 @@ class ClinicalHistoryDao {
         );
     }
 
-    hydrate(history) {
+    hydrate(history, currentAllergy = null) {
         if (!history) {
             return null;
         }
 
         return {
             ...history,
-            clinical_snapshot_json: parseJson(history.clinical_snapshot_json, {}),
-            template_snapshot_json: parseJson(history.template_snapshot_json, null)
+            revision: Number(history.revision),
+            responsible_snapshot_json: parseJson(history.responsible_snapshot_json),
+            finalizer_snapshot_json: parseJson(history.finalizer_snapshot_json),
+            clinical_snapshot_json: history.status === STATUS.DRAFT && currentAllergy
+                ? applyCurrentAllergy(parseJson(history.clinical_snapshot_json, {}), currentAllergy) : parseJson(history.clinical_snapshot_json, {}),
+            template_snapshot_json: history.status === STATUS.DRAFT
+                ? protectAllergyCore(parseJson(history.template_snapshot_json, null)) : parseJson(history.template_snapshot_json, null)
         };
     }
 
     async getHistoryById(id, businessId, transaction = null) {
         const rows = await sequelize.query(
-            `SELECT *
-               FROM clinical_histories
-              WHERE ${collateEq('id_clinical_history', ':_id_clinical_history')}
-                AND ${collateEq('business_id', ':_business_id')}
-                AND deleted_at IS NULL
+            `${historyWithMetadata}
+              WHERE ${collateEq('ch.id_clinical_history', ':_id_clinical_history')}
+                AND ${collateEq('ch.business_id', ':_business_id')}
+                AND ch.deleted_at IS NULL
               LIMIT 1`,
             {
                 replacements: { _id_clinical_history: id, _business_id: businessId },
@@ -423,6 +439,9 @@ class ClinicalHistoryDao {
         }
 
         const missing = [];
+        const allergies = snapshot.allergies_medications || {};
+        if (![ALLERGY_STATUS.HAS_ALLERGIES, ALLERGY_STATUS.NONE_KNOWN, ALLERGY_STATUS.UNKNOWN].includes(allergies.allergy_status)) missing.push('Estado de alergias');
+        if ([ALLERGY_STATUS.HAS_ALLERGIES, ALLERGY_STATUS.UNKNOWN].includes(allergies.allergy_status) && this.isEmptyClinicalValue(allergies.allergies)) missing.push('Detalle de alergias');
         schema.sections
             .filter((section) => section && section.enabled !== false)
             .forEach((section) => {
@@ -440,7 +459,7 @@ class ClinicalHistoryDao {
 
                         const value = sectionValues[field.key];
                         if (this.isEmptyClinicalValue(value, field.type || 'text')) {
-                            missing.push(field.label || field.key || 'Campo requerido');
+                            if (!missing.includes(field.label || field.key)) missing.push(field.label || field.key || 'Campo requerido');
                         }
                     });
             });
@@ -474,7 +493,7 @@ class ClinicalHistoryDao {
         ) {
             missing.push('Antecedentes relevantes');
         }
-        if (this.isEmptyClinicalValue(allergiesMedications.allergies)) missing.push('Alergias');
+        if (![ALLERGY_STATUS.HAS_ALLERGIES, ALLERGY_STATUS.NONE_KNOWN, ALLERGY_STATUS.UNKNOWN].includes(allergiesMedications.allergy_status)) missing.push('Estado de alergias');
         if (this.isEmptyClinicalValue(physicalExam.general)) missing.push('Exploracion fisica');
         if (this.isEmptyClinicalValue(diagnosis.initial_diagnosis)) missing.push('Diagnostico inicial');
         if (
@@ -499,22 +518,21 @@ class ClinicalHistoryDao {
         try {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar historias clinicas.');
+                return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 
-            const patient = await this.getPatient(body.patient_id, body.id_business);
+            const patient = await this.getPatient(body.patient_id, body.id_business, null, true);
             if (!patient) {
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
             const rows = await sequelize.query(
-                `SELECT *
-                   FROM clinical_histories
-                  WHERE ${collateEq('business_id', ':_business_id')}
-                    AND ${collateEq('patient_id', ':_patient_id')}
-                    AND status <> :_cancelled
-                    AND deleted_at IS NULL
-                  ORDER BY version_number DESC, created_at DESC
+                `${historyWithMetadata}
+                  WHERE ${collateEq('ch.business_id', ':_business_id')}
+                    AND ${collateEq('ch.patient_id', ':_patient_id')}
+                    AND ch.status <> :_cancelled
+                    AND ch.deleted_at IS NULL
+                  ORDER BY ch.version_number DESC, ch.created_at DESC
                   LIMIT 1`,
                 {
                     replacements: {
@@ -534,7 +552,7 @@ class ClinicalHistoryDao {
             const consent = await this.getSensitiveConsent(body.patient_id, body.id_business);
             return responseData.success({
                 patient,
-                history: this.hydrate(history),
+                history: this.hydrate(history, await PatientAllergyDao.getCurrent(history ? history.patient_id : body.patient_id, body.id_business)),
                 consent_status: consent.status,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
             }, Messages.DATA_GET_SUCCESSFULLY);
@@ -547,12 +565,12 @@ class ClinicalHistoryDao {
         try {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar versiones de historia clinica.');
+                return responseData.forbidden('No tienes permiso para consultar versiones de historia clinica.');
             }
 
-            const patient = await this.getPatient(body.patient_id, body.id_business);
+            const patient = await this.getPatient(body.patient_id, body.id_business, null, true);
             if (!patient) {
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
             const rows = await sequelize.query(
@@ -565,7 +583,9 @@ class ClinicalHistoryDao {
                         ch.finalized_at,
                         ch.doctor_responsible_user_id,
                         ch.doctor_responsible_profile_id,
-                        COALESCE(dpp.professional_name, dl.name) AS doctor_name_snapshot,
+                        ch.responsible_snapshot_json,
+                        ch.finalizer_snapshot_json,
+                        CASE WHEN ch.status = 'DRAFT' THEN COALESCE(dpp.professional_name, dl.name) ELSE NULL END AS current_doctor_name,
                         ch.created_by_user_id,
                         ch.finalized_by_user_id,
                         ch.template_version_id,
@@ -584,8 +604,10 @@ class ClinicalHistoryDao {
                    FROM clinical_histories ch
               LEFT JOIN login dl
                      ON ${collateEq('dl.id_login', 'ch.doctor_responsible_user_id')}
+                    AND ${collateEq('dl.id_business', 'ch.business_id')}
               LEFT JOIN doctor_professional_profile dpp
                      ON ${collateEq('dpp.id_doctor_professional_profile', 'ch.doctor_responsible_profile_id')}
+                    AND ${collateEq('dpp.id_business', 'ch.business_id')}
               LEFT JOIN clinical_history_template_versions chtv
                      ON ${collateEq('chtv.id_clinical_history_template_version', 'ch.template_version_id')}
               LEFT JOIN clinical_history_templates cht
@@ -608,41 +630,42 @@ class ClinicalHistoryDao {
 
             return responseData.success({
                 patient,
-                versions: rows
+                versions: rows.map(row => ({ ...row, doctor_name_snapshot: parseJson(row.responsible_snapshot_json, {}).professional_name || row.current_doctor_name || 'Identidad historica no disponible' }))
             }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
     }
 
-    async getById(body) {
+    async getById(body, transaction = null) {
         try {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar historias clinicas.');
+                return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 
-            const history = await this.getHistoryById(body.id_clinical_history, body.id_business);
+            const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
             if (!history) {
                 return responseData.bad_request('Historia clinica no encontrada.');
             }
 
-            const patient = await this.getPatient(history.patient_id, body.id_business);
+            const patient = await this.getPatient(history.patient_id, body.id_business, transaction, true);
             if (!patient) {
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
-            await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context: 'detail' });
-            const consent = await this.getSensitiveConsent(history.patient_id, body.id_business);
-            const business = await this.getBusiness(body.id_business);
-            const doctor = await this.getDoctorForHistory(history);
-            const linkedConsent = await this.getConsentDocumentById(history.consent_document_id, body.id_business, history.patient_id);
+            await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context: 'detail' }, transaction);
+            const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
+            const business = await this.getBusiness(body.id_business, transaction);
+            const doctor = await this.getDoctorForHistory(history, transaction);
+            const linkedConsent = await this.getConsentDocumentById(history.consent_document_id, body.id_business, history.patient_id, transaction);
 
             return responseData.success({
                 patient,
                 business,
                 doctor,
-                history: this.hydrate(history),
+                finalizer: parseJson(history.finalizer_snapshot_json) || (history.finalized_by_user_id ? historicalIdentityUnavailable(history.finalized_by_user_id) : null),
+                history: this.hydrate(history, await PatientAllergyDao.getCurrent(history.patient_id, body.id_business, transaction)),
                 consent_document: linkedConsent,
                 consent_status: consent.status,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
@@ -658,13 +681,16 @@ class ClinicalHistoryDao {
             const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE_DRAFT);
             if (!canCreate) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para crear borradores de historia clinica.');
+                return responseData.forbidden('No tienes permiso para crear borradores de historia clinica.');
             }
 
+            if (!await PatientAllergyDao.lockPatient(body.patient_id, body.id_business, transaction)) {
+                await transaction.rollback(); return responseData.forbidden('Paciente no disponible en este consultorio.');
+            }
             const patient = await this.getPatient(body.patient_id, body.id_business, transaction);
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
             const existingDraft = await sequelize.query(
@@ -700,7 +726,7 @@ class ClinicalHistoryDao {
             const historyId = uuidv4();
             const versionNumber = await this.nextVersion(body.patient_id, body.id_business, transaction);
             const source = Object.values(SOURCE).includes(body.source) ? body.source : SOURCE.MANUAL;
-            const snapshot = stringifyJson(body.clinical_snapshot_json);
+            const snapshot = stringifyJson(applyCurrentAllergy(parseJson(body.clinical_snapshot_json, {}), await PatientAllergyDao.getCurrent(body.patient_id, body.id_business, transaction)));
             const templateSnapshot = await this.resolveTemplateSnapshot(body.id_business, transaction);
 
             await sequelize.query(
@@ -743,9 +769,11 @@ class ClinicalHistoryDao {
                 source,
                 template_version_id: templateSnapshot.templateVersionId || null
             }, transaction);
+            const saved = await this.getById({ id_clinical_history: historyId, id_business: body.id_business, id_login: body.id_login }, transaction);
+            if (saved.status !== 200) { await transaction.rollback(); return saved; }
             await transaction.commit();
 
-            return this.getById({ id_clinical_history: historyId, id_business: body.id_business, id_login: body.id_login });
+            return saved;
         } catch (error) {
             await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
@@ -758,7 +786,7 @@ class ClinicalHistoryDao {
             const canEdit = await this.hasPermission(body.id_login, PERMISSIONS.EDIT_DRAFT);
             if (!canEdit) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para editar borradores de historia clinica.');
+                return responseData.forbidden('No tienes permiso para editar borradores de historia clinica.');
             }
 
             const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
@@ -769,24 +797,27 @@ class ClinicalHistoryDao {
 
             if (history.status !== STATUS.DRAFT) {
                 await transaction.rollback();
-                return responseData.bad_request('Solo se pueden editar historias clinicas en borrador.');
+                return { status: 409, data: { code: 'HISTORY_REVISION_CONFLICT' }, message: 'Esta historia ya no es un borrador editable. Tu captura se conserva; revisa la version actual.' };
             }
 
             const patient = await this.getPatient(history.patient_id, body.id_business, transaction);
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
-            }
-
-            const doctorResult = await this.resolveResponsibleDoctor(body, transaction);
-            if (doctorResult.error) {
-                await transaction.rollback();
-                return doctorResult.error;
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
             const templateSnapshot = history.template_snapshot_json
                 ? { templateVersionId: null, templateSnapshotJson: null }
                 : await this.resolveTemplateSnapshot(body.id_business, transaction);
+
+            if (!await this.lockDraft(history, body.id_business, transaction)) {
+                await transaction.rollback(); return { status: 409, data: { code: 'HISTORY_REVISION_CONFLICT' }, message: 'Este borrador cambio en otra sesion. Tu captura se conserva; revisa la version actual.' };
+            }
+            const conflict = revisionConflict(history, body.expected_revision);
+            if (conflict) { await transaction.rollback(); return conflict; }
+            const doctorResult = await this.resolveResponsibleDoctor(body, transaction);
+            if (doctorResult.error) { await transaction.rollback(); return doctorResult.error; }
+            const currentAllergy = await PatientAllergyDao.getCurrent(history.patient_id, body.id_business, transaction);
 
             await sequelize.query(
                 `UPDATE clinical_histories
@@ -794,8 +825,9 @@ class ClinicalHistoryDao {
                         doctor_responsible_user_id = COALESCE(:_doctor_user_id, doctor_responsible_user_id),
                         doctor_responsible_profile_id = COALESCE(:_doctor_profile_id, doctor_responsible_profile_id),
                         template_version_id = COALESCE(template_version_id, :_template_version_id),
-                        template_snapshot_json = COALESCE(template_snapshot_json, :_template_snapshot_json),
+                        template_snapshot_json = :_template_snapshot_json,
                         updated_by_user_id = :_updated_by,
+                        revision = revision + 1,
                         updated_at = NOW()
                   WHERE ${collateEq('id_clinical_history', ':_id_clinical_history')}
                     AND ${collateEq('business_id', ':_business_id')}
@@ -805,11 +837,11 @@ class ClinicalHistoryDao {
                         _id_clinical_history: body.id_clinical_history,
                         _business_id: body.id_business,
                         _status: STATUS.DRAFT,
-                        _clinical_snapshot_json: stringifyJson(body.clinical_snapshot_json),
+                        _clinical_snapshot_json: stringifyJson(applyCurrentAllergy(parseJson(body.clinical_snapshot_json, {}), currentAllergy)),
                         _doctor_user_id: doctorResult.doctorUserId,
                         _doctor_profile_id: doctorResult.doctorProfileId,
                         _template_version_id: templateSnapshot.templateVersionId,
-                        _template_snapshot_json: templateSnapshot.templateSnapshotJson,
+                        _template_snapshot_json: stringifyJson(protectAllergyCore(parseJson(history.template_snapshot_json || templateSnapshot.templateSnapshotJson, null))),
                         _updated_by: body.id_login
                     },
                     type: QueryTypes.UPDATE,
@@ -818,9 +850,11 @@ class ClinicalHistoryDao {
             );
 
             await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.UPDATED, null, transaction);
+            const saved = await this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login }, transaction);
+            if (saved.status !== 200) { await transaction.rollback(); return saved; }
             await transaction.commit();
 
-            return this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login });
+            return saved;
         } catch (error) {
             await transaction.rollback();
             return SequelizeException(error, Messages.DATA_UPDATE_ERROR);
@@ -830,6 +864,9 @@ class ClinicalHistoryDao {
     async finalize(body) {
         const transaction = await sequelize.transaction();
         try {
+            // Authorization precedes even the history's existence/state/revision.
+            const finalizer = await this.validateFinalizer(body, transaction);
+            if (finalizer.error) { await transaction.rollback(); return finalizer.error; }
             const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
             if (!history) {
                 await transaction.rollback();
@@ -838,21 +875,32 @@ class ClinicalHistoryDao {
 
             if (history.status !== STATUS.DRAFT) {
                 await transaction.rollback();
-                return responseData.bad_request('Solo se pueden finalizar historias clinicas en borrador.');
+                return { status: 409, data: { code: 'HISTORY_REVISION_CONFLICT' }, message: 'Esta historia ya no es un borrador. Revisa su version actual antes de continuar.' };
             }
 
             const patient = await this.getPatient(history.patient_id, body.id_business, transaction);
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
-            const finalizer = await this.validateFinalizer(body, transaction);
-            if (finalizer.error) {
-                await transaction.rollback();
-                return finalizer.error;
+            if (!await this.lockDraft(history, body.id_business, transaction)) {
+                await transaction.rollback(); return { status: 409, data: { code: 'HISTORY_REVISION_CONFLICT' }, message: 'Este borrador cambio en otra sesion. Revisa la version actual antes de finalizar.' };
             }
-
+            const conflict = revisionConflict(history, body.expected_revision);
+            if (conflict) { await transaction.rollback(); return conflict; }
+            const responsible = history.doctor_responsible_user_id
+                ? await this.getDoctorProfile(body.id_business, history.doctor_responsible_user_id, transaction)
+                : finalizer.profile;
+            if (!responsible || !responsible.id_doctor_professional_profile || Number(responsible.professional_profile_active) !== 1 || !responsible.professional_name || !responsible.professional_license) {
+                await transaction.rollback(); return responseData.bad_request('Selecciona un doctor responsable con perfil profesional activo, nombre y cedula antes de finalizar.');
+            }
+            const capturedAt = new Date().toISOString();
+            const responsibleSnapshot = professionalSnapshot(responsible, capturedAt);
+            const finalizerSnapshot = professionalSnapshot(finalizer.profile, capturedAt);
+            const currentAllergy = await PatientAllergyDao.getCurrent(history.patient_id, body.id_business, transaction);
+            history.clinical_snapshot_json = applyCurrentAllergy(parseJson(history.clinical_snapshot_json, {}), currentAllergy);
+            history.template_snapshot_json = protectAllergyCore(parseJson(history.template_snapshot_json, null));
             const requiredValidation = this.validateRequiredFieldsFromTemplate(history);
             if (!requiredValidation.ok) {
                 await transaction.rollback();
@@ -860,13 +908,17 @@ class ClinicalHistoryDao {
             }
 
             const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
+            await sequelize.query(`UPDATE clinical_histories SET clinical_snapshot_json = :snapshot, template_snapshot_json = :schema,
+                responsible_snapshot_json = :responsible, finalizer_snapshot_json = :finalizer, revision = revision + 1
+                WHERE ${collateEq('id_clinical_history', ':history')} AND ${collateEq('business_id', ':business')} AND status = 'DRAFT'`,
+                { replacements: { snapshot: stringifyJson(history.clinical_snapshot_json), schema: stringifyJson(history.template_snapshot_json), responsible: stringifyJson(responsibleSnapshot), finalizer: stringifyJson(finalizerSnapshot), history: history.id_clinical_history, business: body.id_business }, transaction });
             if (consent.refusalDocument) {
                 await sequelize.query(
                     `UPDATE clinical_histories
                         SET status = :_status,
                             consent_document_id = :_consent_document_id,
-                            doctor_responsible_user_id = COALESCE(doctor_responsible_user_id, :_doctor_user_id),
-                            doctor_responsible_profile_id = COALESCE(doctor_responsible_profile_id, :_doctor_profile_id),
+                            doctor_responsible_user_id = :_doctor_user_id,
+                            doctor_responsible_profile_id = :_doctor_profile_id,
                             updated_by_user_id = :_updated_by,
                             updated_at = NOW()
                       WHERE ${collateEq('id_clinical_history', ':_id_clinical_history')}
@@ -877,8 +929,8 @@ class ClinicalHistoryDao {
                             _business_id: body.id_business,
                             _status: STATUS.INCOMPLETE,
                             _consent_document_id: consent.refusalDocument.id_patient_document,
-                            _doctor_user_id: body.id_login,
-                            _doctor_profile_id: finalizer.profile.id_doctor_professional_profile,
+                            _doctor_user_id: responsible.id_login,
+                            _doctor_profile_id: responsible.id_doctor_professional_profile,
                             _updated_by: body.id_login
                         },
                         type: QueryTypes.UPDATE,
@@ -889,8 +941,10 @@ class ClinicalHistoryDao {
                     consent_document_id: consent.refusalDocument.id_patient_document,
                     reason: consent.refusalDocument.refusal_reason || null
                 }, transaction);
+                const saved = await this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login }, transaction);
+                if (saved.status !== 200) { await transaction.rollback(); return saved; }
                 await transaction.commit();
-                return this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login });
+                return saved;
             }
 
             if (!consent.signedDocument) {
@@ -902,8 +956,8 @@ class ClinicalHistoryDao {
                 `UPDATE clinical_histories
                     SET status = :_status,
                         consent_document_id = :_consent_document_id,
-                        doctor_responsible_user_id = COALESCE(doctor_responsible_user_id, :_doctor_user_id),
-                        doctor_responsible_profile_id = COALESCE(doctor_responsible_profile_id, :_doctor_profile_id),
+                        doctor_responsible_user_id = :_doctor_user_id,
+                        doctor_responsible_profile_id = :_doctor_profile_id,
                         finalized_by_user_id = :_finalized_by,
                         finalized_at = NOW(),
                         updated_by_user_id = :_updated_by,
@@ -916,8 +970,8 @@ class ClinicalHistoryDao {
                         _business_id: body.id_business,
                         _status: STATUS.FINALIZED,
                         _consent_document_id: consent.signedDocument.id_patient_document,
-                        _doctor_user_id: body.id_login,
-                        _doctor_profile_id: finalizer.profile.id_doctor_professional_profile,
+                        _doctor_user_id: responsible.id_login,
+                        _doctor_profile_id: responsible.id_doctor_professional_profile,
                         _finalized_by: body.id_login,
                         _updated_by: body.id_login
                     },
@@ -930,9 +984,11 @@ class ClinicalHistoryDao {
                 consent_document_id: consent.signedDocument.id_patient_document
             }, transaction);
             await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.FINALIZED, null, transaction);
+            const saved = await this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login }, transaction);
+            if (saved.status !== 200) { await transaction.rollback(); return saved; }
             await transaction.commit();
 
-            return this.getById({ id_clinical_history: history.id_clinical_history, id_business: body.id_business, id_login: body.id_login });
+            return saved;
         } catch (error) {
             await transaction.rollback();
             return SequelizeException(error, Messages.DATA_UPDATE_ERROR);
@@ -946,7 +1002,7 @@ class ClinicalHistoryDao {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canPrint && !canView) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para imprimir historias clinicas.');
+                return responseData.forbidden('No tienes permiso para imprimir historias clinicas.');
             }
 
             const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
@@ -955,10 +1011,10 @@ class ClinicalHistoryDao {
                 return responseData.bad_request('Historia clinica no encontrada.');
             }
 
-            const patient = await this.getPatient(history.patient_id, body.id_business, transaction);
+            const patient = await this.getPatient(history.patient_id, body.id_business, transaction, true);
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
             await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.PRINTED, {
@@ -982,7 +1038,7 @@ class ClinicalHistoryDao {
             const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL);
             if (!canCancel) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para cancelar historias clinicas.');
+                return responseData.forbidden('No tienes permiso para cancelar historias clinicas.');
             }
 
             const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
@@ -991,15 +1047,21 @@ class ClinicalHistoryDao {
                 return responseData.bad_request('Historia clinica no encontrada.');
             }
 
-            if (history.status === STATUS.FINALIZED) {
+            if (!await this.lockHistory(history, body.id_business, transaction)) {
+                await transaction.rollback(); return responseData.bad_request('Historia clinica no disponible.');
+            }
+            const conflict = revisionConflict(history, body.expected_revision);
+            if (conflict) { await transaction.rollback(); return conflict; }
+            if (![STATUS.DRAFT, STATUS.INCOMPLETE].includes(history.status)) {
                 await transaction.rollback();
-                return responseData.bad_request('No se puede cancelar una historia clinica finalizada.');
+                return responseData.bad_request('Solo se pueden cancelar borradores o historias incompletas. Las versiones finalizadas se conservan.');
             }
 
             await sequelize.query(
                 `UPDATE clinical_histories
                     SET status = :_status,
                         updated_by_user_id = :_updated_by,
+                        revision = revision + 1,
                         updated_at = NOW()
                   WHERE ${collateEq('id_clinical_history', ':_id_clinical_history')}
                     AND ${collateEq('business_id', ':_business_id')}`,

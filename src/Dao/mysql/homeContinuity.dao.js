@@ -4,6 +4,8 @@ const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const UserDao = require('./user.dao');
+const { resolveDashboardAccess } = require('../../util/dashboardAccess');
+const AppointmentDao = require('./appointment.Dao');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const ITEM_LIMIT = 3;
@@ -24,6 +26,7 @@ function patientName(row) {
 }
 
 function numberValue(row, key = 'total') {
+    if (Array.isArray(row)) row = row[0];
     return Number(row && row[key] ? row[key] : 0);
 }
 
@@ -49,13 +52,21 @@ function action(label, path, permission) {
 }
 
 class HomeContinuityDao {
-    async summary(idBusiness, idLogin) {
+    async summary(idBusiness, idLogin, options = {}) {
         if (!idBusiness || !idLogin) {
             return responseData.unauthorized('No hay sesion activa para consultar continuidad clinica.');
         }
 
         try {
+            const access = await resolveDashboardAccess(idBusiness, idLogin, { scope: options.scope, requireFamily: false });
+            if (access.error) return access.error;
             const permissions = await this.resolvePermissions(idLogin);
+            permissions.scope = access.scope;
+            permissions.dashboard = permissions.dashboard || Object.values(access.families).some(Boolean);
+            permissions.patientActivity = permissions.pxAll && access.families.administrative && access.scope.mode === 'tenant';
+            permissions.clinicalHistoryView = permissions.clinicalHistoryView && access.families.clinical;
+            permissions.prescriptionsReadable = permissions.prescriptionsReadable && access.families.clinical;
+            permissions.documentsView = permissions.documentsView && access.families.clinical;
             const [drafts, signatures, recentPatients, pulse] = await Promise.all([
                 this.draftsSection(idBusiness, idLogin, permissions),
                 this.signaturesSection(idBusiness, permissions),
@@ -66,6 +77,10 @@ class HomeContinuityDao {
             return responseData.success({
                 generatedAt: new Date().toISOString(),
                 refreshAfterSeconds: 3600,
+                scope: access.scope,
+                families: access.families,
+                canSelectOwn: access.canSelectOwn,
+                canSelectTenant: access.canSelectTenant,
                 permissions,
                 sections: {
                     drafts,
@@ -79,10 +94,26 @@ class HomeContinuityDao {
         }
     }
 
+    async appointments(idBusiness, idLogin, options = {}) {
+        if (!await UserDao.hasPermission(idLogin, 'px.dates')) return responseData.forbidden('No tienes permiso para consultar agenda.');
+        const access = await resolveDashboardAccess(idBusiness, idLogin, { scope: options.scope, requireFamily: false });
+        if (access.error) return access.error;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(options.date || '')) return responseData.bad_request('Fecha invalida.');
+        return AppointmentDao.list({ id_business: idBusiness, id_login: idLogin,
+            date_from: options.date, date_to: options.date, doctor_profile_id: access.scope.doctorProfileId });
+    }
+
+    responsibleClause(permissions, column) {
+        if (!permissions.scope || permissions.scope.mode !== 'own') return '';
+        const profile = { 'ch.doctor_responsible_user_id': 'ch.doctor_responsible_profile_id', 'pd.responsible_doctor_user_id': 'pd.responsible_doctor_profile_id', 'pr.issuer_doctor_id': 'pr.issuer_doctor_profile_id' }[column];
+        return profile ? ` AND (${collateEq(profile, ':_scope_profile')} OR (${profile} IS NULL AND ${collateEq(column, ':_scope_login')}))` : ' AND ' + collateEq(column, ':_scope_login');
+    }
+
     async resolvePermissions(idLogin) {
         const checks = await Promise.all([
             UserDao.hasPermission(idLogin, 'px.all'),
             UserDao.hasPermission(idLogin, 'px.dates'),
+            UserDao.hasPermission(idLogin, 'clinical_history.view'),
             UserDao.hasPermission(idLogin, 'prescriptions.global'),
             UserDao.hasPermission(idLogin, 'prescriptions.view.all'),
             UserDao.hasPermission(idLogin, 'prescriptions.view.own'),
@@ -96,6 +127,7 @@ class HomeContinuityDao {
         const [
             pxAll,
             pxDates,
+            clinicalHistoryView,
             prescriptionsGlobal,
             prescriptionsViewAll,
             prescriptionsViewOwn,
@@ -109,11 +141,12 @@ class HomeContinuityDao {
         return {
             pxAll,
             pxDates,
+            clinicalHistoryView,
             prescriptionsGlobal,
             prescriptionsViewAll,
             prescriptionsViewOwn,
-            prescriptionsCanViewAll: prescriptionsGlobal || prescriptionsViewAll,
-            prescriptionsReadable: prescriptionsGlobal || prescriptionsViewAll || prescriptionsViewOwn,
+            prescriptionsCanViewAll: prescriptionsViewAll,
+            prescriptionsReadable: prescriptionsViewAll || prescriptionsViewOwn,
             documentsView,
             documentsSign,
             dashboard: dashboardTenant || reportsDashboard || legacyDashboard
@@ -121,6 +154,7 @@ class HomeContinuityDao {
     }
 
     prescriptionOwnershipClause(permissions) {
+        if (permissions.scope && permissions.scope.mode === 'own') return this.responsibleClause(permissions, 'pr.issuer_doctor_id');
         return permissions.prescriptionsCanViewAll
             ? ''
             : ` AND (${collateEq('pr.issuer_doctor_id', ':_id_login')} OR ${collateEq('pr.created_by', ':_id_login')})`;
@@ -138,10 +172,10 @@ class HomeContinuityDao {
         ]);
 
         const cards = [
-            summaryCard('clinical', 'Historias en borrador', numberValue(clinicalRows), 'warning'),
-            summaryCard('prescriptions', 'Recetas sin emitir', numberValue(prescriptionRows), 'accent'),
-            summaryCard('documents', 'Documentos en borrador', numberValue(documentRows), 'neutral')
-        ];
+            permissions.clinicalHistoryView && summaryCard('clinical', 'Historias en borrador', numberValue(clinicalRows), 'warning'),
+            permissions.prescriptionsReadable && summaryCard('prescriptions', 'Recetas sin emitir', numberValue(prescriptionRows), 'accent'),
+            permissions.documentsView && summaryCard('documents', 'Documentos en borrador', numberValue(documentRows), 'neutral')
+        ].filter(Boolean);
         const total = cards.reduce((sum, item) => sum + item.value, 0);
         const items = permissions.pxAll ? await this.draftItems(idBusiness, idLogin, permissions) : [];
 
@@ -155,7 +189,7 @@ class HomeContinuityDao {
                 : 'No encontramos borradores clinicos abiertos para revisar.',
             icon: 'mdi-clipboard-edit-outline',
             total,
-            available: permissions.pxAll || permissions.prescriptionsReadable || permissions.documentsView,
+            available: cards.length > 0,
             cards,
             items,
             action: permissions.pxAll
@@ -165,16 +199,16 @@ class HomeContinuityDao {
     }
 
     async signaturesSection(idBusiness, permissions) {
-        const rows = permissions.documentsView || permissions.documentsSign
-            ? await this.signatureSummaryRows(idBusiness)
+        const rows = permissions.documentsView
+            ? await this.signatureSummaryRows(idBusiness, permissions)
             : [];
         const row = rows[0] || {};
         const pending = numberValue(row, 'pending');
         const expiringSoon = numberValue(row, 'expiringSoon');
         const expired = numberValue(row, 'expired');
-        const total = pending + expired;
-        const items = permissions.pxAll && (permissions.documentsView || permissions.documentsSign)
-            ? await this.signatureItems(idBusiness)
+        const total = pending + expiringSoon + expired;
+        const items = permissions.pxAll && permissions.documentsView
+            ? await this.signatureItems(idBusiness, permissions)
             : [];
 
         return {
@@ -187,10 +221,10 @@ class HomeContinuityDao {
                 : 'No hay solicitudes de firma remota abiertas.',
             icon: 'mdi-draw-pen',
             total,
-            available: permissions.documentsView || permissions.documentsSign,
-            cards: [
-                summaryCard('pending', 'Pendientes', pending, 'accent'),
-                summaryCard('expiringSoon', 'Por vencer', expiringSoon, 'warning'),
+            available: permissions.documentsView,
+            cards: !permissions.documentsView ? [] : [
+                summaryCard('pending', 'Vigentes (>48 h)', pending, 'accent'),
+                summaryCard('expiringSoon', 'Por vencer (48 h)', expiringSoon, 'warning'),
                 summaryCard('expired', 'Vencidas', expired, 'danger')
             ],
             items,
@@ -199,29 +233,29 @@ class HomeContinuityDao {
     }
 
     async recentPatientsSection(idBusiness, permissions) {
-        const rows = permissions.pxAll ? await this.recentPatientSummaryRows(idBusiness) : [];
+        const rows = permissions.patientActivity ? await this.recentPatientSummaryRows(idBusiness, permissions) : [];
         const row = rows[0] || {};
         const total = numberValue(row, 'recentPatients');
         const withoutClinicalHistory = numberValue(row, 'withoutClinicalHistory');
         const withoutNextAppointment = numberValue(row, 'withoutNextAppointment');
-        const items = permissions.pxAll ? await this.recentPatientItems(idBusiness) : [];
+        const items = permissions.patientActivity ? await this.recentPatientItems(idBusiness, permissions) : [];
 
         return {
             key: 'recentPatients',
             label: 'Pacientes recientes',
             eyebrow: 'Seguimiento',
-            title: total ? `${total} paciente${total === 1 ? '' : 's'} nuevo${total === 1 ? '' : 's'} esta semana` : 'Sin pacientes nuevos',
+            title: total ? `${total} paciente${total === 1 ? '' : 's'} nuevo${total === 1 ? '' : 's'} en los ultimos 7 dias` : 'Sin pacientes nuevos',
             description: total
-                ? 'Detecta altas recientes que aun necesitan historia o proxima cita.'
+                ? 'Revisa las altas recientes y los pendientes que puedes consultar.'
                 : 'No hay altas recientes que requieran seguimiento.',
             icon: 'mdi-account-clock-outline',
             total,
-            available: permissions.pxAll,
-            cards: [
+            available: permissions.patientActivity,
+            cards: !permissions.patientActivity ? [] : [
                 summaryCard('recent', 'Altas recientes', total, 'neutral'),
-                summaryCard('withoutHistory', 'Sin historia inicial', withoutClinicalHistory, 'warning'),
-                summaryCard('withoutAppointment', 'Sin proxima cita', withoutNextAppointment, 'accent')
-            ],
+                permissions.clinicalHistoryView && summaryCard('withoutHistory', 'Sin historia inicial', withoutClinicalHistory, 'warning'),
+                permissions.pxDates && summaryCard('withoutAppointment', 'Sin proxima cita', withoutNextAppointment, 'accent')
+            ].filter(Boolean),
             items,
             action: permissions.pxAll ? action('Ver pacientes', '/px/all', 'px.all') : null
         };
@@ -231,24 +265,24 @@ class HomeContinuityDao {
         const rows = await this.pulseRows(idBusiness, idLogin, permissions);
         const row = rows[0] || {};
         const cards = [
-            summaryCard('patients', 'Pacientes nuevos', numberValue(row, 'patientsNew'), 'neutral'),
-            summaryCard('prescriptions', 'Recetas emitidas', numberValue(row, 'prescriptionsIssued'), 'accent'),
-            summaryCard('histories', 'Historias finalizadas', numberValue(row, 'clinicalHistoriesFinalized'), 'success'),
-            summaryCard('documents', 'Documentos generados', numberValue(row, 'documentsCreated'), 'neutral')
-        ];
+            permissions.patientActivity && summaryCard('patients', 'Pacientes nuevos', numberValue(row, 'patientsNew'), 'neutral'),
+            permissions.prescriptionsReadable && summaryCard('prescriptions', 'Recetas emitidas', numberValue(row, 'prescriptionsIssued'), 'accent'),
+            permissions.clinicalHistoryView && summaryCard('histories', 'Historias finalizadas', numberValue(row, 'clinicalHistoriesFinalized'), 'success'),
+            permissions.documentsView && summaryCard('documents', 'Documentos generados', numberValue(row, 'documentsCreated'), 'neutral')
+        ].filter(Boolean);
         const total = cards.reduce((sum, item) => sum + item.value, 0);
 
         return {
             key: 'pulse',
-            label: 'Pulso del consultorio',
-            eyebrow: 'Semana',
-            title: total ? 'Movimiento de los ultimos 7 dias' : 'Semana tranquila',
+            label: permissions.scope.mode === 'own' ? 'Mi actividad' : 'Pulso del consultorio',
+            eyebrow: 'Ultimos 7 dias',
+            title: total ? 'Movimiento de los ultimos 7 dias' : 'Sin actividad registrada',
             description: total
                 ? 'Resumen breve de actividad operativa reciente.'
                 : 'Aun no hay actividad registrada en los ultimos 7 dias.',
             icon: 'mdi-pulse',
             total,
-            available: true,
+            available: cards.length > 0,
             cards,
             items: [],
             action: permissions.dashboard ? action('Ir al dashboard', '/dashboard', 'dashboard.tenant') : null
@@ -256,7 +290,7 @@ class HomeContinuityDao {
     }
 
     countClinicalDrafts(idBusiness, permissions) {
-        if (!permissions.pxAll) {
+        if (!permissions.clinicalHistoryView) {
             return [];
         }
 
@@ -265,9 +299,9 @@ class HomeContinuityDao {
                FROM clinical_histories ch
               WHERE ${collateEq('ch.business_id', ':_id_business')}
                 AND ch.status = 'DRAFT'
-                AND ch.deleted_at IS NULL`,
+                AND ch.deleted_at IS NULL ${this.responsibleClause(permissions, 'ch.doctor_responsible_user_id')}`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         );
@@ -286,7 +320,7 @@ class HomeContinuityDao {
                 AND pr.active = 1
                 ${this.prescriptionOwnershipClause(permissions)}`,
             {
-                replacements: { _id_business: idBusiness, _id_login: idLogin },
+                replacements: { _id_business: idBusiness, _id_login: idLogin, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         );
@@ -302,9 +336,9 @@ class HomeContinuityDao {
                FROM patient_documents pd
               WHERE ${collateEq('pd.id_business', ':_id_business')}
                 AND pd.status = 'BORRADOR'
-                AND pd.active = 1`,
+                AND pd.active = 1 ${this.responsibleClause(permissions, 'pd.responsible_doctor_user_id')}`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         );
@@ -313,7 +347,7 @@ class HomeContinuityDao {
     async draftItems(idBusiness, idLogin, permissions) {
         const queries = [];
 
-        queries.push(sequelize.query(
+        if (permissions.clinicalHistoryView) queries.push(sequelize.query(
             `SELECT 'clinical' AS type,
                     ch.id_clinical_history AS id,
                     ch.patient_id AS patientId,
@@ -326,11 +360,11 @@ class HomeContinuityDao {
                       AND ${collateEq('p.id_business', 'ch.business_id')}
               WHERE ${collateEq('ch.business_id', ':_id_business')}
                 AND ch.status = 'DRAFT'
-                AND ch.deleted_at IS NULL
+                AND ch.deleted_at IS NULL ${this.responsibleClause(permissions, 'ch.doctor_responsible_user_id')}
               ORDER BY ch.updated_at DESC, ch.created_at DESC
               LIMIT ${ITEM_LIMIT}`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         ));
@@ -355,7 +389,7 @@ class HomeContinuityDao {
                   ORDER BY pr.created_at DESC
                   LIMIT ${ITEM_LIMIT}`,
                 {
-                    replacements: { _id_business: idBusiness, _id_login: idLogin },
+                    replacements: { _id_business: idBusiness, _id_login: idLogin, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                     type: QueryTypes.SELECT
                 }
             ));
@@ -376,11 +410,11 @@ class HomeContinuityDao {
                           AND ${collateEq('p.id_business', 'pd.id_business')}
                   WHERE ${collateEq('pd.id_business', ':_id_business')}
                     AND pd.status = 'BORRADOR'
-                    AND pd.active = 1
+                    AND pd.active = 1 ${this.responsibleClause(permissions, 'pd.responsible_doctor_user_id')}
                   ORDER BY COALESCE(pd.updated_at, pd.created_at) DESC
                   LIMIT ${ITEM_LIMIT}`,
                 {
-                    replacements: { _id_business: idBusiness },
+                    replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                     type: QueryTypes.SELECT
                 }
             ));
@@ -398,142 +432,126 @@ class HomeContinuityDao {
                     ? `Receta ${row.folio || 'en borrador'}`
                     : (row.type === 'document' ? (row.title || 'Documento en borrador') : 'Historia clinica en borrador'),
                 patientId: row.patientId,
-                path: `/px/history/${row.patientId}`,
+                path: `/px/history/${row.patientId}?tab=${row.type === 'prescription' ? 'prescriptions' : row.type === 'document' ? 'documents' : 'history'}`,
                 createdAt: toIso(row.dateValue)
             }));
     }
 
-    signatureSummaryRows(idBusiness) {
+    signatureAttentionWhere(permissions) {
+        // Count one current request per document/role; retries and historical expirations
+        // must not create additional pending signatures after renewal or local signing.
+        return `${collateEq('dsr.id_business', ':_id_business')}
+            AND dsr.status IN ('pending', 'opened', 'expired') AND pd.active = 1
+            AND pd.status IN ('BORRADOR', 'PENDIENTE_FIRMA')
+            ${this.responsibleClause(permissions, 'pd.responsible_doctor_user_id')}
+            AND NOT EXISTS (SELECT 1 FROM patient_document_signatures sig
+                WHERE ${collateEq('sig.id_business', 'dsr.id_business')}
+                  AND ${collateEq('sig.id_patient_document', 'dsr.id_patient_document')}
+                  AND ${collateEq('sig.signature_role', 'dsr.signature_role')}
+                  AND (NULLIF(sig.signature_image, '') IS NOT NULL OR sig.signed_at IS NOT NULL))
+            AND NOT EXISTS (SELECT 1 FROM document_signature_requests newer
+                WHERE ${collateEq('newer.id_business', 'dsr.id_business')}
+                  AND ${collateEq('newer.id_patient_document', 'dsr.id_patient_document')}
+                  AND ${collateEq('newer.signature_role', 'dsr.signature_role')}
+                  AND (newer.created_at > dsr.created_at OR (newer.created_at = dsr.created_at
+                    AND (newer.status IN ('pending', 'opened', 'expired') OR dsr.status = 'expired')
+                    AND (newer.expires_at > dsr.expires_at OR (newer.expires_at = dsr.expires_at
+                    AND newer.id_document_signature_request > dsr.id_document_signature_request)))))`;
+    }
+
+    signatureSummaryRows(idBusiness, permissions) {
         return sequelize.query(
             `SELECT
-                    SUM(CASE WHEN dsr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                    SUM(CASE WHEN dsr.status = 'pending' AND dsr.expires_at >= NOW() AND dsr.expires_at <= DATE_ADD(NOW(), INTERVAL 48 HOUR) THEN 1 ELSE 0 END) AS expiringSoon,
-                    SUM(CASE WHEN dsr.status = 'pending' AND dsr.expires_at < NOW() THEN 1 ELSE 0 END) AS expired
-               FROM document_signature_requests dsr
-              WHERE ${collateEq('dsr.id_business', ':_id_business')}`,
-            {
-                replacements: { _id_business: idBusiness },
-                type: QueryTypes.SELECT
-            }
+                SUM(CASE WHEN dsr.status IN ('pending', 'opened') AND dsr.expires_at > DATE_ADD(NOW(), INTERVAL 48 HOUR) THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN dsr.status IN ('pending', 'opened') AND dsr.expires_at > NOW() AND dsr.expires_at <= DATE_ADD(NOW(), INTERVAL 48 HOUR) THEN 1 ELSE 0 END) AS expiringSoon,
+                SUM(CASE WHEN dsr.status = 'expired' OR dsr.expires_at <= NOW() THEN 1 ELSE 0 END) AS expired
+             FROM document_signature_requests dsr
+             INNER JOIN patient_documents pd ON ${collateEq('pd.id_patient_document', 'dsr.id_patient_document')}
+                AND ${collateEq('pd.id_business', 'dsr.id_business')}
+             WHERE ${this.signatureAttentionWhere(permissions)}`,
+            { replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId }, type: QueryTypes.SELECT }
         );
     }
 
-    signatureItems(idBusiness) {
+    signatureItems(idBusiness, permissions) {
         return sequelize.query(
-            `SELECT dsr.id_document_signature_request AS id,
-                    dsr.id_person AS patientId,
-                    dsr.signature_role AS signatureRole,
-                    dsr.expires_at AS expiresAt,
-                    p.name,
-                    p.surname,
-                    pd.title
-               FROM document_signature_requests dsr
-               INNER JOIN person p
-                       ON ${collateEq('p.id_person', 'dsr.id_person')}
-                      AND ${collateEq('p.id_business', 'dsr.id_business')}
-               LEFT JOIN patient_documents pd
-                      ON ${collateEq('pd.id_patient_document', 'dsr.id_patient_document')}
-                     AND ${collateEq('pd.id_business', 'dsr.id_business')}
-              WHERE ${collateEq('dsr.id_business', ':_id_business')}
-                AND dsr.status = 'pending'
-              ORDER BY CASE WHEN dsr.expires_at < NOW() THEN 0 ELSE 1 END,
-                       dsr.expires_at ASC,
-                       dsr.created_at DESC
-              LIMIT ${ITEM_LIMIT}`,
-            {
-                replacements: { _id_business: idBusiness },
-                type: QueryTypes.SELECT
-            }
-        ).then((rows) => rows.map((row) => ({
-            key: `signature-${row.id}`,
-            type: 'signature',
-            label: patientName(row),
-            detail: row.expiresAt && new Date(row.expiresAt).getTime() < Date.now()
-                ? 'Firma vencida'
-                : (row.title || 'Firma pendiente'),
-            patientId: row.patientId,
-            path: `/px/history/${row.patientId}`,
-            expiresAt: toIso(row.expiresAt)
+            `SELECT dsr.id_document_signature_request AS id, dsr.id_person AS patientId,
+                dsr.signature_role AS signatureRole, dsr.expires_at AS expiresAt, dsr.status, p.name, p.surname, pd.title
+             FROM document_signature_requests dsr
+             INNER JOIN person p ON ${collateEq('p.id_person', 'dsr.id_person')}
+                AND ${collateEq('p.id_business', 'dsr.id_business')}
+             INNER JOIN patient_documents pd ON ${collateEq('pd.id_patient_document', 'dsr.id_patient_document')}
+                AND ${collateEq('pd.id_business', 'dsr.id_business')}
+             WHERE ${this.signatureAttentionWhere(permissions)}
+             ORDER BY dsr.expires_at ASC, dsr.created_at DESC LIMIT ${ITEM_LIMIT}`,
+            { replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId }, type: QueryTypes.SELECT }
+        ).then(rows => rows.map(row => ({
+            key: `signature-${row.id}`, type: 'signature', label: patientName(row),
+            detail: row.status === 'expired' || (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) ? 'Firma vencida' : (row.title || 'Firma pendiente'),
+            patientId: row.patientId, path: `/px/history/${row.patientId}?tab=documents`, expiresAt: toIso(row.expiresAt)
         })));
     }
 
-    recentPatientSummaryRows(idBusiness) {
+    recentPatientFlags(permissions) {
+        // Consult only modules the actor can read, within the current tenant.
+        return {
+            history: permissions.clinicalHistoryView ? `NOT EXISTS (
+                SELECT 1 FROM clinical_histories ch
+                 WHERE ${collateEq('ch.business_id', 'p.id_business')}
+                   AND ${collateEq('ch.patient_id', 'p.id_person')}
+                   AND ch.deleted_at IS NULL)` : '0',
+            appointment: permissions.pxDates ? `NOT EXISTS (
+                SELECT 1 FROM appointment ap
+                 WHERE ${collateEq('ap.id_business', 'p.id_business')}
+                   AND ${collateEq('ap.id_person', 'p.id_person')}
+                   AND ap.active = 1 AND TIMESTAMP(ap.appointment_date, ap.start_time) >= NOW()
+                   AND ap.status IN ('pending_confirmation', 'confirmed'))` : '0'
+        };
+    }
+
+    recentPatientSummaryRows(idBusiness, permissions) {
+        const flags = this.recentPatientFlags(permissions);
         return sequelize.query(
             `SELECT
                     COUNT(*) AS recentPatients,
-                    SUM(CASE WHEN ch.id_clinical_history IS NULL THEN 1 ELSE 0 END) AS withoutClinicalHistory,
-                    SUM(CASE WHEN next_appointment.id_appointment IS NULL THEN 1 ELSE 0 END) AS withoutNextAppointment
+                    SUM(${flags.history}) AS withoutClinicalHistory,
+                    SUM(${flags.appointment}) AS withoutNextAppointment
                FROM person p
-               LEFT JOIN (
-                    SELECT business_id, patient_id, MIN(id_clinical_history) AS id_clinical_history
-                      FROM clinical_histories
-                     WHERE deleted_at IS NULL
-                     GROUP BY business_id, patient_id
-               ) ch
-                      ON ${collateEq('ch.business_id', 'p.id_business')}
-                     AND ${collateEq('ch.patient_id', 'p.id_person')}
-               LEFT JOIN (
-                    SELECT id_business, id_person, MIN(id_appointment) AS id_appointment
-                      FROM appointment
-                     WHERE active = 1
-                       AND appointment_date >= CURDATE()
-                       AND status NOT IN ('cancelled', 'no_show')
-                     GROUP BY id_business, id_person
-               ) next_appointment
-                      ON ${collateEq('next_appointment.id_business', 'p.id_business')}
-                     AND ${collateEq('next_appointment.id_person', 'p.id_person')}
               WHERE ${collateEq('p.id_business', ':_id_business')}
                 AND p.active = 1
                 AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         );
     }
 
-    recentPatientItems(idBusiness) {
+    recentPatientItems(idBusiness, permissions) {
+        const flags = this.recentPatientFlags(permissions);
         return sequelize.query(
             `SELECT p.id_person AS patientId,
                     p.name,
                     p.surname,
                     p.created_at AS createdAt,
-                    CASE WHEN ch.id_clinical_history IS NULL THEN 1 ELSE 0 END AS withoutClinicalHistory,
-                    CASE WHEN next_appointment.id_appointment IS NULL THEN 1 ELSE 0 END AS withoutNextAppointment
+                    ${flags.history} AS withoutClinicalHistory,
+                    ${flags.appointment} AS withoutNextAppointment
                FROM person p
-               LEFT JOIN (
-                    SELECT business_id, patient_id, MIN(id_clinical_history) AS id_clinical_history
-                      FROM clinical_histories
-                     WHERE deleted_at IS NULL
-                     GROUP BY business_id, patient_id
-               ) ch
-                      ON ${collateEq('ch.business_id', 'p.id_business')}
-                     AND ${collateEq('ch.patient_id', 'p.id_person')}
-               LEFT JOIN (
-                    SELECT id_business, id_person, MIN(id_appointment) AS id_appointment
-                      FROM appointment
-                     WHERE active = 1
-                       AND appointment_date >= CURDATE()
-                       AND status NOT IN ('cancelled', 'no_show')
-                     GROUP BY id_business, id_person
-               ) next_appointment
-                      ON ${collateEq('next_appointment.id_business', 'p.id_business')}
-                     AND ${collateEq('next_appointment.id_person', 'p.id_person')}
               WHERE ${collateEq('p.id_business', ':_id_business')}
                 AND p.active = 1
                 AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
               ORDER BY (withoutClinicalHistory + withoutNextAppointment) DESC, p.created_at DESC
               LIMIT ${ITEM_LIMIT}`,
             {
-                replacements: { _id_business: idBusiness },
+                replacements: { _id_business: idBusiness, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         ).then((rows) => rows.map((row) => {
             const missing = [];
-            if (Number(row.withoutClinicalHistory) === 1) {
+            if (permissions.clinicalHistoryView && Number(row.withoutClinicalHistory) === 1) {
                 missing.push('sin historia inicial');
             }
-            if (Number(row.withoutNextAppointment) === 1) {
+            if (permissions.pxDates && Number(row.withoutNextAppointment) === 1) {
                 missing.push('sin proxima cita');
             }
 
@@ -541,7 +559,7 @@ class HomeContinuityDao {
                 key: `recent-${row.patientId}`,
                 type: 'recentPatient',
                 label: patientName(row),
-                detail: missing.length ? missing.join(' y ') : 'Alta reciente completa',
+                detail: missing.length ? missing.join(' y ') : 'Alta reciente',
                 patientId: row.patientId,
                 path: `/px/history/${row.patientId}`,
                 createdAt: toIso(row.createdAt)
@@ -550,41 +568,43 @@ class HomeContinuityDao {
     }
 
     pulseRows(idBusiness, idLogin, permissions) {
-        return sequelize.query(
-            `SELECT
-                    (SELECT COUNT(*)
+        const columns = [
+            permissions.patientActivity ? `(SELECT COUNT(*)
                        FROM person p
                       WHERE ${collateEq('p.id_business', ':_id_business')}
                         AND p.active = 1
-                        AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS patientsNew,
-                    (SELECT COUNT(*)
+                        AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS patientsNew` : '0 AS patientsNew',
+            permissions.prescriptionsReadable ? `(SELECT COUNT(*)
                        FROM prescription pr
                       WHERE ${collateEq('pr.id_business', ':_id_business')}
                         AND pr.active = 1
                         AND pr.status = 'issued'
                         AND COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00')) >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                        ${this.prescriptionOwnershipClause(permissions)}) AS prescriptionsIssued,
-                    (SELECT COUNT(*)
+                        ${this.prescriptionOwnershipClause(permissions)}) AS prescriptionsIssued` : '0 AS prescriptionsIssued',
+            permissions.clinicalHistoryView ? `(SELECT COUNT(*)
                        FROM clinical_histories ch
                       WHERE ${collateEq('ch.business_id', ':_id_business')}
                         AND ch.status = 'FINALIZED'
                         AND ch.finalized_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                        AND ch.deleted_at IS NULL) AS clinicalHistoriesFinalized,
-                    (SELECT COUNT(*)
+                        AND ch.deleted_at IS NULL ${this.responsibleClause(permissions, 'ch.doctor_responsible_user_id')}) AS clinicalHistoriesFinalized` : '0 AS clinicalHistoriesFinalized',
+            permissions.documentsView ? `(SELECT COUNT(*)
                        FROM patient_documents pd
                       WHERE ${collateEq('pd.id_business', ':_id_business')}
                         AND pd.active = 1
-                        AND pd.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS documentsCreated`,
+                        AND pd.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) ${this.responsibleClause(permissions, 'pd.responsible_doctor_user_id')}) AS documentsCreated` : '0 AS documentsCreated'
+        ];
+        return sequelize.query(
+            `SELECT ${columns.join(', ')}`,
             {
-                replacements: { _id_business: idBusiness, _id_login: idLogin },
+                replacements: { _id_business: idBusiness, _id_login: idLogin, _scope_login: permissions.scope.idLogin, _scope_profile: permissions.scope.doctorProfileId },
                 type: QueryTypes.SELECT
             }
         ).then((rows) => {
             const row = rows[0] || {};
             return [{
-                patientsNew: permissions.pxAll ? row.patientsNew : 0,
+                patientsNew: permissions.patientActivity ? row.patientsNew : 0,
                 prescriptionsIssued: permissions.prescriptionsReadable ? row.prescriptionsIssued : 0,
-                clinicalHistoriesFinalized: permissions.pxAll ? row.clinicalHistoriesFinalized : 0,
+                clinicalHistoriesFinalized: permissions.clinicalHistoryView ? row.clinicalHistoriesFinalized : 0,
                 documentsCreated: permissions.documentsView ? row.documentsCreated : 0
             }];
         });

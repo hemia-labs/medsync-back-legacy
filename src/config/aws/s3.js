@@ -2,16 +2,27 @@
 const config = require('../config');
 const AWS = require('aws-sdk');
 const fs = require('fs');
-AWS.config.update({ "accessKeyId": config.AWS_ACCESS_KEY, "secretAccessKey": config.AWS_SECRET_KEY, "region": config.AWS_REGION });
+const { validatedAwsRegion } = require('./region');
 
-const s3 = new AWS.S3({apiVersion: config.AWS_API_VERSION});
+let s3;
+function getS3() {
+    if (!s3) {
+        s3 = new AWS.S3({
+            apiVersion: config.AWS_API_VERSION,
+            accessKeyId: config.AWS_ACCESS_KEY,
+            secretAccessKey: config.AWS_SECRET_KEY,
+            region: validatedAwsRegion(config.AWS_REGION)
+        });
+    }
+    return s3;
+}
 
 /**
  * Obtiene la lista de buckets
  * @returns 
  */
 const getBuckets = () => {
-    return s3.listBuckets().promise();
+    return getS3().listBuckets().promise();
 };
 
 /**
@@ -22,13 +33,14 @@ const getBuckets = () => {
  * @returns 
  */
 const uploadToBucket = (bucketName, tempFilePath, key) => {
+    const client = getS3();
     const stream = fs.createReadStream(tempFilePath);
     const params = {
         Bucket:bucketName,
         Key: key,
         Body: stream
     };
-     return s3.upload(params).promise();
+     return client.upload(params).promise();
 };
 
 /**
@@ -42,7 +54,7 @@ const deleteFileToBucket = (bucketName, key) => {
         Bucket:bucketName,
         Key: key
     };
-     return s3.deleteObject(params).promise();
+     return getS3().deleteObject(params).promise();
 };
 
 module.exports = {
