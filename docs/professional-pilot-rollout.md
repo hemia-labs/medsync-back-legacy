@@ -54,6 +54,22 @@ El workflow actual de despliegue copia `src`, archivos de paquetes y configuraci
 - `s10-settings-http-regression.js` no se completo en esta revision porque requiere `S10_QA_PASSWORD` para cuentas desechables. Las suites de permisos y sesiones con fixtures aprobaron; no se equiparan a ese login HTTP.
 - Siguen pendientes la verificacion visual desktop/movil, teclado, entrega real de firmas, controles del almacenamiento cloud y ensayo de restauracion aislada documentados en S19. Publicar codigo no cierra esos pendientes ni constituye un lanzamiento con pacientes reales.
 
+## Actualizacion de seguridad PO9 (2026-10-14)
+
+Esta actualizacion requiere **Node >=22.12 y <23** antes de `npm ci`/arranque (sanitize-html 2.18.1). Generacion/consulta de documentos y frontend deben publicarse coordinados para proteger tambien la impresion y los historicos sin reescribir originales firmados. No requiere SQL ni backfill.
+
+El parser general admite 1 MiB, autenticacion 32 KiB. Cargas ampliadas se leen despues de sesion/CSRF/tenant: imagen clinica 16 MiB; perfiles/firmas/paciente legacy 4 MiB; plantillas 8 MiB; configuracion receta 10 MiB. Son limites del cuerpo con base64 incluido. La firma publica valida frecuencia y vigencia del enlace antes de leer hasta 4 MiB; la firma final revalida bajo transaccion. Se rechazan cuerpos comprimidos y se devuelve 413 para exceso de tamano. Ajustar el proxy de forma consistente; no restaurar el limite global de 90 MB.
+
+Regresiones principales: `node scripts/qa/document-html-security-regression.js`, `node scripts/qa/request-body-security-regression.js`, `node scripts/qa/security-dependency-regression.js`. Auditoria runtime backend: 15 avisos -> 1 bajo AWS v2, mitigado con region validada, sin criticos/altos/moderados. Persisten avisos de herramientas de desarrollo y frontend legacy. No equivale a cierre global de seguridad: TLS, privacidad cloud y restauracion siguen pendientes. Reporte completo PO9 en el roadmap Platform operations del workspace.
+
+## Actualizacion de odontograma CO15-CO17 (2026-10-16)
+
+Publicar backend y frontend coordinados: el DAO v1 usa SQL parametrizado y transacciones para evitar el conflicto de collations de los procedimientos anteriores; no requiere DDL ni reemplazar procedimientos. El frontend incluye creacion, editor de diagnostico, historial y confirmaciones, con proteccion contra doble envio y respuestas tardias de otra visita.
+
+Verificar el catalogo `cat_tooth` del entorno objetivo: se requieren 32 posiciones permanentes y 20 temporales. La reparacion del catalogo vacio se verifico en desarrollo; un push no modifica los catalogos de otros entornos. El helper `node scripts/qa/restore-odontogram-tooth-catalog.js` inspecciona sin escribir por defecto. En un entorno QA confirmado, `--apply` agrega solo posiciones faltantes y genera respaldo con SHA-256 bajo `_schema_backups` junto al checkout; aborta ante conflictos o referencias huerfanas. El ejecutable bloquea entornos productivos y no debe emplearse como migracion automatica de produccion.
+
+`node scripts/qa/co15-odontogram-live.js` crea fixtures y prueba HTTP/MySQL; reservarlo para QA, no ejecutarlo como health check ni durante un despliegue. Las regresiones aisladas del frontend son `odontogram-flow-regression.cjs`, `odontogram-dialog-regression.cjs` y `odontogram-editor-regression.cjs`. Los reportes CO15/CO16/CO17 del workspace conservan la evidencia funcional y visual.
+
 ## Recuperacion
 
 Para revertir codigo publicado, preparar commits de reversion coordinados de backend/frontend, conservando el historial de Git y los datos. No eliminar snapshots/eventos de documentos ni columnas con informacion historica para resolver un problema de interfaz. MySQL puede confirmar DDL implicitamente: si una migracion falla, inspeccionar el paso aplicado y el respaldo antes de reintentar; no asumir que un rollback transaccional deshizo todo el esquema.

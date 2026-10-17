@@ -4,6 +4,7 @@ const sequelize = require('../../db/Sequelize.connection');
 const planConsentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
 const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
 const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
+const { sanitizeDocumentHtml } = require('../../services/documentSignature/documentHtml.service');
 const { hashToken } = require('../../services/documentSignature/documentSignatureToken.service');
 const {
     SIGNATURE_REQUEST_STATUSES,
@@ -425,7 +426,7 @@ class PublicDocumentSignatureDao {
                 document: {
                     title: document.title,
                     document_type: document.document_type,
-                    content_html_snapshot: document.content_html_snapshot,
+                    content_html_snapshot: sanitizeDocumentHtml(document.content_html_snapshot),
                     created_at: toIso(document.created_at)
                 },
                 patient: {

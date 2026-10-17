@@ -24,6 +24,8 @@ const {
     validateUpdateTreatment
 } = require('../../validators/treatment.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.get('/plan/:id_person', Token.Auth, requireTenantOperational, validatePayload(validateIdPersonParam), awaitHandlerFactory(TreatmentController.GetTreatmentPlan));
@@ -41,9 +43,9 @@ router.post('/plan/treatment/status', Token.Auth, csrfProtected, requireTenantOp
 
 router.delete('/plan/treatment/delete', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateDeletePlanTreatment), awaitHandlerFactory(TreatmentController.DeletePlanTreatment));
 
-router.post('/plan/consent/save', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateSavePlanConsent), awaitHandlerFactory(TreatmentController.SavePlanConsent));
+router.post('/plan/consent/save', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, validatePayload(validateSavePlanConsent), awaitHandlerFactory(TreatmentController.SavePlanConsent));
 router.post('/plan/consent/prepare', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validatePreparePlanConsent), awaitHandlerFactory(TreatmentController.PrepareConsentDocument));
-router.post('/plan/consent/document/sign', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateSignPreparedConsent), awaitHandlerFactory(TreatmentController.SignPreparedConsent));
+router.post('/plan/consent/document/sign', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, validatePayload(validateSignPreparedConsent), awaitHandlerFactory(TreatmentController.SignPreparedConsent));
 
 // These compatibility responses contain monetary amounts. Both permissions are required.
 router.get('/list/:id_person', Token.Auth, requireTenantOperational, requirePermission('treatments.view'), requirePermission('treatments.cost_view'), validatePayload(validateIdPersonParam), requireLegacyTreatmentScope, awaitHandlerFactory(TreatmentController.GetTreatment));

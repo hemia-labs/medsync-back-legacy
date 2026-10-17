@@ -8,15 +8,17 @@ const validatePayload = require('../../middleware/validatePayload.middleware');
 const ConfigController = require('../../controller/mysql/config.controller');
 const { validateLoginImageSave, validateThemeSave } = require('../../validators/config.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
-router.post('/signatureconten/save', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), awaitHandlerFactory(ConfigController.signatureContentSave));
+router.post('/signatureconten/save', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), protectedBodyParser, awaitHandlerFactory(ConfigController.signatureContentSave));
 
-router.put('/signatureconten/update', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), awaitHandlerFactory(ConfigController.signatureContentUpdate));
+router.put('/signatureconten/update', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), protectedBodyParser, awaitHandlerFactory(ConfigController.signatureContentUpdate));
 
 router.get('/signatureconten/get', Token.Auth, requireTenantOperational, awaitHandlerFactory(ConfigController.signatureContentGet));
 
-router.post('/login-image/save', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), validatePayload(validateLoginImageSave), awaitHandlerFactory(ConfigController.loginImageSave));
+router.post('/login-image/save', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), protectedBodyParser, validatePayload(validateLoginImageSave), awaitHandlerFactory(ConfigController.loginImageSave));
 
 router.get('/login-image/get', Token.OptionalAuth, awaitHandlerFactory(ConfigController.loginImageGet));
 

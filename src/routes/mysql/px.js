@@ -16,15 +16,17 @@ const {
     validatePxUpdate
 } = require('../../validators/px.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.put('/allergies', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('clinical_history.edit_draft', { resource: 'px.allergies' }), awaitHandlerFactory(PxController.updateAllergies));
 
 router.post('/create-minimal', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.create_minimal' }), validatePayload(validatePxCreateMinimal), awaitHandlerFactory(PxController.PxCreateMinimal));
 
-router.post('/save', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.save' }), requirePermission('clinical_history.edit_draft', { resource: 'px.save_clinical' }), validatePayload(validatePxSave), awaitHandlerFactory(PxController.PxSave));
+router.post('/save', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.save' }), requirePermission('clinical_history.edit_draft', { resource: 'px.save_clinical' }), protectedBodyParser, validatePayload(validatePxSave), awaitHandlerFactory(PxController.PxSave));
 
-router.put('/update', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.update' }), requirePermission('clinical_history.edit_draft', { resource: 'px.update_clinical' }), validatePayload(validatePxUpdate), awaitHandlerFactory(PxController.PxUpdate));
+router.put('/update', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.update' }), requirePermission('clinical_history.edit_draft', { resource: 'px.update_clinical' }), protectedBodyParser, validatePayload(validatePxUpdate), awaitHandlerFactory(PxController.PxUpdate));
 
 router.put('/administrative', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new', { resource: 'px.update_administrative' }), validatePayload(require('../../validators/px.validator').validatePxAdministrative), awaitHandlerFactory(PxController.updateAdministrative));
 

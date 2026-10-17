@@ -9,6 +9,7 @@ const prescriptionDao = require('./prescription.dao');
 const { createHmac, randomBytes } = require('node:crypto');
 const reviewKey = process.env.SESSION_SECRET || randomBytes(32);
 const consentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
+const { escapeDocumentText, renderDocumentTemplate, sanitizeDocumentHtml, sanitizeDocumentRichText, safeDocumentForDisplay } = require('../../services/documentSignature/documentHtml.service');
 const eq = (column, param) => `${column} COLLATE utf8mb4_unicode_ci = ${param} COLLATE utf8mb4_unicode_ci`;
 const FLAGS = { view: 'view', create: 'create', edit: 'edit', complete: 'complete', cancel: 'cancel', closePlan: 'close_plan', consentView: 'consent.view', consentSign: 'consent.sign', costView: 'cost_view', costEdit: 'cost_edit' };
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
@@ -75,6 +76,9 @@ class TreatmentPlanDao {
     visibleConsent(consent, permissions) {
         if (!consent) return null;
         const result = { ...consent, plan_snapshot: consent.plan_snapshot ? JSON.parse(JSON.stringify(consent.plan_snapshot)) : null };
+        for (const field of ['declare_text_snapshot', 'consent_text_snapshot']) {
+            if (result[field] != null) result[field] = sanitizeDocumentRichText(result[field]);
+        }
         if (!permissions.costView && result.plan_snapshot) {
             for (const item of result.plan_snapshot.treatments || []) delete item.cost;
         }
@@ -113,7 +117,7 @@ class TreatmentPlanDao {
                     const safe = { ...item };
                     if (!permissions.costView) delete safe.cost;
                     return safe;
-                }), consent: planVersions[0] || (permissions.consentView ? consents.find(consent => consent.id_treatment_plan === plan.id_treatment_plan) || null : null), consent_versions: planVersions,
+                }), consent: planVersions[0] || (permissions.consentView ? this.visibleConsent(consents.find(consent => consent.id_treatment_plan === plan.id_treatment_plan), permissions) : null), consent_versions: planVersions,
                 consent_document: prepared.documents.find(document => document.treatment_plan_id === plan.id_treatment_plan && document.status !== 'CANCELADO') || null };
             });
             return response.success({ patient, permissions, config: { ...config, consentVersioningAvailable: versioningAvailable, consentDocumentAvailable: prepared.available }, activePlan: enriched.find(plan => plan.status === 'active') || null, history: enriched.filter(plan => plan.status !== 'active') }, 'Plan de tratamiento consultado.');
@@ -134,7 +138,7 @@ class TreatmentPlanDao {
                 WHERE ${eq('dt.id_business', ':business')} AND dt.template_type = 'TREATMENT_PLAN_CONSENT' AND dt.active = 1 AND dt.is_active = 1
                 ORDER BY dt.created_at DESC LIMIT 1`, this.keys(body));
             const legacy = templates.length ? [] : await this.query(`SELECT state, consent FROM signature_consent WHERE ${eq('id_business', ':business')} AND active = 1 ORDER BY created_at DESC LIMIT 1`, this.keys(body));
-            return response.success({ doctors: rows, template: templates[0] || null, legacyText: legacy[0] || {} }, 'Contexto del consentimiento disponible.');
+            return response.success({ doctors: rows, template: templates[0] ? safeDocumentForDisplay(templates[0]) : null, legacyText: legacy[0] || {} }, 'Contexto del consentimiento disponible.');
         } catch (error) { return SequelizeException(error, 'No se pudieron consultar los doctores.'); }
     }
     async mutation(body, flag, work) {
@@ -267,13 +271,13 @@ class TreatmentPlanDao {
                 INNER JOIN document_template_versions dtv ON dtv.id_document_template = dt.id_document_template AND dtv.is_current = 1
                 WHERE ${eq('dt.id_business', ':business')} AND dt.template_type = 'TREATMENT_PLAN_CONSENT' AND dt.active = 1 AND dt.is_active = 1 ORDER BY dt.created_at DESC LIMIT 1`, this.keys(body), transaction))[0];
             const legacy = template ? {} : (await this.query(`SELECT state, consent FROM signature_consent WHERE ${eq('id_business', ':business')} AND active = 1 ORDER BY created_at DESC LIMIT 1`, this.keys(body), transaction))[0] || {};
-            const escape = value => String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+            const escape = escapeDocumentText;
             const patientName = `${context.patient.name || ''} ${context.patient.surname || ''}`.trim();
             const business = (await this.query(`SELECT name, legal_name FROM business WHERE ${eq('id_business', ':business')} LIMIT 1`, this.keys(body), transaction))[0] || {};
             const variables = { nombrePaciente: patientName, edadPaciente: context.patient.age, fechaNacimientoPaciente: context.patient.birthday,
                 nombreDoctor: doctor.professional_name, cedulaDoctor: doctor.professional_license, nombreConsultorio: business.legal_name || business.name,
                 nombreBusiness: business.name, fechaActual: new Date().toISOString().slice(0, 10), diagnostico: plan.diagnosis || '', planTratamiento: snapshot.treatments.map(item => item.name).join(', ') };
-            const declare = template ? String(template.content_html || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, key) => escape(variables[key])) : escape(legacy.state || '').replace(/\n/g, '<br>');
+            const declare = template ? renderDocumentTemplate(template.content_html, variables) : escape(legacy.state || '').replace(/\n/g, '<br>');
             const text = template ? '' : escape(legacy.consent || '').replace(/\n/g, '<br>');
             if (!declare.trim() && !text.trim()) return response.bad_request('Configura el texto del consentimiento antes de preparar la firma.');
             const requirements = {
@@ -287,7 +291,7 @@ class TreatmentPlanDao {
             if (requirements.requires_doctor_signature && !doctor.signature_image) return response.bad_request('Este formato requiere la firma profesional del doctor. Complétala en su perfil antes de preparar el documento.');
             const labels = { pending: 'Pendiente', in_progress: 'En progreso', paused: 'Pausado', completed: 'Completado', cancelled: 'Cancelado' };
             const rows = snapshot.treatments.map(item => `<li><strong>${escape(item.name)}</strong>${item.description ? `<p>${escape(item.description)}</p>` : ''}<p>Estado: ${escape(labels[item.status] || item.status)}${includesCosts && item.cost !== null && item.cost !== undefined ? ` · Costo estimado: $${Number(item.cost).toFixed(2)}` : ''}${item.teeth.length ? ` · Dientes: ${escape(item.teeth.join(', '))}` : ''}</p></li>`).join('');
-            const html = `<h2>Consentimiento del plan de tratamiento</h2><p>Paciente: ${escape(patientName)}</p><p>Doctor: ${escape(doctor.professional_name)} · Cédula: ${escape(doctor.professional_license)}</p>${declare}${text ? `<section>${text}</section>` : ''}<h3>${escape(plan.title)}</h3>${plan.diagnosis ? `<p>Diagnóstico: ${escape(plan.diagnosis)}</p>` : ''}<ul>${rows || '<li>Sin tratamientos registrados.</li>'}</ul>`;
+            const html = sanitizeDocumentHtml(`<h2>Consentimiento del plan de tratamiento</h2><p>Paciente: ${escape(patientName)}</p><p>Doctor: ${escape(doctor.professional_name)} · Cédula: ${escape(doctor.professional_license)}</p>${declare}${text ? `<section>${text}</section>` : ''}<h3>${escape(plan.title)}</h3>${plan.diagnosis ? `<p>Diagnóstico: ${escape(plan.diagnosis)}</p>` : ''}<ul>${rows || '<li>Sin tratamientos registrados.</li>'}</ul>`);
             const id = uuidv4();
             const values = { ...this.keys(body), id, title: String(`Consentimiento: ${plan.title}`).slice(0, 255), html, doctorId: doctor.id_login, profileId: doctor.id_doctor_professional_profile,
                 doctorName: doctor.professional_name, license: doctor.professional_license, signature: doctor.signature_image || null, templateId: template ? template.id_document_template : null,
@@ -365,7 +369,7 @@ class TreatmentPlanDao {
             const snapshot = { ...plan, patient: context.patient, treatments: (await this.items(body, transaction)).filter(item => item.id_treatment_plan === plan.id_treatment_plan) };
             if (!body.review_token || body.review_token !== this.reviewToken(snapshot)) return response.bad_request('El plan cambió durante la captura. Consulta los cambios y vuelve a revisar el consentimiento antes de firmar.');
             const consent = { id_treatment_plan_consent: current ? current.id_treatment_plan_consent : uuidv4(), ...keys,
-                declare_text_snapshot: body.declare_text_snapshot || null, consent_text_snapshot: body.consent_text_snapshot || null, patient_signature: body.patient_signature,
+                declare_text_snapshot: sanitizeDocumentRichText(body.declare_text_snapshot) || null, consent_text_snapshot: sanitizeDocumentRichText(body.consent_text_snapshot) || null, patient_signature: body.patient_signature,
                 doctor_signature_snapshot: doctor.signature_image || null, doctor_name_snapshot: doctor.professional_name, professional_license_snapshot: doctor.professional_license,
                 responsible_doctor_user_id: doctor.id_login, responsible_doctor_profile_id: doctor.id_doctor_professional_profile, signed_by_user_id: body.id_login,
                 signed_at: new Date().toISOString(), created_at: current ? current.created_at : new Date().toISOString() };

@@ -57,6 +57,14 @@ publicDao.getBusiness = async () => ({ name: 'QA Clinic' });
 
 (async () => {
     reset();
+    const originalLegacyHtml = '<p onclick="attack()">Original</p><script>attack()</script>';
+    state.document.content_html_snapshot = originalLegacyHtml;
+    state.document.signed_content_html_snapshot = originalLegacyHtml;
+    const safePlanDocuments = await bridge.documentsForPatient({ id_business: 'qa-tenant', id_person: 'qa-patient' });
+    assert.equal(safePlanDocuments.documents[0].content_html_snapshot, '<p>Original</p>');
+    assert.equal(safePlanDocuments.documents[0].signed_content_html_snapshot, '<p>Original</p>');
+    assert.equal(state.document.signed_content_html_snapshot, originalLegacyHtml, 'Treatment display must not rewrite historical content');
+    reset();
     const opened = await publicDao.openByToken(token);
     assert.equal(opened.status, 200);
     assert.equal(opened.data.patient.display_name, 'Originally Named');
@@ -87,6 +95,11 @@ publicDao.getBusiness = async () => ({ name: 'QA Clinic' });
     assert.equal(state.document.status, 'CANCELADO'); assert.equal(state.request.status, 'revoked');
     reset();
     const dao = new TreatmentPlanDao();
+    const historicalConsent = { declare_text_snapshot: originalLegacyHtml, consent_text_snapshot: 'Text & information', doctor_signature_snapshot: image };
+    const safeHistoricalConsent = dao.visibleConsent(historicalConsent, { costView: true });
+    assert.equal(safeHistoricalConsent.declare_text_snapshot, '<p>Original</p>');
+    assert.equal(safeHistoricalConsent.consent_text_snapshot, 'Text & information');
+    assert.equal(historicalConsent.declare_text_snapshot, originalLegacyHtml);
     dao.context = async () => ({ permissions: { consentSign: true, view: true } });
     dao.getPlan = async () => response.success({ patient: { id_person: 'qa-patient' } }, 'QA');
     assert.equal((await dao.signPreparedConsent({ id_business: 'qa-tenant', id_person: 'qa-patient', id_login: 'qa-doctor', id_patient_document: 'qa-document', patient_signature: image, signature_role: 'PATIENT', signer_name: 'QA Patient' })).status, 200);

@@ -14,11 +14,13 @@ const {
     validateAuditAction
 } = require('../../validators/prescription.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.get('/config', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.getConfig));
 
-router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, validatePayload(validateConfigSave), awaitHandlerFactory(PrescriptionController.saveConfig));
+router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, validatePayload(validateConfigSave), awaitHandlerFactory(PrescriptionController.saveConfig));
 
 router.get('/list', Token.Auth, requireTenantOperational, awaitHandlerFactory(PrescriptionController.list));
 

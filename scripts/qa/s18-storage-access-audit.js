@@ -5,14 +5,8 @@
 'use strict';
 const config = require('../../src/config/config');
 const AWS = require('aws-sdk');
-const s3 = new AWS.S3({
-    accessKeyId: config.AWS_ACCESS_KEY,
-    secretAccessKey: config.AWS_SECRET_KEY,
-    region: config.AWS_REGION,
-    apiVersion: '2006-03-01',
-    maxRetries: 0,
-    httpOptions: { connectTimeout: 5000, timeout: 10000 }
-});
+const { validatedAwsRegion } = require('../../src/config/aws/region');
+let s3;
 const safeCode = error => /^[A-Za-z0-9_]+$/.test(error.code || '') ? error.code : 'UNAVAILABLE';
 async function inspect(category, bucket) {
     if (!bucket) return { category, configured: false };
@@ -36,6 +30,14 @@ async function inspect(category, bucket) {
         console.log(JSON.stringify({ checkedAt: new Date().toISOString(), outcome: 'UNVERIFIED', reason: 'AWS credentials not configured' }, null, 2));
         return;
     }
+    s3 = new AWS.S3({
+        accessKeyId: config.AWS_ACCESS_KEY,
+        secretAccessKey: config.AWS_SECRET_KEY,
+        region: validatedAwsRegion(config.AWS_REGION),
+        apiVersion: '2006-03-01',
+        maxRetries: 0,
+        httpOptions: { connectTimeout: 5000, timeout: 10000 }
+    });
     const results = [];
     for (const [category, bucket] of Object.entries(config.BUCKETS)) results.push(await inspect(category, bucket));
     console.log(JSON.stringify({ checkedAt: new Date().toISOString(), readOnly: true, results,

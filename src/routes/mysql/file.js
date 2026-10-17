@@ -14,6 +14,8 @@ const {
     validateUploadProfile
 } = require('../../validators/file.validator');
 
+const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
+
 const csrfProtected = csrfProtection();
 
 router.get('/buckets', Token.Auth, requireTenantOperational, requirePermission('admin.config'), awaitHandlerFactory(FilesController.listBuckets));
@@ -22,8 +24,8 @@ router.get('/px/file/:px', Token.Auth, requireTenantOperational, patientFileAcce
 
 router.delete('/delete', Token.Auth, csrfProtected, requireTenantOperational, patientFileAccess(true), validatePayload(validateDeleteFile), awaitHandlerFactory(FilesController.deletefile));
 
-router.post('/px/upload-file', Token.Auth, csrfProtected, requireTenantOperational, patientFileAccess(true), validatePayload(validateUploadFile), awaitHandlerFactory(FilesController.uploadFile));
+router.post('/px/upload-file', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, patientFileAccess(true), validatePayload(validateUploadFile), awaitHandlerFactory(FilesController.uploadFile));
 
-router.post('/px/upload-profile', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new'), validatePayload(validateUploadProfile), awaitHandlerFactory(FilesController.uploaProfilePhoto));
+router.post('/px/upload-profile', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.new'), protectedBodyParser, validatePayload(validateUploadProfile), awaitHandlerFactory(FilesController.uploaProfilePhoto));
 
 module.exports = router; 

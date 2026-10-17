@@ -2,6 +2,7 @@ const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const { createHash } = require('node:crypto');
 const sequelize = require('../../db/Sequelize.connection');
+const { safeDocumentForDisplay } = require('./documentHtml.service');
 const eq = (column, value) => `${column} COLLATE utf8mb4_unicode_ci = ${value} COLLATE utf8mb4_unicode_ci`;
 const query = (sql, replacements, transaction, type = QueryTypes.SELECT) => sequelize.query(sql, { replacements, transaction, type });
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
@@ -68,7 +69,7 @@ async function documentsForPatient(body, transaction, includeContent = true) {
                 delete result.pdf_url;
                 result.signatures = result.signatures.map(signature => ({ signature_role: signature.signature_role, signed_at: signature.signed_at }));
             }
-            return result;
+            return safeDocumentForDisplay(result);
         }) };
     } catch(error) { if (missingTable(error)) return { available: false, documents: [] }; throw error; }
 }

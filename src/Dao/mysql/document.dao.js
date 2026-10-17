@@ -9,6 +9,7 @@ const { resolveDocumentLicenseMetadata } = require('../../util/documentLicensing
 const { assertPlanFeature } = require('../../util/planFeatures');
 const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
 const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
+const { sanitizeDocumentHtml, renderDocumentTemplate, safeDocumentForDisplay } = require('../../services/documentSignature/documentHtml.service');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
@@ -231,7 +232,7 @@ class DocumentDao {
                 }
             );
 
-            return responseData.success(rows, Messages.DATA_GET_SUCCESSFULLY);
+            return responseData.success(rows.map(safeDocumentForDisplay), Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
@@ -373,7 +374,7 @@ class DocumentDao {
                         _id_document_template_version: uuidv4(),
                         _id_document_template: idTemplate,
                         _version_number: version[0].next_version,
-                        _content_html: body.content_html || '',
+                        _content_html: sanitizeDocumentHtml(body.content_html),
                         _id_login: body.id_login
                     },
                     type: QueryTypes.INSERT, transaction
@@ -436,7 +437,7 @@ class DocumentDao {
 
             const effectiveDocuments = await documentRequirements.decorateMany(rows, body.id_business);
             const enriched = effectiveDocuments.map((document) => ({
-                ...document,
+                ...safeDocumentForDisplay(document),
                 signatures: signaturesByDocument[document.id_patient_document] || []
             }));
 
@@ -467,9 +468,7 @@ class DocumentDao {
     }
 
     replaceVariables(html, context) {
-        return String(html || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => (
-            context[key] === undefined || context[key] === null ? '' : String(context[key])
-        ));
+        return renderDocumentTemplate(html, context);
     }
 
     async buildContext(body, patient, doctor) {

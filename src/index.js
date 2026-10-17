@@ -12,7 +12,7 @@ const noStore = require('./middleware/noStore.middleware');
 const { corsCredentialedAllowlist } = require('./middleware/corsCredentialed.middleware');
 const { securityHeaders } = require('./middleware/securityHeaders.middleware');
 
-var bodyParser = require('body-parser');
+const { defaultBodyParser } = require('./middleware/requestBody.middleware');
 
 const app = express();
 
@@ -52,8 +52,6 @@ if (trustProxySetting !== false) {
 
 SecurityConfig.validateStartupConfig();
 app.set('etag', false);
-app.use(bodyParser.json({limit: '90mb' }));
-app.use(bodyParser.urlencoded({limit: '90mb' }))
 
 //server port
 app.set('port', process.env.PORT || Config.PORT);
@@ -67,19 +65,18 @@ app.engine('html', require('ejs').renderFile);
 app.use(sanitizePublicTokenLogs);
 morgan.token('safe-url', (req) => req.sanitizedUrlForLogs || sanitizePublicTokenLogs.sanitizePublicSignatureToken(req.originalUrl || req.url || ''));
 app.use(morgan(':method :safe-url :status :response-time ms - :res[content-length]'));
-app.use(express.json({limit: '50mb' }));
-app.use(express.urlencoded({ extended: false, defer: true, limit: '50mb', PparameterLimit:50000 }));
 app.use(cookieParser());
 app.use(securityHeaders());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(corsCredentialedAllowlist());
+app.use('/api', noStore);
+app.use(defaultBodyParser);
 
 
 //routes
 app.use(require('../src/routes/index'));
 
 //Api
-app.use('/api', noStore);
 app.use('/api/auth', require('./routes/mysql/auth'));
 app.use('/api/rol', require('./routes/mysql/rol'));
 app.use('/api/user', require('./routes/mysql/user'));
