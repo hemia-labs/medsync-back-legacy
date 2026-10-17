@@ -84,7 +84,7 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
     dao.getPxById = async (_patient, _business, options) => ({ status: 200, data: { access: options } });
     filesDao.getfiles = async (_patient, _business, options) => ({ status: 200, data: { codes: options.codes } });
     filesDao.deleteFile = async () => ({ status: 200, data: {} });
-    const app = express(); app.use(express.json()); app.use('/px', require('../../src/routes/mysql/px')); app.use('/file', require('../../src/routes/mysql/file'));
+    const app = express(); app.use(express.json()); app.use('/px', require('../../src/routes/mysql/px')); app.use('/api/file', require('../../src/routes/mysql/file'));
     const server = app.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     const request = async (url, method = 'GET', body) => {
@@ -96,8 +96,8 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
         const projection = await request('/px/get/patient-a?clinical=true'); assert.equal(projection.body.data.access.clinical, false);
         assert.equal((await request('/px/create-minimal', 'POST', payload)).status, 200);
         assert.equal((await request('/px/administrative', 'PUT', payload)).status, 200);
-        for (const [url, method] of [['/px/save', 'POST'], ['/px/update', 'PUT'], ['/px/allergies', 'PUT'], ['/file/px/upload-file', 'POST'], ['/file/delete', 'DELETE']]) assert.equal((await request(url, method, payload)).status, 403, url);
-        assert.equal((await request('/file/px/file/patient-a')).status, 403);
+        for (const [url, method] of [['/px/save', 'POST'], ['/px/update', 'PUT'], ['/px/allergies', 'PUT'], ['/api/file/px/upload-file', 'POST'], ['/api/file/delete', 'DELETE']]) assert.equal((await request(url, method, payload)).status, 403, url);
+        assert.equal((await request('/api/file/px/file/patient-a')).status, 403);
         assert.equal((await request('/px/force-delete', 'DELETE', { id_person: 'patient-a' })).status, 403);
         assert.equal((await request('/px/delete', 'DELETE', { id_person: 'patient-a' })).status, 200);
         assert.equal((await request('/px/restore', 'PUT', { id_person: 'patient-a' })).status, 200);
@@ -111,14 +111,14 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
         permissions = [];
         assert.equal((await request('/px/get/patient-a')).status, 403);
         permissions = ['px.tab.photos'];
-        assert.deepEqual((await request('/file/px/file/patient-a')).body.data.codes, ['C4CA42']);
-        assert.equal((await request('/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'C4CA42', key: 'qa' })).status, 403, 'Photo reading does not grant writing');
+        assert.deepEqual((await request('/api/file/px/file/patient-a')).body.data.codes, ['C4CA42']);
+        assert.equal((await request('/api/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'C4CA42', key: 'qa' })).status, 403, 'Photo reading does not grant writing');
         permissions = ['px.radiography'];
-        assert.deepEqual((await request('/file/px/file/patient-a')).body.data.codes, ['C81E72']);
+        assert.deepEqual((await request('/api/file/px/file/patient-a')).body.data.codes, ['C81E72']);
         permissions = ['px.photos.manager'];
-        assert.deepEqual((await request('/file/px/file/patient-a')).body.data.codes, ['C4CA42', 'C81E72']);
-        assert.equal((await request('/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'CFCD20', key: 'qa' })).status, 403, 'Image management cannot access legacy signatures');
-        assert.equal((await request('/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'C4CA42', key: 'qa' })).status, 200);
+        assert.deepEqual((await request('/api/file/px/file/patient-a')).body.data.codes, ['C4CA42', 'C81E72']);
+        assert.equal((await request('/api/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'CFCD20', key: 'qa' })).status, 403, 'Image management cannot access legacy signatures');
+        assert.equal((await request('/api/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'C4CA42', key: 'qa' })).status, 200);
         permissions = ['px.all', 'px.new', 'clinical_history.view', 'clinical_history.edit_draft'];
         assert.equal((await request('/px/get/patient-a')).body.data.access.clinical, true);
         assert.equal((await request('/px/allergies', 'PUT', {})).status, 200);

@@ -2,6 +2,19 @@ const { invalid, valid, requireField } = require('./common.validator');
 
 const isEmpty = (value) => value === undefined || value === null || value === '';
 
+const validateList = (req) => {
+    const query = req.query || {};
+    for(const [key, label] of [['date_from', 'Desde'], ['date_to', 'Hasta']]) {
+        const value = query[key];
+        if(isEmpty(value)) continue;
+        if(typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return invalid(`La fecha ${label} debe ser una fecha válida con formato AAAA-MM-DD.`);
+        const date = new Date(`${value}T00:00:00.000Z`);
+        if(Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return invalid(`La fecha ${label} no es una fecha válida.`);
+    }
+    if(query.date_from && query.date_to && query.date_from > query.date_to) return invalid('La fecha Hasta debe ser igual o posterior a Desde. Corrige el rango para buscar recetas.');
+    return valid();
+};
+
 const validateConfigSave = (req) => {
     const body = req.body || {};
     const validModes = ['header', 'background'];
@@ -92,6 +105,7 @@ const validateAuditAction = (req) => {
 };
 
 module.exports = {
+    validateList,
     validateConfigSave,
     validatePrescriptionSave,
     validateIssue,
