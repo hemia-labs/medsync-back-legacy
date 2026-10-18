@@ -89,6 +89,7 @@ class ClinicalHistoryTemplateDao {
             .filter((section) => section.locked)
             .map((section) => section.key);
         const sectionKeys = new Set();
+        const sectionPositions = new Set();
         for (const section of parsed.sections) {
             if (!section || typeof section !== 'object' || Array.isArray(section)) {
                 return { ok: false, message: 'Cada sección debe ser un objeto.' };
@@ -102,6 +103,12 @@ class ClinicalHistoryTemplateDao {
                 return { ok: false, message: `Sección duplicada: ${section.key}` };
             }
             sectionKeys.add(section.key);
+
+            const position = Number(section.order);
+            if(typeof section.order === 'boolean' || section.order === null || section.order === '' || !Number.isInteger(position) || position < 1 || position > parsed.sections.length || sectionPositions.has(position)) {
+                return { ok:false, message:'Cada sección debe tener una posición entera distinta, entre 1 y el total de secciones.' };
+            }
+            sectionPositions.add(position);
 
             const fieldKeys = new Set();
             for (const field of section.fields) {

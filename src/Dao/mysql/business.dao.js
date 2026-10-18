@@ -4,6 +4,7 @@ const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
+const { validateBusinessProfile } = require('../../validators/business.validator');
 
 function pickBusinessProfileUpdates(body = {}, current = {}) {
     const has = (field) => Object.prototype.hasOwnProperty.call(body, field);
@@ -42,8 +43,11 @@ class BusinessDao {
     async update(idBusiness, body) {
         try {
             const currentResponse = await this.get(idBusiness);
-            const current = currentResponse && currentResponse.data ? currentResponse.data : {};
-            const updates = pickBusinessProfileUpdates(body, current);
+            if(!currentResponse || currentResponse.status !== 200 || !currentResponse.data) return responseData.error('No se pudo consultar el consultorio antes de guardar. Tus cambios no se guardaron; reintenta.');
+            const current = currentResponse.data;
+            const validation = validateBusinessProfile(pickBusinessProfileUpdates(body, current));
+            if(!validation.isValid) return responseData.bad_request(validation.message, { fieldErrors: validation.fieldErrors });
+            const updates = validation.data;
 
             await sequelize.query(
                 `UPDATE business

@@ -51,6 +51,8 @@ if (trustProxySetting !== false) {
 }
 
 SecurityConfig.validateStartupConfig();
+const emailStartup = require('./services/email/email.service').initialize();
+if (!emailStartup.success) console.warn('[EMAIL CONFIG]', { code: emailStartup.code, message: emailStartup.message });
 app.set('etag', false);
 
 //server port
@@ -92,6 +94,8 @@ app.use('/api/config', require('./routes/mysql/config'));
 app.use('/api/appointment', require('./routes/mysql/appointment'));
 app.use('/api/business/dashboard', require('./routes/mysql/business-dashboard'));
 app.use('/api/business', require('./routes/mysql/business'));
+app.use('/api/saas-legal', require('./routes/mysql/saas-legal'));
+app.use('/api/super-admin/saas-legal', require('./routes/mysql/super-admin-saas-legal'));
 app.use('/api/super-admin', require('./routes/mysql/super-admin'));
 app.use('/api/prescription', require('./routes/mysql/prescription'));
 app.use('/api/document', require('./routes/mysql/document'));

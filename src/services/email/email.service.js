@@ -1,6 +1,8 @@
 require('../../config/env');
 
 const NodemailerProvider = require('./providers/nodemailer.provider');
+const SesProvider = require('./providers/ses.provider');
+const renderTransactionalEmail = require('./transactionalEmail.renderer');
 
 function normalizeProviderName() {
     return String(process.env.EMAIL_PROVIDER || 'smtp').trim().toLowerCase();
@@ -20,6 +22,16 @@ function isTestEnvironment() {
 }
 
 class EmailService {
+    providerName() { return normalizeProviderName(); }
+
+    initialize() {
+        try {
+            const provider = this.provider();
+            if (provider && typeof provider.initialize === 'function') provider.initialize();
+            return { success: true, provider: normalizeProviderName() };
+        } catch (error) { return normalizeError(error); }
+    }
+
     provider() {
         const provider = normalizeProviderName();
 
@@ -29,6 +41,11 @@ class EmailService {
 
         if (provider === 'smtp') {
             return new NodemailerProvider();
+        }
+
+        if (provider === 'ses') {
+            if (!this.sesProvider) this.sesProvider = new SesProvider();
+            return this.sesProvider;
         }
 
         const error = new Error('EMAIL_PROVIDER no esta soportado.');
@@ -58,7 +75,10 @@ class EmailService {
                 };
             }
 
-            return await provider.send(message);
+            const payload = normalizeProviderName() === 'smtp' && message.type
+                ? { to: message.to, ...renderTransactionalEmail(message.type, message.variables) }
+                : message;
+            return await provider.send(payload);
         } catch (error) {
             return normalizeError(error);
         }

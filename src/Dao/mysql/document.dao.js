@@ -10,6 +10,7 @@ const { assertPlanFeature } = require('../../util/planFeatures');
 const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
 const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
 const { sanitizeDocumentHtml, renderDocumentTemplate, safeDocumentForDisplay } = require('../../services/documentSignature/documentHtml.service');
+const { validateDocumentTemplate } = require('../../validators/documentTemplate.validator');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
@@ -246,6 +247,11 @@ class DocumentDao {
                 return responseData.unauthorized('No tienes permiso para configurar documentos.');
             }
 
+            const validation = validateDocumentTemplate(body);
+            if(!validation.isValid) return responseData.bad_request(validation.message, { fieldErrors: validation.fieldErrors });
+            const templateName = validation.data.name;
+            const contentHtml = validation.data.content_html;
+
             transaction = await sequelize.transaction();
             const idTemplate = body.id_document_template || uuidv4();
             const existing = body.id_document_template ? await sequelize.query(
@@ -302,7 +308,7 @@ class DocumentDao {
                         replacements: {
                             _id_document_template: idTemplate,
                             _id_business: body.id_business,
-                            _name: body.name,
+                            _name: templateName,
                             _description: body.description || null,
                             _id_login: body.id_login,
                             ...licensingMetadata,
@@ -340,7 +346,7 @@ class DocumentDao {
                         replacements: {
                             _id_document_template: idTemplate,
                             _id_business: body.id_business,
-                            _name: body.name,
+                            _name: templateName,
                             _description: body.description || null,
                             _id_login: body.id_login,
                             ...licensingMetadata,
@@ -374,7 +380,7 @@ class DocumentDao {
                         _id_document_template_version: uuidv4(),
                         _id_document_template: idTemplate,
                         _version_number: version[0].next_version,
-                        _content_html: sanitizeDocumentHtml(body.content_html),
+                        _content_html: contentHtml,
                         _id_login: body.id_login
                     },
                     type: QueryTypes.INSERT, transaction

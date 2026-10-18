@@ -23,6 +23,15 @@ const validateConfigSave = (req) => {
         return invalid('Modo de plantilla invalido.');
     }
 
+    if(typeof body.clinic_address !== 'string' || !body.clinic_address.trim()) return invalid('Indica el domicilio del consultorio para preparar el formato de receta.');
+    if(body.clinic_address.trim().length > 2000) return invalid('El domicilio del consultorio admite hasta 2000 caracteres.');
+    const phone = typeof body.clinic_phone === 'string' ? body.clinic_phone.trim() : '';
+    const digits = phone.replace(/\D/g, '');
+    if(!/^\+?[\d\s().-]+$/.test(phone) || digits.length < 10 || digits.length > 15 || phone.length > 100) return invalid('Ingresa un teléfono de contacto de 10 a 15 dígitos; puedes usar +, espacios, paréntesis o guiones.');
+    if(body.background_opacity !== undefined && (!['number','string'].includes(typeof body.background_opacity) || body.background_opacity === '' || !Number.isFinite(Number(body.background_opacity)) || Number(body.background_opacity) < 0 || Number(body.background_opacity) > 1)) return invalid('La opacidad del fondo debe estar entre 0 y 1.');
+    body.clinic_address = body.clinic_address.trim();
+    body.clinic_phone = phone;
+
     return valid();
 };
 
