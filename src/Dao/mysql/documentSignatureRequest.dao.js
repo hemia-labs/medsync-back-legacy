@@ -18,7 +18,6 @@ const {
     DOCUMENT_SIGNATURE_EVENTS
 } = require('../../services/documentSignature/documentSignatureRequest.constants');
 const EmailService = require('../../services/email/email.service');
-const documentSignatureEmailTemplate = require('../../services/email/templates/documentSignatureEmail.template');
 const planConsentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
 const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
 
@@ -30,6 +29,7 @@ const VALID_REMOTE_SIGNATURE_ROLES = Object.values(REMOTE_SIGNATURE_ROLES);
 const SUCCESS_STATUS = 200;
 const FORBIDDEN_STATUS = 403;
 const BAD_GATEWAY_STATUS = 502;
+const emailProviderName = () => String(process.env.EMAIL_PROVIDER || 'smtp').trim().toLowerCase() || 'smtp';
 
 function success(data, message) {
     return {
@@ -680,25 +680,22 @@ class DocumentSignatureRequestDao {
                     expires_at: createdRequest.expires_at,
                     token_fingerprint: createdRequest.token_fingerprint || null,
                     recipient_email_masked: maskEmail(recipientEmail),
-                    provider: 'smtp'
+                    provider: emailProviderName()
                 })
             );
 
-            const template = documentSignatureEmailTemplate({
-                patientName: displayName(emailContext),
-                clinicName: emailContext.business_legal_name || emailContext.business_name || 'Tu consultorio',
-                clinicLogoUrl: emailContext.business_logo_url,
-                documentTitle: documentTitle(emailContext),
-                doctorName: emailContext.doctor_name_snapshot,
-                expiresAt: formatEmailDateTime(createdRequest.expires_at),
-                publicUrl: createdRequest.public_url
-            });
-
             const emailResult = await EmailService.sendTransactionalEmail({
+                type: 'document-signature',
                 to: recipientEmail,
-                subject: template.subject,
-                html: template.html,
-                text: template.text
+                variables: {
+                    patientName: displayName(emailContext),
+                    clinicName: emailContext.business_legal_name || emailContext.business_name || 'Tu consultorio',
+                    clinicLogoUrl: emailContext.business_logo_url,
+                    documentTitle: documentTitle(emailContext),
+                    doctorName: emailContext.doctor_name_snapshot,
+                    expiresAt: formatEmailDateTime(createdRequest.expires_at),
+                    publicUrl: createdRequest.public_url
+                }
             });
 
             if (!emailResult || !emailResult.success) {
@@ -714,7 +711,7 @@ class DocumentSignatureRequestDao {
                         expires_at: createdRequest.expires_at,
                         token_fingerprint: createdRequest.token_fingerprint || null,
                         recipient_email_masked: maskEmail(recipientEmail),
-                        provider: emailResult && emailResult.provider ? emailResult.provider : 'smtp',
+                        provider: emailResult && emailResult.provider ? emailResult.provider : emailProviderName(),
                         error_code: emailResult && emailResult.code ? emailResult.code : 'EMAIL_SEND_FAILED'
                     })
                 );
@@ -737,7 +734,7 @@ class DocumentSignatureRequestDao {
                     expires_at: createdRequest.expires_at,
                     token_fingerprint: createdRequest.token_fingerprint || null,
                     recipient_email_masked: maskEmail(recipientEmail),
-                    provider: emailResult.provider || 'smtp',
+                    provider: emailResult.provider || emailProviderName(),
                     message_id: emailResult.messageId || null
                 })
             );
@@ -769,7 +766,7 @@ class DocumentSignatureRequestDao {
                         signature_role: createdRequest ? createdRequest.signature_role : normalizeSignatureRole(body.signature_role),
                         token_fingerprint: createdRequest ? createdRequest.token_fingerprint || null : null,
                         recipient_email_masked: maskEmail(recipientEmail),
-                        provider: 'smtp',
+                        provider: emailProviderName(),
                         error_code: error && error.code ? error.code : 'EMAIL_SEND_FAILED'
                     })
                 );

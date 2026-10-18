@@ -75,7 +75,7 @@ async function main() {
     try {
         replaceModule('../../src/config/env', {});
         replaceModule('../../src/config/config', { SERVICEMAIL: 'test', USERGMAIL: 'sender@example.invalid', PASSWORDGMAIL: 'test' });
-        replaceModule('../../src/services/email/email.service', {});
+        replaceModule('../../src/services/email/email.service', { sendTransactionalEmail: message => provider.send(message) });
         const NodemailerProvider = require('../../src/services/email/providers/nodemailer.provider');
         const provider = new NodemailerProvider();
         provider.config = { host: 'smtp.example.invalid', port: 587, secure: false, user: 'test', password: 'test', from: 'sender@example.invalid', replyTo: 'reply@example.invalid' };
@@ -101,7 +101,7 @@ async function main() {
         assert.throws(operation, { code: 'AWS_REGION_INVALID' });
     }
     assert.equal(clientsCreated, 0);
-    console.log('PASS dependency regression: proxy trust, region validation, UUID consumers, Axios local HTTP and both Nodemailer providers (no delivery).');
+    console.log('PASS dependency regression: proxy trust, region validation, UUID consumers, Axios local HTTP and central SMTP/legacy compatibility dispatch (no delivery).');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

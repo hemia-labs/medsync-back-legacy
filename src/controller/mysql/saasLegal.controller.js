@@ -1,0 +1,15 @@
+const dao = require('../../Dao/mysql/saasLegal.dao');
+// Actor and tenant always come from the authenticated context, never body/query.
+const context = req => ({ id_login: req.tokenDecode && req.tokenDecode.id_login,
+    id_business: req.tokenDecode && req.tokenDecode.id_business, rol: req.tokenDecode && req.tokenDecode.rol });
+const send = (res, response) => res.status(response.status).send(response);
+module.exports = {
+    publicDocument: async (req, res) => send(res, await dao.publicDocument(req.params.documentKey)),
+    current: async (req, res) => send(res, await dao.current(context(req))),
+    history: async (req, res) => send(res, await dao.history(context(req))),
+    accept: async (req, res) => send(res, await dao.accept(context(req), { id_version: req.body && req.body.id_version, acknowledged: req.body && req.body.acknowledged })),
+    adminList: async (req, res) => send(res, await dao.adminList(context(req))),
+    saveDraft: async (req, res) => send(res, await dao.saveDraft(context(req), req.params.documentKey, req.body)),
+    publish: async (req, res) => send(res, await dao.publish(context(req), req.params.documentKey, req.body)),
+    adminVersion: async (req, res) => send(res, await dao.adminVersion(context(req), req.params.documentKey, req.params.idVersion))
+};

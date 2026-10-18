@@ -10,6 +10,7 @@ const {SequelizeException, SQLException} = require('../../util/sequelizeExceptio
 const { encript } = require('../../util/bcrypt')
 const {v4: uuidv4 } = require('uuid');
 const LicenseUsageDao = require('./licenseUsage.dao');
+const { validateProfessionalPhone } = require('../../validators/professionalProfile.validator');
 const {
     classifyLicenseResource,
     validateLicenseForNewUser,
@@ -385,6 +386,12 @@ async saveProfessionalProfile(body) {
             return responseData.unauthorized('No tienes permiso para editar este perfil profesional.');
         }
 
+        const hasProfessionalPhone = Object.prototype.hasOwnProperty.call(body, 'professional_phone');
+        const professionalPhone = validateProfessionalPhone(body.professional_phone);
+        if(!professionalPhone.isValid) {
+            return responseData.bad_request(professionalPhone.message, { fieldErrors: { professional_phone: professionalPhone.message } });
+        }
+
         const user = await sequelize.query(
             `SELECT l.id_login, l.id_business, r.code AS rol
                FROM login l
@@ -425,7 +432,9 @@ async saveProfessionalProfile(body) {
         const preserveAdminControlledFlags = isSelfEdit && !canManageUsers;
         const currentProfile = existing[0]
             ? await sequelize.query(
-                `SELECT can_issue_prescriptions, can_sign_documents, is_active
+                `SELECT can_issue_prescriptions, can_sign_documents, is_active,
+                        professional_name, professional_license, university, specialty,
+                        specialty_license, professional_phone, signature_image
                    FROM doctor_professional_profile
                   WHERE id_doctor_professional_profile COLLATE utf8mb4_unicode_ci = :_id_doctor_professional_profile COLLATE utf8mb4_unicode_ci
                   LIMIT 1`,
@@ -436,6 +445,7 @@ async saveProfessionalProfile(body) {
             )
             : [];
         const currentFlags = currentProfile[0] || {};
+        const profileField = field => (body[field] === undefined ? currentFlags[field] : body[field]) || null;
         const currentProfileActive = existing[0] ? normalizeUpdateActive(currentFlags.is_active, true) : false;
         const nextProfileActive = preserveAdminControlledFlags
             ? (existing[0] ? currentProfileActive : true)
@@ -455,13 +465,13 @@ async saveProfessionalProfile(body) {
             _id_doctor_professional_profile: existing[0] ? existing[0].id_doctor_professional_profile : uuidv4(),
             _id_business: body.id_business,
             _id_login: targetLogin,
-            _professional_name: body.professional_name || null,
-            _professional_license: body.professional_license || null,
-            _university: body.university || null,
-            _specialty: body.specialty || null,
-            _specialty_license: body.specialty_license || null,
-            _professional_phone: body.professional_phone || null,
-            _signature_image: body.signature_image || null,
+            _professional_name: profileField('professional_name'),
+            _professional_license: profileField('professional_license'),
+            _university: profileField('university'),
+            _specialty: profileField('specialty'),
+            _specialty_license: profileField('specialty_license'),
+            _professional_phone: hasProfessionalPhone ? professionalPhone.value || null : currentFlags.professional_phone || null,
+            _signature_image: profileField('signature_image'),
             _can_issue_prescriptions: preserveAdminControlledFlags ? (currentFlags.can_issue_prescriptions || 0) : (body.can_issue_prescriptions === false ? 0 : 1),
             _can_sign_documents: preserveAdminControlledFlags ? (currentFlags.can_sign_documents || 0) : (body.can_sign_documents === true ? 1 : 0),
             _is_active: preserveAdminControlledFlags ? (existing[0] ? (currentProfileActive ? 1 : 0) : 1) : (nextProfileActive ? 1 : 0),
