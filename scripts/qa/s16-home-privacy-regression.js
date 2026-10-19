@@ -14,7 +14,7 @@ const db = { async query(sql, options) {
 require.cache[connectionPath] = { id: connectionPath, filename: connectionPath, loaded: true, exports: db };
 require.cache[userPath] = { id: userPath, filename: userPath, loaded: true, exports: { hasPermission: async (id, code) => granted.has(code) } };
 const accessPath = require.resolve('../../src/util/dashboardAccess');
-require.cache[accessPath] = { id: accessPath, filename: accessPath, loaded: true, exports: { resolveDashboardAccess: async () => ({ families, scope: { mode: 'tenant', idLogin: null } }) } };
+require.cache[accessPath] = { id: accessPath, filename: accessPath, loaded: true, exports: { resolveDashboardAccess: async () => ({ families, permissionCodes: granted, scope: { mode: 'tenant', idLogin: null } }) } };
 const dao = require('../../src/Dao/mysql/homeContinuity.dao');
 async function summary(codes) {
     queries = []; granted = new Set(codes);

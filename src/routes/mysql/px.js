@@ -13,6 +13,7 @@ const {
     validatePxCreateMinimal,
     validatePxSave,
     validatePxSearch,
+    validatePxSearchPage,
     validatePxUpdate
 } = require('../../validators/px.validator');
 
@@ -39,6 +40,8 @@ router.put('/restore', Token.Auth, csrfProtected, requireTenantOperational, requ
 router.post('/search-fast', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.all', { resource: 'px.search_fast' }), validatePayload(validatePxFastSearch), awaitHandlerFactory(PxController.getPxFastSearch));
 
 router.post('/search', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.all', { resource: 'px.search' }), validatePayload(validatePxSearch), awaitHandlerFactory(PxController.getPxSearch));
+
+router.post('/search-page', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('px.all', { resource: 'px.search' }), validatePayload(validatePxSearchPage), awaitHandlerFactory(PxController.getPxSearchPage));
 
 router.get('/birthday', Token.Auth, requireTenantOperational, requirePermission('px.all', { resource: 'px.birthday' }), awaitHandlerFactory(PxController.getPxBithDay));
 

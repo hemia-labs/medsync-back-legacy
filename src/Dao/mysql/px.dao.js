@@ -6,9 +6,9 @@ const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
-const hellpersFile = require('../../util/file/file')
+
 const config = require('../../config/config');
-const { uploadFile } = require('../../services/aws/s3');
+const { uploadImage } = require('../../services/aws/s3');
 const PatientAllergyDao = require('./patientAllergy.dao');
 const { hydrateAllergy, validateReview } = require('../../domain/clinicalHistory/allergyStatus');
 
@@ -254,23 +254,7 @@ async pxSave(body) {
         // });
         let resultFile = null;
         if(body.files && body.files.file) {
-            let pathfile = hellpersFile.base64Toimg(body.files.file)
-            if(!pathfile){
-                throw new Error("Excepción al crear el archivo")
-            }
-
-            resultFile = await uploadFile(config.BUCKETS.FIRMAS,pathfile.path,pathfile.id);
-            /*Response AWS 
-            {
-                ETag: '"6885b87f3c730e94424029f6c5485b77"',
-                ServerSideEncryption: 'AES256',
-                Location: 'https://s3-bucket-files-photos.s3.us-west-1.amazonaws.com/ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Bucket: 's3-bucket-files-photos'
-            }*/
-
-            hellpersFile.deleteFile(pathfile.path);
+            resultFile = await uploadImage(config.BUCKETS.FIRMAS, body.files.file);
         }
         
 
@@ -585,25 +569,8 @@ async pxUpdate(body) {
         }
 
         if( !person.id_signature && body.files && body.files.file ){
-            let pathfile = hellpersFile.base64Toimg(body.files.file)
-            if(!pathfile){
-                throw new Error("Excepción al crear el archivo")
-            }
-
-            let resultFile = await uploadFile(config.BUCKETS.FIRMAS,pathfile.path,pathfile.id);
-
+            let resultFile = await uploadImage(config.BUCKETS.FIRMAS, body.files.file);
             person.id_signature = resultFile.Location;
-            /*Response AWS 
-            {
-                ETag: '"6885b87f3c730e94424029f6c5485b77"',
-                ServerSideEncryption: 'AES256',
-                Location: 'https://s3-bucket-files-photos.s3.us-west-1.amazonaws.com/ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Bucket: 's3-bucket-files-photos'
-            }*/
-
-            hellpersFile.deleteFile(pathfile.path);
         }
 
         // Allergies are changed through the shared review endpoint; ignore stale form data.
@@ -683,6 +650,38 @@ async pxDelete(id_person, id_login, id_business) {
  * Permite obtener un listado de los px
  * @returns Lista de paises
  */
+async getPxSearchPage(param, idBusiness, options = {}) {
+    if (!idBusiness) return responseData.forbidden('No hay consultorio activo.');
+    const requestedPage = options.page === undefined ? 1 : options.page;
+    const pageSize = options.pageSize === undefined ? 8 : options.pageSize;
+    if (typeof param !== 'string' || param.length > 120 || !Number.isSafeInteger(requestedPage) || requestedPage < 1 || requestedPage > 1000000
+        || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50) return responseData.bad_request('Busqueda o paginacion invalida.');
+    try {
+        const term = normalizeSearchTerm(param);
+        // '=' escapes LIKE metacharacters without depending on MySQL's
+        // NO_BACKSLASH_ESCAPES mode. Search only the authorized tenant's rows.
+        const match = term ? `CONCAT_WS(' ', p.name, p.surname, p.telephone, p.local_telephone, p.ocupation,
+            CONCAT(p.age, ' años'), CONCAT('Expediente ', p.code), p.id_person) LIKE :term ESCAPE '='` : '1 = 1';
+        const baseWhere = `p.id_business = :business AND ${options.includeArchived === true ? 'p.active IN (0, 1)' : 'p.active = 1'}`;
+        const replacements = { business: idBusiness, term: `%${term.replace(/[=%_]/g, character => '=' + character)}%` };
+        const totals = await sequelize.query(`SELECT COUNT(*) AS totalPatients,
+            COALESCE(SUM(CASE WHEN ${match} THEN 1 ELSE 0 END), 0) AS total,
+            COALESCE(SUM(CASE WHEN NULLIF(TRIM(p.ocupation), '') IS NOT NULL THEN 1 ELSE 0 END), 0) AS withOccupation
+            FROM person p WHERE ${baseWhere}`, { replacements, type: QueryTypes.SELECT });
+        const counts = totals[0] || {}, total = Number(counts.total || 0);
+        const pageCount = Math.max(1, Math.ceil(total / pageSize));
+        const page = Math.min(requestedPage, pageCount);
+        const items = total ? await sequelize.query(`SELECT p.id_person, p.code, p.active, p.name, p.surname,
+            p.ocupation, p.local_telephone, p.telephone, p.age
+            FROM person p WHERE ${baseWhere} AND (${match})
+            ORDER BY p.created_at DESC, p.name ASC, p.id_person ASC LIMIT :limit OFFSET :offset`, {
+            replacements: { ...replacements, limit: pageSize, offset: (page - 1) * pageSize }, type: QueryTypes.SELECT
+        }) : [];
+        return responseData.success({ items, pagination: { page, pageSize, pageCount, total,
+            totalPatients: Number(counts.totalPatients || 0), withOccupation: Number(counts.withOccupation || 0) } }, Messages.DATA_GET_SUCCESSFULLY);
+    } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
+}
+
  async getPxSearch(param, id_business, options = {}) {
     let response;        
     try {

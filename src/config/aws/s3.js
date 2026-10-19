@@ -57,8 +57,14 @@ const deleteFileToBucket = (bucketName, key) => {
      return getS3().deleteObject(params).promise();
 };
 
+const uploadBufferToBucket = (bucketName, body, key, contentType) => {
+    if (!Buffer.isBuffer(body)) throw new TypeError('Se requiere una imagen decodificada.');
+    return getS3().upload({ Bucket: bucketName, Key: key, Body: body, ContentType: contentType }).promise();
+};
+
 module.exports = {
     getBuckets,
     uploadToBucket,
+    uploadBufferToBucket,
     deleteFileToBucket
 };

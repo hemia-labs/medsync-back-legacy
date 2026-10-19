@@ -133,6 +133,14 @@ PxUpdate = async(req, res, next) =>{
  * @author Marco Antonio Saraos Hernandez
  * @author Humberto Trinidad Domínguez
  */
+getPxSearchPage = async(req, res) => {
+    const includeArchived = req.body.include_archived === true && await hasPermission(req.tokenDecode.id_login, 'px.new');
+    const response = await PxDao.getPxSearchPage(req.body.param, getBusinessIdFromToken(req.tokenDecode), {
+        includeArchived, page: req.body.page, pageSize: req.body.page_size
+    });
+    res.status(response.status).send(response);
+}
+
 getPxSearch = async(req, res, next) =>{
 
     let _param = req.body.param;

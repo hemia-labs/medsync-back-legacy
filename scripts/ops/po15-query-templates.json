@@ -1,0 +1,66 @@
+[
+  {
+    "sql": "SELECT pd.*, dt.name AS template_name, dt.template_type,\n                        dt.requires_patient_signature, dt.requires_tutor_signature, dt.requires_doctor_signature,\n                        dt.requires_witness1_signature, dt.requires_witness2_signature\n                   FROM patient_documents pd\n                   LEFT JOIN document_templates dt\n                          ON dt.id_document_template COLLATE utf8mb4_unicode_ci = pd.id_document_template COLLATE utf8mb4_unicode_ci\n                  WHERE pd.id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci\n                    AND pd.id_person COLLATE utf8mb4_unicode_ci = :_id_person COLLATE utf8mb4_unicode_ci\n                    AND pd.active = 1\n                  ORDER BY pd.created_at DESC, pd.id_patient_document DESC LIMIT :_limit OFFSET :_offset",
+    "parameterNames": [
+      "_id_business",
+      "_id_person",
+      "_limit",
+      "_offset"
+    ]
+  },
+  {
+    "sql": "SELECT\n                    p.id_prescription,\n                    p.folio,\n                    p.status,\n                    p.issue_date,\n                    p.issued_at,\n                    p.cancelled_at,\n                    p.id_person,\n                    TRIM(CONCAT(IFNULL(person.name, ''), ' ', IFNULL(person.surname, ''))) AS patient_name,\n                    person.birthday AS patient_birthday,\n                    person.age AS patient_age,\n                    p.issuer_doctor_id,\n                    COALESCE(p.doctor_name_snapshot, dpp.professional_name, doctor.name) AS doctor_name,\n                    p.created_by,\n                    creator.name AS created_by_name,\n                    p.issued_by,\n                    issuer.name AS issued_by_name,\n                    p.cancelled_by,\n                    canceller.name AS cancelled_by_name,\n                    p.diagnosis,\n                    p.notes,\n                    p.cancellation_reason,\n                    (\n                        SELECT GROUP_CONCAT(pi.generic_name ORDER BY pi.sort_order SEPARATOR ', ')\n                          FROM prescription_item pi\n                         WHERE pi.id_prescription COLLATE utf8mb4_unicode_ci = p.id_prescription COLLATE utf8mb4_unicode_ci\n                           AND pi.id_business COLLATE utf8mb4_unicode_ci = p.id_business COLLATE utf8mb4_unicode_ci\n                    ) AS medications\n                   FROM prescription p\n                   INNER JOIN person ON person.id_person COLLATE utf8mb4_unicode_ci = p.id_person COLLATE utf8mb4_unicode_ci AND person.id_business COLLATE utf8mb4_unicode_ci = p.id_business COLLATE utf8mb4_unicode_ci\n                   LEFT JOIN login doctor ON doctor.id_login COLLATE utf8mb4_unicode_ci = p.issuer_doctor_id COLLATE utf8mb4_unicode_ci\n                   LEFT JOIN doctor_professional_profile dpp ON dpp.id_login COLLATE utf8mb4_unicode_ci = p.issuer_doctor_id COLLATE utf8mb4_unicode_ci AND dpp.id_business COLLATE utf8mb4_unicode_ci = p.id_business COLLATE utf8mb4_unicode_ci\n                   LEFT JOIN login creator ON creator.id_login COLLATE utf8mb4_unicode_ci = p.created_by COLLATE utf8mb4_unicode_ci\n                   LEFT JOIN login issuer ON issuer.id_login COLLATE utf8mb4_unicode_ci = p.issued_by COLLATE utf8mb4_unicode_ci\n                   LEFT JOIN login canceller ON canceller.id_login COLLATE utf8mb4_unicode_ci = p.cancelled_by COLLATE utf8mb4_unicode_ci\n                  WHERE p.id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci AND p.active = 1 AND p.id_person COLLATE utf8mb4_unicode_ci = :_id_person COLLATE utf8mb4_unicode_ci\n                  ORDER BY p.issue_date DESC, p.created_at DESC, p.id_prescription DESC LIMIT :_limit OFFSET :_offset",
+    "parameterNames": [
+      "_date_from",
+      "_date_to",
+      "_id_business",
+      "_id_login",
+      "_id_person",
+      "_issuer_doctor_id",
+      "_limit",
+      "_offset",
+      "_search",
+      "_status"
+    ]
+  },
+  {
+    "sql": "SELECT tp.*, creator.name AS created_by_name, editor.name AS updated_by_name, closer.name AS closed_by_name\n            FROM treatment_plan tp\n            LEFT JOIN login creator ON creator.id_login COLLATE utf8mb4_unicode_ci = tp.created_by COLLATE utf8mb4_unicode_ci AND creator.id_business COLLATE utf8mb4_unicode_ci = tp.id_business COLLATE utf8mb4_unicode_ci\n            LEFT JOIN login editor ON editor.id_login COLLATE utf8mb4_unicode_ci = tp.updated_by COLLATE utf8mb4_unicode_ci AND editor.id_business COLLATE utf8mb4_unicode_ci = tp.id_business COLLATE utf8mb4_unicode_ci\n            LEFT JOIN login closer ON closer.id_login COLLATE utf8mb4_unicode_ci = tp.closed_by COLLATE utf8mb4_unicode_ci AND closer.id_business COLLATE utf8mb4_unicode_ci = tp.id_business COLLATE utf8mb4_unicode_ci\n            WHERE tp.id_business COLLATE utf8mb4_unicode_ci = :business COLLATE utf8mb4_unicode_ci AND tp.id_person COLLATE utf8mb4_unicode_ci = :patient COLLATE utf8mb4_unicode_ci AND tp.active = 1\n            AND tp.status <> 'active'\n            ORDER BY tp.created_at DESC, tp.id_treatment_plan DESC LIMIT :limit OFFSET :offset",
+    "parameterNames": [
+      "actor",
+      "business",
+      "item",
+      "limit",
+      "offset",
+      "patient",
+      "plan"
+    ]
+  },
+  {
+    "sql": "SELECT pt.* FROM patient_treatment pt WHERE pt.id_business COLLATE utf8mb4_unicode_ci = :business COLLATE utf8mb4_unicode_ci\n            AND pt.id_person COLLATE utf8mb4_unicode_ci = :patient COLLATE utf8mb4_unicode_ci AND pt.active = 1 AND pt.id_treatment_plan IN (:planIds) ORDER BY pt.created_at DESC, pt.id_patient_treatment DESC",
+    "parameterNames": [
+      "actor",
+      "business",
+      "item",
+      "patient",
+      "plan",
+      "planIds"
+    ]
+  },
+  {
+    "sql": "SELECT pd.*, link.id_treatment_plan, link.consent_snapshot_json, link.prepared_by\n            FROM treatment_plan_consent_document link INNER JOIN patient_documents pd ON pd.id_patient_document = link.id_patient_document\n                AND pd.id_business = link.id_business AND pd.id_person = link.id_person\n            WHERE link.id_business COLLATE utf8mb4_unicode_ci = :business COLLATE utf8mb4_unicode_ci AND link.id_person COLLATE utf8mb4_unicode_ci = :patient COLLATE utf8mb4_unicode_ci AND pd.active = 1 AND link.id_treatment_plan IN (:planIds) AND pd.status <> 'CANCELADO'\n            AND NOT EXISTS (SELECT 1 FROM treatment_plan_consent_document newer\n                INNER JOIN patient_documents newer_pd ON newer_pd.id_patient_document = newer.id_patient_document\n                    AND newer_pd.id_business = newer.id_business AND newer_pd.id_person = newer.id_person\n                WHERE newer.id_business = link.id_business AND newer.id_person = link.id_person AND newer.id_treatment_plan = link.id_treatment_plan\n                    AND newer_pd.active = 1 AND newer_pd.status <> 'CANCELADO'\n                    AND (newer.prepared_at > link.prepared_at OR (newer.prepared_at = link.prepared_at AND newer.id_patient_document > link.id_patient_document))) ORDER BY link.prepared_at DESC, pd.id_patient_document DESC",
+    "parameterNames": [
+      "business",
+      "patient",
+      "planIds"
+    ]
+  },
+  {
+    "sql": "SELECT COUNT(*) AS firstVisitPatients, COALESCE(SUM(CASE WHEN EXISTS (\n            SELECT 1 FROM appointment later_appointment\n             WHERE later_appointment.id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci\n               AND later_appointment.id_person COLLATE utf8mb4_unicode_ci = first_visits.id_person COLLATE utf8mb4_unicode_ci\n               \n               AND later_appointment.active = 1 AND later_appointment.status = 'completed'\n               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) > first_visits.firstAppointmentAt\n               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) <= :_to\n               AND TIMESTAMP(later_appointment.appointment_date, later_appointment.start_time) <= NOW()\n        ) THEN 1 ELSE 0 END), 0) AS retainedPatients FROM (\n            SELECT a.id_person, MIN(TIMESTAMP(a.appointment_date, a.start_time)) AS firstAppointmentAt FROM appointment a\n             WHERE a.id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci \n               AND a.active = 1 AND a.id_person IS NOT NULL AND a.status = 'completed'\n               AND TIMESTAMP(a.appointment_date, a.start_time) <= NOW() GROUP BY a.id_person\n        ) first_visits WHERE first_visits.firstAppointmentAt >= :_from AND first_visits.firstAppointmentAt <= :_to",
+    "parameterNames": [
+      "_doctor_profile",
+      "_from",
+      "_id_business",
+      "_to"
+    ]
+  }
+]

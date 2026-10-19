@@ -5,8 +5,8 @@ const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
-const { getBuckets, uploadFile, getBucketbyCode, deleteFile } = require('../../services/aws/s3');
-const hellpersFile = require('../../util/file/file');
+const { getBuckets, uploadImage, getBucketbyCode, deleteFile } = require('../../services/aws/s3');
+
 const config = require('../../config/config');
 
 const getS3KeyFromUrl = (value) => {
@@ -59,7 +59,6 @@ async getBuckets() {
  */
 async uploadFile(body) {
     let response;    
-    let file;    
     try {
 
         if (!await this.ownsPatient(body)) return responseData.notSuccess('Paciente no disponible para este consultorio.');
@@ -67,21 +66,7 @@ async uploadFile(body) {
         let bucket = getBucketbyCode(body.code_cat_files)
         if(!bucket) throw new Error("No se indico un repositorio valido para la imagen")
 
-        file = hellpersFile.base64Toimg(body.file)
-        if(!file) throw new Error("Excepción al guardar la imagen")
-
-        let resultFile = await uploadFile(bucket,file.path,file.id);
-        /*Response AWS 
-        {
-            ETag: '"6885b87f3c730e94424029f6c5485b77"',
-            ServerSideEncryption: 'AES256',
-            Location: 'https://s3-bucket-files-photos.s3.us-west-1.amazonaws.com/ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            Key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            Bucket: 's3-bucket-files-photos'
-        }*/
-
-        hellpersFile.deleteFile(file.path);
+        let resultFile = await uploadImage(bucket, body.file);
 
         let result = await sequelize.query(SequelizeSP.SP_FILE_SAVE, {
             replacements: {
@@ -102,7 +87,6 @@ async uploadFile(body) {
             response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
         }
     } catch (error) {
-            if(file)  hellpersFile.deleteFile(file.path);
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
     }
     return response;
@@ -115,27 +99,12 @@ async uploadFile(body) {
  */
 async uploaProfilePhoto(body) {
     let response;    
-    let file;    
     try {
 
         if (!await this.ownsPatient(body)) return responseData.notSuccess('Paciente no disponible para este consultorio.');
 
 
-        file = hellpersFile.base64Toimg(body.file)
-        if(!file) throw new Error("Excepción al guardar la imagen")
-
-        let resultFile = await uploadFile(config.BUCKETS.PROFILE,file.path,file.id);
-        /*Response AWS 
-        {
-            ETag: '"6885b87f3c730e94424029f6c5485b77"',
-            ServerSideEncryption: 'AES256',
-            Location: 'https://s3-bucket-files-photos.s3.us-west-1.amazonaws.com/ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            Key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-            Bucket: 's3-bucket-files-photos'
-        }*/
-
-        hellpersFile.deleteFile(file.path);
+        let resultFile = await uploadImage(config.BUCKETS.PROFILE, body.file);
 
         let result = await sequelize.query(SequelizeSP.SP_PROFILE_PX, {
             replacements: {
@@ -154,7 +123,6 @@ async uploaProfilePhoto(body) {
             response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
         else{/* regresamos una excepción controlada al no obtener una respuesta */
-            // if(!file)  hellpersFile.deleteFile(file.path);
             response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
         }
 

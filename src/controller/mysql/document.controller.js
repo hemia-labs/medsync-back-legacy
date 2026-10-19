@@ -28,7 +28,9 @@ class DocumentController extends httpResponseHelper {
     }
 
     PatientDocuments = async(req, res, next) => {
-        let _body = applyTenantToBody(req, { id_person: req.params.id_person });
+        const { page, page_size, document_filter, focus_document, focus_type } = req.query || {};
+        let _body = applyTenantToBody(req, { id_person: req.params.id_person, page, page_size, document_filter, focus_document, focus_type,
+            _detailDocument: req.params.id_patient_document });
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
             response = await DocumentDao.listPatientDocuments(_body);

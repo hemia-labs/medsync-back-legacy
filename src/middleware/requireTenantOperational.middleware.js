@@ -10,7 +10,7 @@ const securityLogger = require('../services/security/securityLogger.service');
 const MINIMAL_READ_ROUTES = [
     { method: 'GET', baseUrl: '/api/business', pattern: /^\/current\/?$/ },
     { method: 'GET', baseUrl: '/api/config', pattern: /^\/clinical-modules\/get\/?$/ },
-    { method: 'POST', baseUrl: '/api/px', pattern: /^\/search\/?$/ },
+    { method: 'POST', baseUrl: '/api/px', pattern: /^\/search(?:-page)?\/?$/ },
     { method: 'GET', baseUrl: '/api/px', pattern: /^\/get\/[^/]+\/?$/ },
     { method: 'GET', baseUrl: '/api/clinical-history-template', pattern: /^\/current\/?$/ },
     { method: 'GET', baseUrl: '/api/clinical-history', pattern: /^\/patient\/[^/]+\/?$/ },
@@ -20,7 +20,7 @@ const MINIMAL_READ_ROUTES = [
     { method: 'GET', baseUrl: '/api/prescription', pattern: /^\/patient\/[^/]+\/?$/ },
     { method: 'GET', baseUrl: '/api/prescription', pattern: /^\/(?!config\/?$|list\/?$)[^/]+\/?$/ },
     { method: 'GET', baseUrl: '/api/document', pattern: /^\/templates\/?$/ },
-    { method: 'GET', baseUrl: '/api/document', pattern: /^\/patient\/[^/]+\/?$/ }
+    { method: 'GET', baseUrl: '/api/document', pattern: /^\/patient\/[^/]+(?:\/[^/]+)?\/?$/ }
 ];
 
 const normalizePath = (value) => String(value || '').split('?')[0].replace(/\/+$/, '') || '/';

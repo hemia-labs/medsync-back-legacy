@@ -160,6 +160,14 @@ const validatePxSearch = (req) => {
     return requireField(req.body, 'param');
 };
 
+const validatePxSearchPage = (req) => {
+    const body = req.body || {};
+    if (typeof body.param !== 'string' || body.param.length > 120) return invalid('Busqueda invalida (maximo 120 caracteres).');
+    if (body.page !== undefined && (!Number.isSafeInteger(body.page) || body.page < 1 || body.page > 1000000)) return invalid('Pagina invalida.');
+    if (body.page_size !== undefined && (!Number.isSafeInteger(body.page_size) || body.page_size < 1 || body.page_size > 50)) return invalid('Tamano de pagina invalido (1 a 50).');
+    return valid();
+};
+
 const validatePxFastSearch = (req) => {
     if (req.body && (
         Object.prototype.hasOwnProperty.call(req.body, 'query')
@@ -176,6 +184,7 @@ const validatePxIdParam = (req) => {
 };
 
 module.exports = {
+    validatePxSearchPage,
     validatePxAdministrative,
     validatePxDelete,
     validatePxFastSearch,

@@ -17,7 +17,7 @@ function joins() {
 
 async function rows(idLogin, options = {}) {
     if (!idLogin) return [];
-    return sequelize.query(`SELECT ${options.permission || options.admin ? '1' : 'cp.code'}
+    return sequelize.query(`SELECT ${options.permission || options.admin ? '1' : (options.includeCatalogState ? 'cp.code, cp.is_active' : 'cp.code')}
         FROM login l ${options.admin ? `INNER JOIN rol r ON ${eq('r.id_rol', 'l.id_rol')} AND r.active = 1` : ''}
         ${joins()}
         WHERE ${eq('l.id_login', ':_id_login')} AND l.active = 1

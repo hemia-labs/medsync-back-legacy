@@ -14,6 +14,20 @@ const { validateDocumentTemplate } = require('../../validators/documentTemplate.
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collateEq = (left, param) => `${left} COLLATE ${TENANT_COLLATION} = ${param} COLLATE ${TENANT_COLLATION}`;
+const { listPage, pageWindow, pageData } = require('../../util/listPage');
+const documentFilters = {
+    ALL: '', PENDING: " AND pd.status IN ('BORRADOR', 'PENDIENTE_FIRMA')",
+    SIGNED: " AND pd.status = 'FIRMADO'", REFUSAL: " AND pd.status = 'NO_FIRMADO_POR_NEGATIVA'",
+    CANCELLED: " AND pd.status IN ('CANCELADO', 'REVOCADO', 'REEMPLAZADO')"
+};
+function documentPageRequest(body) {
+    const paging = listPage(body);
+    if (paging && (typeof (body.document_filter || 'ALL') !== 'string' || !Object.hasOwn(documentFilters, body.document_filter || 'ALL'))) throw new Error('INVALID_LIST_PAGE');
+    for (const key of ['focus_document', 'focus_type', '_detailDocument']) {
+        if (body[key] !== undefined && (typeof body[key] !== 'string' || !body[key].length || body[key].length > 80)) throw new Error('INVALID_LIST_PAGE');
+    }
+    return paging;
+}
 
 const PERMISSIONS = {
     VIEW: 'documents.view',
@@ -34,8 +48,8 @@ const ADVANCED_DOCUMENT_SUBTYPES = ['custom_advanced'];
 const PREMIUM_DOCUMENT_SUBTYPES = ['custom_premium', 'premium_multi_signature', 'premium_witnesses', 'premium_automation'];
 
 class DocumentDao {
-    async hasPermission(idLogin, permission) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
+    async hasPermission(idLogin, permission, transaction = null) {
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction});
     }
 
     async getPatient(idPerson, idBusiness) {
@@ -55,7 +69,7 @@ class DocumentDao {
         return result[0] || null;
     }
 
-    async getDoctorProfile(idBusiness, idLogin) {
+    async getDoctorProfile(idBusiness, idLogin, transaction = null) {
         const result = await sequelize.query(
             `SELECT dpp.*, l.name AS user_name, r.code AS rol
                FROM doctor_professional_profile dpp
@@ -67,14 +81,14 @@ class DocumentDao {
               LIMIT 1`,
             {
                 replacements: { _id_business: idBusiness, _id_login: idLogin },
-                type: QueryTypes.SELECT
+                type: QueryTypes.SELECT, transaction
             }
         );
 
         return result[0] || null;
     }
 
-    async getActor(idLogin) {
+    async getActor(idLogin, transaction = null) {
         const result = await sequelize.query(
             `SELECT l.id_login, l.name, r.code AS rol
                FROM login l
@@ -84,15 +98,15 @@ class DocumentDao {
               LIMIT 1`,
             {
                 replacements: { _id_login: idLogin },
-                type: QueryTypes.SELECT
+                type: QueryTypes.SELECT, transaction
             }
         );
 
         return result[0] || null;
     }
 
-    async resolveDoctor(body, mustSign = false) {
-        const actor = await this.getActor(body.id_login);
+    async resolveDoctor(body, mustSign = false, transaction = null) {
+        const actor = await this.getActor(body.id_login, transaction);
         const actorRole = actor ? actor.rol : body.rol;
         const doctorLogin = body.responsible_doctor_user_id || null;
 
@@ -101,14 +115,14 @@ class DocumentDao {
         }
 
         if (doctorLogin !== body.id_login) {
-            const canManage = await this.hasPermission(body.id_login, 'admin.users');
-            const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE);
+            const canManage = await this.hasPermission(body.id_login, 'admin.users', transaction);
+            const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE, transaction);
             if (!canManage && !canCreate) {
                 return { error: responseData.unauthorized('No puedes seleccionar otro doctor responsable.') };
             }
         }
 
-        const profile = await this.getDoctorProfile(body.id_business, doctorLogin);
+        const profile = await this.getDoctorProfile(body.id_business, doctorLogin, transaction);
         if (!profile || profile.is_active === 0) {
             return { error: responseData.bad_request('Para emitir documentos, completa el perfil profesional del doctor en Configuracion > Personal y usuarios > Perfil profesional.') };
         }
@@ -252,6 +266,12 @@ class DocumentDao {
             const templateName = validation.data.name;
             const contentHtml = validation.data.content_html;
 
+            // Licensing reads/audit use their own queries; finish them before
+            // reserving a transaction connection from the bounded pool.
+            const licensingMetadata = this.resolveTemplateLicensingMetadata(body);
+            const licensingError = await this.enforceTemplateLicensing(body, licensingMetadata);
+            if (licensingError) return licensingError;
+
             transaction = await sequelize.transaction();
             const idTemplate = body.id_document_template || uuidv4();
             const existing = body.id_document_template ? await sequelize.query(
@@ -273,13 +293,6 @@ class DocumentDao {
                 _requires_witness2_signature: body.requires_witness2_signature === true ? 1 : 0,
                 _is_active: body.is_active === false ? 0 : 1
             };
-            const licensingMetadata = this.resolveTemplateLicensingMetadata(body);
-            const licensingError = await this.enforceTemplateLicensing(body, licensingMetadata);
-            if (licensingError) {
-                await transaction.rollback();
-                return licensingError;
-            }
-
             if (existing[0]) {
                 await sequelize.query(
                     `UPDATE document_templates
@@ -397,6 +410,7 @@ class DocumentDao {
 
     async listPatientDocuments(body) {
         try {
+            const paging = documentPageRequest(body);
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
                 return responseData.unauthorized('No tienes permiso para consultar documentos.');
@@ -407,7 +421,42 @@ class DocumentDao {
                 return responseData.unauthorized('El paciente no pertenece al negocio activo.');
             }
 
-            const rows = await sequelize.query(
+            let extra = paging ? documentFilters[body.document_filter || 'ALL'] : '';
+            const replacements = { _id_business: body.id_business, _id_person: body.id_person };
+            if (body._detailDocument) {
+                extra += ` AND ${collateEq('pd.id_patient_document', ':_document')}`;
+                replacements._document = body._detailDocument;
+            }
+            const baseWhere = `${collateEq('pd.id_business', ':_id_business')} AND ${collateEq('pd.id_person', ':_id_person')} AND pd.active = 1`;
+            let pagination, creationHints;
+            if (paging) {
+                const counts = await sequelize.query(`SELECT COUNT(*) AS total FROM patient_documents pd WHERE ${baseWhere}${extra}`, { replacements, type: QueryTypes.SELECT });
+                // Locate a requested document even when it is outside the current page.
+                if (body.focus_document || body.focus_type) {
+                    const focused = await sequelize.query(`SELECT pd.created_at, pd.id_patient_document FROM patient_documents pd WHERE ${baseWhere}${extra}
+                        AND ${body.focus_document ? collateEq('pd.id_patient_document', ':_focus') : collateEq('pd.document_type', ':_focus')}
+                        ORDER BY pd.created_at DESC, pd.id_patient_document DESC LIMIT 1`, {
+                        replacements: { ...replacements, _focus: body.focus_document || body.focus_type }, type: QueryTypes.SELECT });
+                    if (focused.length) {
+                        const preceding = await sequelize.query(`SELECT COUNT(*) AS total FROM patient_documents pd WHERE ${baseWhere}${extra}
+                            AND ((:_created IS NULL AND pd.created_at IS NOT NULL) OR pd.created_at > :_created
+                                OR ((pd.created_at <=> :_created) AND pd.id_patient_document > :_focus_id))`, {
+                            replacements: { ...replacements, _created: focused[0].created_at, _focus_id: focused[0].id_patient_document }, type: QueryTypes.SELECT });
+                        paging.page = Math.floor(Number(preceding[0].total) / paging.pageSize) + 1;
+                    }
+                }
+                pagination = pageWindow(paging, counts[0].total);
+                replacements._limit = pagination.pageSize;
+                replacements._offset = pagination.offset;
+                creationHints = await sequelize.query(`SELECT * FROM (
+                    SELECT id_patient_document, id_document_template, document_type, title, status, origin, responsible_doctor_user_id,
+                        ROW_NUMBER() OVER (PARTITION BY id_document_template, document_type, CASE WHEN status = 'FIRMADO' THEN 1 ELSE 0 END
+                            ORDER BY created_at DESC, id_patient_document DESC) AS hint_rank
+                    FROM patient_documents pd WHERE ${baseWhere}
+                        AND (status IN ('BORRADOR', 'PENDIENTE_FIRMA') OR (document_type = 'SENSITIVE_DATA_CONSENT' AND status = 'FIRMADO'))
+                ) hints WHERE hint_rank = 1`, { replacements, type: QueryTypes.SELECT });
+            }
+            const rows = pagination && !pagination.total ? [] : await sequelize.query(
                 `SELECT pd.*, dt.name AS template_name, dt.template_type,
                         dt.requires_patient_signature, dt.requires_tutor_signature, dt.requires_doctor_signature,
                         dt.requires_witness1_signature, dt.requires_witness2_signature
@@ -416,10 +465,10 @@ class DocumentDao {
                           ON ${collateEq('dt.id_document_template', 'pd.id_document_template')}
                   WHERE ${collateEq('pd.id_business', ':_id_business')}
                     AND ${collateEq('pd.id_person', ':_id_person')}
-                    AND pd.active = 1
-                  ORDER BY pd.created_at DESC`,
+                    AND pd.active = 1${extra}
+                  ORDER BY pd.created_at DESC, pd.id_patient_document DESC${paging ? ' LIMIT :_limit OFFSET :_offset' : ''}`,
                 {
-                    replacements: { _id_business: body.id_business, _id_person: body.id_person },
+                    replacements,
                     type: QueryTypes.SELECT
                 }
             );
@@ -427,10 +476,10 @@ class DocumentDao {
             const signatures = rows.length > 0 ? await sequelize.query(
                 `SELECT id_patient_document, signature_role, signer_name_snapshot, signature_image, signed_at, signed_by_user_id
                    FROM patient_document_signatures
-                  WHERE id_patient_document IN (:_ids)
+                  WHERE id_patient_document IN (:_ids) AND ${collateEq('id_business', ':_business')}
                   ORDER BY signed_at ASC`,
                 {
-                    replacements: { _ids: rows.map((item) => item.id_patient_document) },
+                    replacements: { _ids: rows.map((item) => item.id_patient_document), _business: body.id_business },
                     type: QueryTypes.SELECT
                 }
             ) : [];
@@ -447,8 +496,9 @@ class DocumentDao {
                 signatures: signaturesByDocument[document.id_patient_document] || []
             }));
 
-            return responseData.success(enriched, Messages.DATA_GET_SUCCESSFULLY);
+            return responseData.success(paging ? { ...pageData(enriched, pagination), creationHints: creationHints.map(row => ({ ...row, _summary: true })) } : enriched, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
+            if (error.message === 'INVALID_LIST_PAGE') return responseData.bad_request('Pagina o tamano de pagina invalido.');
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
     }
@@ -477,13 +527,13 @@ class DocumentDao {
         return renderDocumentTemplate(html, context);
     }
 
-    async buildContext(body, patient, doctor) {
+    async buildContext(body, patient, doctor, transaction = null) {
         const businessRows = await sequelize.query(
             `SELECT name, legal_name, phone, address
                FROM business
               WHERE ${collateEq('id_business', ':_id_business')}
               LIMIT 1`,
-            { replacements: { _id_business: body.id_business }, type: QueryTypes.SELECT }
+            { replacements: { _id_business: body.id_business }, type: QueryTypes.SELECT, transaction }
         );
         const business = businessRows[0] || {};
         const patientName = `${patient.name || ''} ${patient.surname || ''}`.trim();
@@ -525,6 +575,7 @@ class DocumentDao {
         let transaction;
         const reject = async result => { if (transaction && !transaction.finished) await transaction.rollback(); return result; };
         try {
+            documentPageRequest(body);
             if (body.status && !['BORRADOR', 'PENDIENTE_FIRMA'].includes(body.status)) {
                 return responseData.bad_request('Un documento nuevo debe comenzar como borrador o pendiente de firma.');
             }
@@ -590,12 +641,12 @@ class DocumentDao {
                 }
             }
 
-            const doctorResult = await this.resolveDoctor(body, false);
+            const doctorResult = await this.resolveDoctor(body, false, transaction);
             if (doctorResult.error) {
                 return reject(doctorResult.error);
             }
 
-            const context = await this.buildContext(body, patient, doctorResult.profile);
+            const context = await this.buildContext(body, patient, doctorResult.profile, transaction);
             const html = this.replaceVariables(template.content_html, context);
             const idDocument = uuidv4();
             const snapshot = this.doctorSnapshot(doctorResult.profile);
@@ -655,6 +706,7 @@ class DocumentDao {
             return this.listPatientDocuments(body);
         } catch (error) {
             if (transaction && !transaction.finished) await transaction.rollback();
+            if (error.message === 'INVALID_LIST_PAGE') return responseData.bad_request('Pagina o filtro invalido.');
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }
@@ -721,6 +773,7 @@ class DocumentDao {
         let transaction;
         const reject = async result => { if (transaction && !transaction.finished) await transaction.rollback(); return result; };
         try {
+            documentPageRequest(body);
             const permission = status === 'FIRMADO' ? PERMISSIONS.SIGN : PERMISSIONS.CANCEL;
             const allowed = await this.hasPermission(body.id_login, permission);
             if (!allowed) {
@@ -779,7 +832,7 @@ class DocumentDao {
                 if (body.responsible_doctor_user_id && body.responsible_doctor_user_id !== document.responsible_doctor_user_id) {
                     return reject(responseData.bad_request('El doctor responsable debe coincidir con el documento preparado.'));
                 }
-                const doctorResult = await this.resolveDoctor({ ...body, responsible_doctor_user_id: document.responsible_doctor_user_id }, true);
+                const doctorResult = await this.resolveDoctor({ ...body, responsible_doctor_user_id: document.responsible_doctor_user_id }, true, transaction);
                 if (doctorResult.error) return reject(doctorResult.error);
                 const signatureRole = body.signature_role || 'PATIENT';
                 const existingSignatureRows = await sequelize.query(
@@ -874,9 +927,11 @@ class DocumentDao {
                 _signature_role: body.signature_role || 'PATIENT' }, type: QueryTypes.UPDATE, transaction });
             await this.addEvent(body.id_patient_document, body.id_business, body.id_login, eventToRegister, noteToRegister || null, transaction);
             await transaction.commit();
-            return this.listPatientDocuments({ id_business: body.id_business, id_login: body.id_login, id_person: documentRows[0].id_person });
+            return this.listPatientDocuments({ id_business: body.id_business, id_login: body.id_login, id_person: documentRows[0].id_person,
+                page: body.page, page_size: body.page_size, document_filter: body.document_filter });
         } catch (error) {
             if (transaction && !transaction.finished) await transaction.rollback();
+            if (error.message === 'INVALID_LIST_PAGE') return responseData.bad_request('Pagina o filtro invalido.');
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }

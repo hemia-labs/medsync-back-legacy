@@ -4,6 +4,7 @@ const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const UserDao = require('./user.dao');
+const effectivePermissions = require('../../util/effectivePermissions');
 const { resolveDashboardAccess } = require('../../util/dashboardAccess');
 const AppointmentDao = require('./appointment.Dao');
 
@@ -58,9 +59,9 @@ class HomeContinuityDao {
         }
 
         try {
-            const access = await resolveDashboardAccess(idBusiness, idLogin, { scope: options.scope, requireFamily: false });
+            const access = await resolveDashboardAccess(idBusiness, idLogin, { scope: options.scope, requireFamily: false, includePermissions: true });
             if (access.error) return access.error;
-            const permissions = await this.resolvePermissions(idLogin);
+            const permissions = await this.resolvePermissions(idLogin, access.permissionCodes);
             permissions.scope = access.scope;
             permissions.dashboard = permissions.dashboard || Object.values(access.families).some(Boolean);
             permissions.patientActivity = permissions.pxAll && access.families.administrative && access.scope.mode === 'tenant';
@@ -109,34 +110,14 @@ class HomeContinuityDao {
         return profile ? ` AND (${collateEq(profile, ':_scope_profile')} OR (${profile} IS NULL AND ${collateEq(column, ':_scope_login')}))` : ' AND ' + collateEq(column, ':_scope_login');
     }
 
-    async resolvePermissions(idLogin) {
-        const checks = await Promise.all([
-            UserDao.hasPermission(idLogin, 'px.all'),
-            UserDao.hasPermission(idLogin, 'px.dates'),
-            UserDao.hasPermission(idLogin, 'clinical_history.view'),
-            UserDao.hasPermission(idLogin, 'prescriptions.global'),
-            UserDao.hasPermission(idLogin, 'prescriptions.view.all'),
-            UserDao.hasPermission(idLogin, 'prescriptions.view.own'),
-            UserDao.hasPermission(idLogin, 'documents.view'),
-            UserDao.hasPermission(idLogin, 'documents.sign'),
-            UserDao.hasPermission(idLogin, 'dashboard.tenant'),
-            UserDao.hasPermission(idLogin, 'reports.dashboard'),
-            UserDao.hasPermission(idLogin, 'dashboard')
-        ]);
-
-        const [
-            pxAll,
-            pxDates,
-            clinicalHistoryView,
-            prescriptionsGlobal,
-            prescriptionsViewAll,
-            prescriptionsViewOwn,
-            documentsView,
-            documentsSign,
-            dashboardTenant,
-            reportsDashboard,
-            legacyDashboard
-        ] = checks;
+    async resolvePermissions(idLogin, permissionCodes = null) {
+        const codes = permissionCodes || new Set((await effectivePermissions.rows(idLogin)).map(row => row.code));
+        const pxAll = codes.has('px.all'), pxDates = codes.has('px.dates');
+        const clinicalHistoryView = codes.has('clinical_history.view');
+        const prescriptionsGlobal = codes.has('prescriptions.global');
+        const prescriptionsViewAll = codes.has('prescriptions.view.all'), prescriptionsViewOwn = codes.has('prescriptions.view.own');
+        const documentsView = codes.has('documents.view'), documentsSign = codes.has('documents.sign');
+        const dashboardTenant = codes.has('dashboard.tenant'), reportsDashboard = codes.has('reports.dashboard'), legacyDashboard = codes.has('dashboard');
 
         return {
             pxAll,

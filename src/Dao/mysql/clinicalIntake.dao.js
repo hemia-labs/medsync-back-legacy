@@ -53,7 +53,7 @@ class ClinicalIntakeDao {
             : doctor.id_login === history.doctor_responsible_user_id) : null;
         let suggested = null;
         if (!locked && doctors.length === 1) {
-            const business = await LicenseUsage.getBusinessPlan(body.id_business);
+            const business = await LicenseUsage.getBusinessPlan(body.id_business, transaction);
             const plan = business && getSaasPlan(business.plan);
             if (plan && ['basic', 'pro'].includes(plan.code)) suggested = doctors[0].id_doctor_professional_profile;
         }

@@ -72,4 +72,6 @@ Verificar el catalogo `cat_tooth` del entorno objetivo: se requieren 32 posicion
 
 ## Recuperacion
 
+La entrega PO12-PO15 de rendimiento, contratos paginados e indices se detalla en [performance-rollout.md](performance-rollout.md). Los ocho indices se verificaron en la base configurada; inspeccionar otros destinos antes de ejecutar DDL. Backend/frontend requieren entrega coordinada.
+
 Para revertir codigo publicado, preparar commits de reversion coordinados de backend/frontend, conservando el historial de Git y los datos. No eliminar snapshots/eventos de documentos ni columnas con informacion historica para resolver un problema de interfaz. MySQL puede confirmar DDL implicitamente: si una migracion falla, inspeccionar el paso aplicado y el respaldo antes de reintentar; no asumir que un rollback transaccional deshizo todo el esquema.

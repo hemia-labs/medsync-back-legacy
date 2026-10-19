@@ -101,8 +101,8 @@ class ClinicalHistoryDao {
     async lockDraft(history, businessId, transaction) {
         return await this.lockHistory(history, businessId, transaction) && history.status === STATUS.DRAFT;
     }
-    async hasPermission(idLogin, permission) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
+    async hasPermission(idLogin, permission, transaction = null) {
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction});
     }
 
     async getPatient(patientId, businessId, transaction = null, includeArchived = false) {
@@ -261,7 +261,7 @@ class ClinicalHistoryDao {
     }
 
     async validateFinalizer(body, transaction = null) {
-        const canFinalize = await this.hasPermission(body.id_login, PERMISSIONS.FINALIZE);
+        const canFinalize = await this.hasPermission(body.id_login, PERMISSIONS.FINALIZE, transaction);
         if (!canFinalize) {
             return { error: responseData.forbidden('No tienes permiso para finalizar historias clinicas.') };
         }
@@ -639,7 +639,7 @@ class ClinicalHistoryDao {
 
     async getById(body, transaction = null) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
+            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW, transaction);
             if (!canView) {
                 return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
@@ -678,7 +678,7 @@ class ClinicalHistoryDao {
     async createDraft(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE_DRAFT);
+            const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE_DRAFT, transaction);
             if (!canCreate) {
                 await transaction.rollback();
                 return responseData.forbidden('No tienes permiso para crear borradores de historia clinica.');
@@ -783,7 +783,7 @@ class ClinicalHistoryDao {
     async updateDraft(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canEdit = await this.hasPermission(body.id_login, PERMISSIONS.EDIT_DRAFT);
+            const canEdit = await this.hasPermission(body.id_login, PERMISSIONS.EDIT_DRAFT, transaction);
             if (!canEdit) {
                 await transaction.rollback();
                 return responseData.forbidden('No tienes permiso para editar borradores de historia clinica.');
@@ -998,8 +998,8 @@ class ClinicalHistoryDao {
     async markPrinted(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canPrint = await this.hasPermission(body.id_login, PERMISSIONS.PRINT);
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
+            const canPrint = await this.hasPermission(body.id_login, PERMISSIONS.PRINT, transaction);
+            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW, transaction);
             if (!canPrint && !canView) {
                 await transaction.rollback();
                 return responseData.forbidden('No tienes permiso para imprimir historias clinicas.');
@@ -1035,7 +1035,7 @@ class ClinicalHistoryDao {
     async cancel(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL);
+            const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL, transaction);
             if (!canCancel) {
                 await transaction.rollback();
                 return responseData.forbidden('No tienes permiso para cancelar historias clinicas.');

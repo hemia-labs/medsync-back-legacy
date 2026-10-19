@@ -50,13 +50,22 @@ async function assertCurrent(document, transaction) {
     const current = await currentPlan(document, transaction);
     return Boolean(prepared && current && prepared.content_fingerprint === fingerprint(current));
 }
-async function documentsForPatient(body, transaction, includeContent = true) {
+async function documentsForPatient(body, transaction, includeContent = true, planIds = null) {
     try {
+        if (planIds && !planIds.length) return { available: true, documents: [] };
+        // The paged plan screen only uses the latest non-cancelled document per selected plan.
+        const selected = planIds ? ` AND link.id_treatment_plan IN (:planIds) AND pd.status <> 'CANCELADO'
+            AND NOT EXISTS (SELECT 1 FROM treatment_plan_consent_document newer
+                INNER JOIN patient_documents newer_pd ON newer_pd.id_patient_document = newer.id_patient_document
+                    AND newer_pd.id_business = newer.id_business AND newer_pd.id_person = newer.id_person
+                WHERE newer.id_business = link.id_business AND newer.id_person = link.id_person AND newer.id_treatment_plan = link.id_treatment_plan
+                    AND newer_pd.active = 1 AND newer_pd.status <> 'CANCELADO'
+                    AND (newer.prepared_at > link.prepared_at OR (newer.prepared_at = link.prepared_at AND newer.id_patient_document > link.id_patient_document)))` : '';
         const rows = await query(`SELECT pd.*, link.id_treatment_plan, link.consent_snapshot_json, link.prepared_by
             FROM treatment_plan_consent_document link INNER JOIN patient_documents pd ON pd.id_patient_document = link.id_patient_document
                 AND pd.id_business = link.id_business AND pd.id_person = link.id_person
-            WHERE ${eq('link.id_business', ':business')} AND ${eq('link.id_person', ':patient')} AND pd.active = 1 ORDER BY link.prepared_at DESC, pd.id_patient_document DESC`,
-        { business: body.id_business, patient: body.id_person }, transaction);
+            WHERE ${eq('link.id_business', ':business')} AND ${eq('link.id_person', ':patient')} AND pd.active = 1${selected} ORDER BY link.prepared_at DESC, pd.id_patient_document DESC`,
+        { business: body.id_business, patient: body.id_person, ...(planIds ? { planIds } : {}) }, transaction);
         const signatures = rows.length ? await query(`SELECT id_patient_document, signature_role, signer_name_snapshot, signature_image, signed_at FROM patient_document_signatures
             WHERE ${eq('id_business', ':business')} AND id_patient_document IN (:ids)`, { business: body.id_business, ids: rows.map(row => row.id_patient_document) }, transaction) : [];
         return { available: true, documents: rows.map(row => {
