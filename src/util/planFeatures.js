@@ -29,7 +29,7 @@ const FEATURE_DEFINITIONS = Object.freeze({
     },
     team_usage_metrics: {
         capability: 'teamBreakdown',
-        requiredPlan: 'enterprise',
+        requiredPlan: 'pro',
         area: 'dashboard'
     },
     advanced_basic_reports: {
