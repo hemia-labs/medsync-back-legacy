@@ -67,6 +67,7 @@ const SAAS_PLANS = {
             'Plantillas clinicas personalizables',
             'Gestion mas completa de citas',
             'Dashboard operativo',
+            'Vista administrativa del equipo',
             'Reportes basicos',
             'Soporte prioritario',
             'Onboarding asistido'

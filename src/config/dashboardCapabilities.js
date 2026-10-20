@@ -23,7 +23,8 @@ const DASHBOARD_CAPABILITIES_BY_PLAN = Object.freeze({
         widgets: {
             ...BASIC_DASHBOARD_CAPABILITIES,
             trends: true,
-            operationalAnalysis: true
+            operationalAnalysis: true,
+            teamBreakdown: true
         }
     },
     enterprise: {

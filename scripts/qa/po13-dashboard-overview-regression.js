@@ -52,14 +52,25 @@ async function checkHttp() {
     let checks = 0;
     try {
         const url = `http://127.0.0.1:${server.address().port}/api/business/dashboard/overview?from=2026-10-01&to=2026-10-19`;
-        async function request(credential = token, extra = '') {
-            const response = await fetch(url + extra, { headers: credential ? { Authorization: 'Bearer ' + credential } : {} });
+        async function request(credential = token, extra = '', endpoint = 'overview') {
+            const response = await fetch(url.replace('/overview?', '/' + endpoint + '?') + extra, { headers: credential ? { Authorization: 'Bearer ' + credential } : {} });
             checks++; return { status: response.status, body: await response.json() };
         }
         assert.equal((await request(null)).status, 401);
         const allowed = await request();
         assert.equal(allowed.status, 200);
         assert.equal(allowed.body.data.summary.business.id_business, 'tenant-a');
+        plan = 'pro';
+        const professional = await request();
+        assert.equal(professional.body.data.widgets.teamBreakdown.status, 200);
+        assert.equal(professional.body.data.widgets.professionalBreakdown, undefined);
+        assert.equal((await request(token, '', 'team-breakdown')).status, 200);
+        assert.equal((await request(token, '', 'professional-breakdown')).status, 403);
+        plan = 'basic';
+        const individual = await request(token, '', 'team-breakdown');
+        assert.equal(individual.status, 403);
+        assert.equal(individual.body.data.details.requiredPlan, 'pro');
+        plan = 'enterprise';
         assert.equal((await request(token, '&id_business=foreign')).status, 400);
         assert.equal((await request(token, '&granularity=invalid')).status, 400);
         sessionActive = false; queries = [];
@@ -101,6 +112,32 @@ async function checkHttp() {
     assert.equal(result.status, 200);
     assert.deepEqual(Object.keys(result.data.widgets), [], 'Locked plan widgets do not run');
     assert.ok(!queries.some(q => q.sql.includes('AS firstVisitPatients') || q.sql.includes('AS actorKey')));
+    plan = 'pro'; queries = [];
+    result = await invoke('overview');
+    assert.equal(result.status, 200);
+    assert.deepEqual(Object.keys(result.data.widgets).sort(), ['operational', 'teamBreakdown', 'trends'], 'Profesional includes general indicators and administrative team overview');
+    assert.deepEqual(Object.keys(result.data.widgets.operational.data.decisionMetrics).sort(),
+        ['appointmentHealth', 'followUps', 'retention', 'treatmentEconomics'], 'General clinical, operational and estimated-cost indicators are not Clinica-only');
+    for (const key of ['trends', 'operational']) {
+        assert.deepEqual(normalize(result.data.widgets[key]), normalize(baseline[key === 'operational' ? 'operationalSummary' : 'trends']),
+            'Profesional and Clinica expose the same authorized general data: ' + key);
+    }
+    assert.ok(!queries.some(q => q.sql.includes('AS actorKey')), 'No professional breakdown query runs for Profesional');
+    assert.equal(result.data.widgets.professionalBreakdown, undefined);
+    assert.equal(result.data.widgets.teamBreakdown.status, 200);
+    assert.deepEqual(Object.keys(result.data.widgets.teamBreakdown.data).sort(), ['access', 'asOf', 'dateBasis', 'license', 'range', 'roles', 'users']);
+    assert.deepEqual(result.data.widgets.teamBreakdown.data.users, baseline.teamBreakdown.data.users, 'Team view exposes aggregated counts, no per-person activity');
+    assert.equal((await invoke('teamBreakdown')).status, 200, 'Direct team endpoint also permits Profesional');
+    const denied = await invoke('professionalBreakdown');
+    assert.equal(denied.status, 403, 'Per-professional indicators remain restricted to Clinica even with full actor permissions');
+    assert.equal(denied.data.code, 'PLAN_FEATURE_NOT_ALLOWED');
+    granted = ['dashboard.operations']; queries = [];
+    result = await invoke('overview');
+    assert.equal(result.status, 200);
+    assert.equal(clinicalRead(), false, 'Plan Profesional does not grant clinical or financial permissions');
+    assert.equal(result.data.widgets.teamBreakdown, undefined, 'Team data still requires administrative tenant scope');
+    assert.equal((await invoke('teamBreakdown')).status, 403, 'Plan inclusion never grants administrative permissions');
+    assert.deepEqual(Object.keys(result.data.widgets.operational.data.decisionMetrics).sort(), ['appointmentHealth', 'retention']);
     plan = 'enterprise'; granted = ['dashboard.operations']; queries = [];
     result = await invoke('overview');
     assert.equal(result.status, 200);
