@@ -4,6 +4,7 @@ const requireTenantOperational = require('../../middleware/requireTenantOperatio
 const awaitHandlerFactory = require('../../middleware/awaitHandlerFactory.middleware');
 const BusinessDashboardController = require('../../controller/mysql/businessDashboard.controller');
 
+router.get('/overview', Token.Auth, requireTenantOperational, awaitHandlerFactory(BusinessDashboardController.overview));
 router.get('/trends', Token.Auth, requireTenantOperational, awaitHandlerFactory(BusinessDashboardController.trends));
 router.get('/operational-summary', Token.Auth, requireTenantOperational, awaitHandlerFactory(BusinessDashboardController.operationalSummary));
 router.get('/professional-breakdown', Token.Auth, requireTenantOperational, awaitHandlerFactory(BusinessDashboardController.professionalBreakdown));

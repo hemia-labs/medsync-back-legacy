@@ -97,7 +97,9 @@ async function main() {
     replaceModule('../../src/config/config', { AWS_REGION: 'us-east-1.attacker.example' });
     replaceModule('aws-sdk', { S3: class { constructor() { clientsCreated += 1; } } });
     const s3 = require('../../src/config/aws/s3');
-    for (const operation of [() => s3.getBuckets(), () => s3.deleteFileToBucket('unused', 'unused'), () => s3.uploadToBucket('unused', path.join(__dirname, 'does-not-exist'), 'unused')]) {
+    for (const operation of [() => s3.getBuckets(), () => s3.deleteFileToBucket('unused', 'unused'),
+        () => s3.uploadToBucket('unused', path.join(__dirname, 'does-not-exist'), 'unused'),
+        () => s3.uploadBufferToBucket('unused', Buffer.from('synthetic'), 'unused.png', 'image/png')]) {
         assert.throws(operation, { code: 'AWS_REGION_INVALID' });
     }
     assert.equal(clientsCreated, 0);

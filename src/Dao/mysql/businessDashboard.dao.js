@@ -322,25 +322,59 @@ class BusinessDashboardDao {
         return rows.some(row => navigation.includes(row.code));
     }
 
-    async resolveDashboardContext(idBusiness, featureCode, auditContext = {}, query = {}) {
-        const access = await resolveDashboardAccess(idBusiness, auditContext.actorLoginId, { scope: query.scope });
+    async resolveDashboardContext(idBusiness, featureCode, auditContext = {}, query = {}, request = null) {
+        if (request && (request.business !== idBusiness || request.actor !== auditContext.actorLoginId || request.scope !== query.scope)) {
+            return { error: responseData.forbidden('Contexto de indicadores invalido.') };
+        }
+        const access = request && request.context ? request.context.access
+            : await resolveDashboardAccess(idBusiness, auditContext.actorLoginId, { scope: query.scope });
         if (access.error) return access;
         if (featureCode === 'team_usage_metrics' && !access.administrativeTeam) return { error: responseData.forbidden('No tienes permiso para consultar el equipo del consultorio.') };
         if (featureCode === 'professional_activity_metrics' && !access.families.clinical) return { error: responseData.forbidden('No tienes permiso para consultar indicadores clínicos.') };
         if (featureCode === 'trends' && !access.families.administrative && !access.families.clinical) return { error: responseData.forbidden('No tienes permiso para consultar estas tendencias.') };
+        if (request && request.context) {
+            const capability = { basic_dashboard: 'basicActivity', trends: 'trends', operational_analysis: 'operationalAnalysis',
+                professional_activity_metrics: 'professionalBreakdown', team_usage_metrics: 'teamBreakdown' }[featureCode];
+            if (featureCode !== 'basic_dashboard' && (!capability || !request.context.dashboard.capabilities[capability])) {
+                return { error: responseData.forbidden('No tienes acceso a estos indicadores.') };
+            }
+            return request.context;
+        }
         const feature = await assertPlanFeature(idBusiness, featureCode, auditContext);
         if (feature.error) return { error: feature.error };
-        return { license: feature.license, access, dashboard: dashboardFor(feature.license, access) };
+        const context = { license: feature.license, access, dashboard: dashboardFor(feature.license, access) };
+        if (request) request.context = context;
+        return context;
     }
 
-    async summary(idBusiness, query = {}, auditContext = {}) {
+    // Context and promises live only in this call. No cross-request/session cache.
+    async overview(idBusiness, query = {}, auditContext = {}) {
+        const range = normalizeRange(query), granularity = normalizeGranularity(query.granularity);
+        if (range.error || granularity.error) return range.error || granularity.error;
+        const request = { business: idBusiness, actor: auditContext.actorLoginId, scope: query.scope, activity: new Map() };
+        const summary = await this.summary(idBusiness, query, auditContext, request);
+        if (summary.status !== 200) return summary;
+        const widgets = {}, capabilities = summary.data.dashboard.capabilities;
+        // Keep each widget's response/error contract and avoid launching all
+        // metric groups at once against the same small pool.
+        for (const [key, capability, method] of [
+            ['trends', 'trends', 'trends'], ['operational', 'operationalAnalysis', 'operationalSummary'],
+            ['professionalBreakdown', 'professionalBreakdown', 'professionalBreakdown'],
+            ['teamBreakdown', 'teamBreakdown', 'teamBreakdown']
+        ]) {
+            if (capabilities[capability]) widgets[key] = await this[method](idBusiness, query, auditContext, request);
+        }
+        return responseData.success({ summary: summary.data, widgets }, Messages.DATA_GET_SUCCESSFULLY);
+    }
+
+    async summary(idBusiness, query = {}, auditContext = {}, request = null) {
         const range = normalizeRange(query);
         if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'basic_dashboard', auditContext, query);
+            const context = await this.resolveDashboardContext(idBusiness, 'basic_dashboard', auditContext, query, request);
             if (context.error) return context.error;
             const { access, license, dashboard } = context;
-            const activity = await this.activityTotals(idBusiness, range, access);
+            const activity = await this.activityTotals(idBusiness, range, access, request);
             return responseData.success({ range: { from: range.from, to: range.to }, access: publicAccess(access),
                 business: access.administrativeTeam ? buildBusinessPayload(license) : { id_business: idBusiness, name: (license.business || {}).name || null },
                 ...(access.administrativeTeam ? { license: buildLicensePayload(license) } : {}),
@@ -375,17 +409,21 @@ class BusinessDashboardDao {
         return queries;
     }
 
-    async activityTotals(idBusiness, range, access) {
+    async activityTotals(idBusiness, range, access, request = null) {
         const replacements = replacementsFor(idBusiness, range, access);
-        const entries = await Promise.all(Object.entries(this.activityQueries(access)).map(async ([key, sql]) => [key, sql ? countFromRows(await this.countMetric(sql, replacements)) : null]));
-        return Object.fromEntries(entries);
+        const key = JSON.stringify(replacements);
+        if (request && request.activity.has(key)) return request.activity.get(key);
+        const result = Promise.all(Object.entries(this.activityQueries(access)).map(async ([key, sql]) => [key, sql ? countFromRows(await this.countMetric(sql, replacements)) : null]))
+            .then(entries => Object.fromEntries(entries));
+        if (request) request.activity.set(key, result);
+        return result;
     }
 
-    async trends(idBusiness, query = {}, auditContext = {}) {
+    async trends(idBusiness, query = {}, auditContext = {}, request = null) {
         const range = normalizeRange(query), parsed = normalizeGranularity(query.granularity);
         if (range.error || parsed.error) return range.error || parsed.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'trends', auditContext, query);
+            const context = await this.resolveDashboardContext(idBusiness, 'trends', auditContext, query, request);
             if (context.error) return context.error;
             const { access } = context, { granularity } = parsed;
             const periods = buildPeriods(range, granularity), queries = this.activityQueries(access);
@@ -408,17 +446,17 @@ class BusinessDashboardDao {
         } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
-    async operationalSummary(idBusiness, query = {}, auditContext = {}) {
+    async operationalSummary(idBusiness, query = {}, auditContext = {}, request = null) {
         const range = normalizeRange(query);
         if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'operational_analysis', auditContext, query);
+            const context = await this.resolveDashboardContext(idBusiness, 'operational_analysis', auditContext, query, request);
             if (context.error) return context.error;
             const { access } = context, families = access.families, previousRange = buildPreviousRange(range);
             const replacements = replacementsFor(idBusiness, range, access);
             const result = { range: { from: range.from, to: range.to }, previousRange: { from: previousRange.from, to: previousRange.to },
                 access: publicAccess(access), periodComparison: {}, decisionMetrics: {}, alerts: [] };
-            const [currentActivity, previousActivity] = await Promise.all([this.activityTotals(idBusiness, range, access), this.activityTotals(idBusiness, previousRange, access)]);
+            const [currentActivity, previousActivity] = await Promise.all([this.activityTotals(idBusiness, range, access, request), this.activityTotals(idBusiness, previousRange, access, request)]);
             Object.keys(currentActivity).forEach(key => { result.periodComparison[key] = currentActivity[key] === null ? null : compareMetric(currentActivity[key], previousActivity[key]); });
             if (families.administrative) {
                 const [rows, retained] = await Promise.all([
@@ -467,11 +505,11 @@ class BusinessDashboardDao {
         } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
-    async professionalBreakdown(idBusiness, query = {}, auditContext = {}) {
+    async professionalBreakdown(idBusiness, query = {}, auditContext = {}, request = null) {
         const range = normalizeRange(query);
         if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'professional_activity_metrics', auditContext, query);
+            const context = await this.resolveDashboardContext(idBusiness, 'professional_activity_metrics', auditContext, query, request);
             if (context.error) return context.error;
             const rows = await this.professionalActivityRows(replacementsFor(idBusiness, range, context.access), context.access);
             const items = rows.map(row => ({ professionalKey: row.actorKey, label: row.actorKey === 'unassigned' ? 'Sin profesional responsable registrado' : row.professionalName || 'Profesional sin nombre registrado',
@@ -484,11 +522,11 @@ class BusinessDashboardDao {
         } catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
-    async teamBreakdown(idBusiness, query = {}, auditContext = {}) {
+    async teamBreakdown(idBusiness, query = {}, auditContext = {}, request = null) {
         const range = normalizeRange(query);
         if (range.error) return range.error;
         try {
-            const context = await this.resolveDashboardContext(idBusiness, 'team_usage_metrics', auditContext, query);
+            const context = await this.resolveDashboardContext(idBusiness, 'team_usage_metrics', auditContext, query, request);
             if (context.error) return context.error;
             const replacements = { _id_business: idBusiness, _professional_roles: LicenseUsageDao.PROFESSIONAL_ROLE_CODES, _ignored_roles: LicenseUsageDao.IGNORED_ROLE_CODES };
             const [rows, roles] = await Promise.all([this.teamUserTotals(replacements), this.teamRoleDistribution(replacements)]);

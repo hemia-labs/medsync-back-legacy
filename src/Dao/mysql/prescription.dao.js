@@ -1,4 +1,5 @@
 const effectivePermissions = require('../../util/effectivePermissions');
+const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -177,6 +178,7 @@ class PrescriptionDao {
 
     async list(body) {
         try {
+            const paging = listPage(body);
             if (!body.id_business) {
                 return responseData.unauthorized('No hay negocio activo para consultar recetas.');
             }
@@ -238,7 +240,17 @@ class PrescriptionDao {
                 )`);
             }
 
-            const result = await sequelize.query(
+            let pagination;
+            if (paging) {
+                const counts = await sequelize.query(`SELECT COUNT(*) AS total FROM prescription p
+                    INNER JOIN person ON ${collateEq('person.id_person', 'p.id_person')} AND ${collateEq('person.id_business', 'p.id_business')}
+                    LEFT JOIN login doctor ON ${collateEq('doctor.id_login', 'p.issuer_doctor_id')}
+                    WHERE ${where.join(' AND ')}`, { replacements, type: QueryTypes.SELECT });
+                pagination = pageWindow(paging, counts[0].total);
+                replacements._limit = pagination.pageSize;
+                replacements._offset = pagination.offset;
+            }
+            const result = pagination && !pagination.total ? [] : await sequelize.query(
                 `SELECT
                     p.id_prescription,
                     p.folio,
@@ -275,12 +287,13 @@ class PrescriptionDao {
                    LEFT JOIN login issuer ON ${collateEq('issuer.id_login', 'p.issued_by')}
                    LEFT JOIN login canceller ON ${collateEq('canceller.id_login', 'p.cancelled_by')}
                   WHERE ${where.join(' AND ')}
-                  ORDER BY p.issue_date DESC, p.created_at DESC`,
+                  ORDER BY p.issue_date DESC, p.created_at DESC, p.id_prescription DESC${paging ? ' LIMIT :_limit OFFSET :_offset' : ''}`,
                 { replacements, type: QueryTypes.SELECT }
             );
 
-            return responseData.success(result, Messages.DATA_GET_SUCCESSFULLY);
+            return responseData.success(paging ? pageData(result, pagination) : result, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
+            if (error.message === 'INVALID_LIST_PAGE') return responseData.bad_request('Pagina o tamano de pagina invalido.');
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
     }
@@ -326,7 +339,7 @@ class PrescriptionDao {
                 return responseData.bad_request('Identificador de captura de receta invalido.');
             }
             const permission = isUpdate ? PERMISSIONS.EDIT_DRAFT : PERMISSIONS.CREATE;
-            const canSave = await this.hasPermission(body.id_login, permission);
+            const canSave = await this.hasPermission(body.id_login, permission, transaction);
             if (!canSave) {
                 await transaction.rollback();
                 return responseData.unauthorized('No tienes permiso para guardar recetas.');
@@ -449,7 +462,7 @@ class PrescriptionDao {
     async issue(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canIssue = await this.hasPermission(body.id_login, PERMISSIONS.ISSUE);
+            const canIssue = await this.hasPermission(body.id_login, PERMISSIONS.ISSUE, transaction);
             if (!canIssue) {
                 await transaction.rollback();
                 return responseData.unauthorized('No tienes permiso para emitir recetas.');
@@ -597,7 +610,7 @@ class PrescriptionDao {
     async cancel(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL);
+            const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL, transaction);
             if (!canCancel) {
                 await transaction.rollback();
                 return responseData.unauthorized('No tienes permiso para cancelar recetas.');
@@ -951,8 +964,8 @@ class PrescriptionDao {
         return { canViewAll, canViewOwn };
     }
 
-    async hasPermission(idLogin, permission) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false});
+    async hasPermission(idLogin, permission, transaction = null) {
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false, transaction});
     }
 
     async getPatient(idPerson, idBusiness, transaction = null) {

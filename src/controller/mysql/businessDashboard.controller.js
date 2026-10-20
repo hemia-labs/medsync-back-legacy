@@ -76,6 +76,13 @@ class BusinessDashboardController extends httpResponseHelper {
         };
     }
 
+    overview = async(req, res) => {
+        const context = await this.resolveTenantDashboardContext(req, res, ['from', 'to', 'scope', 'granularity']);
+        if (!context) return;
+        const response = await BusinessDashboardDao.overview(context.idBusiness, req.query || {}, buildAuditContext(req));
+        res.status(response.status).send(response);
+    }
+
     summary = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
 

@@ -17,6 +17,7 @@ router.post('/signature-request/email', Token.Auth, csrfProtected, requireTenant
 router.get('/signature-request/list/:id_patient_document', Token.Auth, requireTenantOperational, awaitHandlerFactory(DocumentSignatureRequestController.List));
 router.post('/signature-request/revoke', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentSignatureRequestController.Revoke));
 router.get('/patient/:id_person', Token.Auth, requireTenantOperational, awaitHandlerFactory(DocumentController.PatientDocuments));
+router.get('/patient/:id_person/:id_patient_document', Token.Auth, requireTenantOperational, awaitHandlerFactory(DocumentController.PatientDocuments));
 router.post('/create', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentController.CreateDocument));
 router.post('/sign', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, awaitHandlerFactory(DocumentController.SignDocument));
 router.post('/refusal', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentController.RegisterRefusal));

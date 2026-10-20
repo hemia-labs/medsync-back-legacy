@@ -4,9 +4,9 @@ const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
-const hellpersFile = require('../../util/file/file')
+
 const config = require('../../config/config');
-const { uploadFile, deleteFile } = require('../../services/aws/s3');
+const { uploadImage, deleteFile } = require('../../services/aws/s3');
 const {v4: uuidv4 } = require('uuid');
 
 /**
@@ -25,23 +25,7 @@ class ConfigDao{
 
         let resultFile = null;
         if(body.files && body.files.file) {
-            let pathfile = hellpersFile.base64Toimg(body.files.file)
-            if(!pathfile){
-                throw new Error("Excepción al crear el archivo")
-            }
-
-            resultFile = await uploadFile(config.BUCKETS.CONFIGFIRMS,pathfile.path,pathfile.id);
-            /*Response AWS 
-            {
-                ETag: '"6885b87f3c730e94424029f6c5485b77"',
-                ServerSideEncryption: 'AES256',
-                Location: 'https://s3-bucket-files-photos.s3.us-west-1.amazonaws.com/ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Key: 'ce531932-3c5b-4b76-8091-d007d580eadd.png',
-                Bucket: 's3-bucket-files-photos'
-            }*/
-
-            hellpersFile.deleteFile(pathfile.path);
+            resultFile = await uploadImage(config.BUCKETS.CONFIGFIRMS, body.files.file);
         }
 
 
@@ -78,24 +62,21 @@ class ConfigDao{
  */
 async signature_content_update(body) {
     let response;
+    let previousKey = null;
 
     try {
         let resultFile = null;
         if( !body.url_signature && body.files && body.files.file) {
-
-            await deleteFile(config.BUCKETS.CONFIGFIRMS,body.key_signature);
-
-
-            let pathfile = hellpersFile.base64Toimg(body.files.file)
-            if(!pathfile){
-                throw new Error("Excepción al crear el archivo")
-            }
-
-            resultFile = await uploadFile(config.BUCKETS.CONFIGFIRMS,pathfile.path,pathfile.id);
-
+            const current = await sequelize.query(`SELECT key_signature FROM signature_consent
+                WHERE id_signature_consent COLLATE utf8mb4_unicode_ci = :id COLLATE utf8mb4_unicode_ci
+                  AND id_business COLLATE utf8mb4_unicode_ci = :business COLLATE utf8mb4_unicode_ci LIMIT 1`, {
+                replacements: { id: body.id_signature_consent, business: body.id_business }, type: QueryTypes.SELECT
+            });
+            if (!current[0]) return responseData.notSuccess(Messages.DATA_GET_ERROR);
+            previousKey = current[0].key_signature;
+            resultFile = await uploadImage(config.BUCKETS.CONFIGFIRMS, body.files.file);
             body.key_signature = resultFile && resultFile.key ? resultFile.key : '';
             body.url_signature = resultFile && resultFile.Location ? resultFile.Location : '';
-            hellpersFile.deleteFile(pathfile.path);
         }
 
         let result = await sequelize.query(SequelizeSP.SP_SIGNATURE_CONSENT_UPDATE, {
@@ -115,6 +96,17 @@ async signature_content_update(body) {
         if(result){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
             response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
+            if (!SQLValid.hasError && resultFile && !(Array.isArray(result) && result.flat().some(row => row && row.id_signature_consent === body.id_signature_consent
+                && row.id_business === body.id_business && row.key_signature === body.key_signature))) {
+                return responseData.notSuccess(Messages.DATA_GET_ERROR);
+            }
+            // Preserve the previous image until its replacement is uploaded
+            // and saved. A cleanup failure must not turn a committed save into
+            // an apparent failure or expose object keys in logs.
+            if (!SQLValid.hasError && resultFile && previousKey && previousKey !== body.key_signature) {
+                try { await deleteFile(config.BUCKETS.CONFIGFIRMS, previousKey); }
+                catch (error) { console.warn('[IMAGE_UPLOAD] Previous image cleanup pending.'); }
+            }
         }
         else{/* regresamos una excepción controlada al no obtener una respuesta */
             response = responseData.notSuccess(Messages.DATA_GET_ERROR)    

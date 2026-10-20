@@ -54,21 +54,26 @@ class TreatmentPlanDao {
             allowTreatmentToothSelection: Boolean(config.allowTreatmentToothSelection), showTreatmentCosts: config.showTreatmentCosts === undefined || Boolean(config.showTreatmentCosts),
             showTreatmentStatus: config.showTreatmentStatus === undefined || Boolean(config.showTreatmentStatus) };
     }
-    async plans(body, transaction = null, lock = false) {
+    async plans(body, transaction = null, lock = false, window = null, activeOnly = false) {
         return this.query(`SELECT tp.*, creator.name AS created_by_name, editor.name AS updated_by_name, closer.name AS closed_by_name
             FROM treatment_plan tp
             LEFT JOIN login creator ON ${eq('creator.id_login', 'tp.created_by')} AND ${eq('creator.id_business', 'tp.id_business')}
             LEFT JOIN login editor ON ${eq('editor.id_login', 'tp.updated_by')} AND ${eq('editor.id_business', 'tp.id_business')}
             LEFT JOIN login closer ON ${eq('closer.id_login', 'tp.closed_by')} AND ${eq('closer.id_business', 'tp.id_business')}
             WHERE ${eq('tp.id_business', ':business')} AND ${eq('tp.id_person', ':patient')} AND tp.active = 1
-            ORDER BY tp.created_at DESC${lock ? ' FOR UPDATE' : ''}`, this.keys(body), transaction);
+            ${window ? (activeOnly ? "AND tp.status = 'active'" : "AND tp.status <> 'active'") : ''}
+            ORDER BY tp.created_at DESC, tp.id_treatment_plan DESC${window ? ' LIMIT :limit OFFSET :offset' : ''}${lock ? ' FOR UPDATE' : ''}`,
+            { ...this.keys(body), ...(window ? { limit: activeOnly ? 1 : window.pageSize, offset: activeOnly ? 0 : window.offset } : {}) }, transaction);
     }
-    async items(body, transaction = null) {
+    async items(body, transaction = null, planIds = null) {
+        if (planIds && !planIds.length) return [];
+        const selected = planIds ? ' AND pt.id_treatment_plan IN (:planIds)' : '';
+        const values = { ...this.keys(body), ...(planIds ? { planIds } : {}) };
         const rows = await this.query(`SELECT pt.* FROM patient_treatment pt WHERE ${eq('pt.id_business', ':business')}
-            AND ${eq('pt.id_person', ':patient')} AND pt.active = 1 ORDER BY pt.created_at DESC`, this.keys(body), transaction);
+            AND ${eq('pt.id_person', ':patient')} AND pt.active = 1${selected} ORDER BY pt.created_at DESC, pt.id_patient_treatment DESC`, values, transaction);
         const teeth = await this.query(`SELECT ptt.id_patient_treatment, ptt.tooth_number FROM patient_treatment_tooth ptt
             INNER JOIN patient_treatment pt ON pt.id_patient_treatment = ptt.id_patient_treatment AND pt.id_business = ptt.id_business
-            WHERE ${eq('pt.id_business', ':business')} AND ${eq('pt.id_person', ':patient')} AND pt.active = 1`, this.keys(body), transaction);
+            WHERE ${eq('pt.id_business', ':business')} AND ${eq('pt.id_person', ':patient')} AND pt.active = 1${selected}`, values, transaction);
         const byItem = {};
         for (const tooth of teeth) (byItem[tooth.id_patient_treatment] ||= []).push(String(tooth.tooth_number));
         return rows.map(row => ({ ...row, teeth: (byItem[row.id_patient_treatment] || []).sort() }));
@@ -86,23 +91,35 @@ class TreatmentPlanDao {
     }
     async getPlan(body) {
         try {
+            const { listPage, pageWindow } = require('../../util/listPage');
+            const paging = listPage(body, 5);
             const context = await this.context(body, 'view');
             if (context.error) return context.error;
             const { permissions, patient } = context;
             const config = await this.configuration(body);
-            const plans = await this.plans(body);
-            const items = await this.items(body);
-            const prepared = permissions.consentView || permissions.consentSign ? await consentDocuments.documentsForPatient(body, null, permissions.consentView) : { available: true, documents: [] };
+            let pagination;
+            if (paging) {
+                const totals = await this.query(`SELECT COUNT(*) AS total FROM treatment_plan WHERE ${eq('id_business', ':business')}
+                    AND ${eq('id_person', ':patient')} AND active = 1 AND status <> 'active'`, this.keys(body));
+                pagination = pageWindow(paging, totals[0].total);
+            }
+            const plans = paging ? [...await this.plans(body, null, false, pagination, true),
+                ...(pagination.total ? await this.plans(body, null, false, pagination) : [])] : await this.plans(body);
+            const planIds = paging ? plans.map(plan => plan.id_treatment_plan) : null;
+            const selected = paging ? ' AND id_treatment_plan IN (:planIds)' : '';
+            const values = { ...this.keys(body), ...(paging ? { planIds: planIds.length ? planIds : [''] } : {}) };
+            const items = await this.items(body, null, planIds);
+            const prepared = permissions.consentView || permissions.consentSign ? await consentDocuments.documentsForPatient(body, null, permissions.consentView, planIds) : { available: true, documents: [] };
             if (!permissions.costView) for (const document of prepared.documents.filter(document => document.includes_costs)) { delete document.content_html_snapshot; delete document.signed_content_html_snapshot; delete document.pdf_url; }
             let consents = [], versions = [], versioningAvailable = true;
             // No restricted signatures or costs are sent to a role lacking these permissions.
             if (permissions.consentView) {
                 consents = await this.query(`SELECT * FROM treatment_plan_consent WHERE ${eq('id_business', ':business')}
-                    AND ${eq('id_person', ':patient')} AND active = 1`, this.keys(body));
+                    AND ${eq('id_person', ':patient')} AND active = 1${selected}`, values);
             }
             try {
                 versions = await this.query(`SELECT ${permissions.consentView ? '*' : 'id_consent_version'} FROM treatment_plan_consent_version
-                    WHERE ${eq('id_business', ':business')} AND ${eq('id_person', ':patient')} ORDER BY revision DESC`, this.keys(body));
+                    WHERE ${eq('id_business', ':business')} AND ${eq('id_person', ':patient')}${selected} ORDER BY revision DESC`, values);
             } catch (error) {
                 if (!missingTable(error)) throw error;
                 versioningAvailable = false;
@@ -120,8 +137,12 @@ class TreatmentPlanDao {
                 }), consent: planVersions[0] || (permissions.consentView ? this.visibleConsent(consents.find(consent => consent.id_treatment_plan === plan.id_treatment_plan), permissions) : null), consent_versions: planVersions,
                 consent_document: prepared.documents.find(document => document.treatment_plan_id === plan.id_treatment_plan && document.status !== 'CANCELADO') || null };
             });
-            return response.success({ patient, permissions, config: { ...config, consentVersioningAvailable: versioningAvailable, consentDocumentAvailable: prepared.available }, activePlan: enriched.find(plan => plan.status === 'active') || null, history: enriched.filter(plan => plan.status !== 'active') }, 'Plan de tratamiento consultado.');
-        } catch (error) { return SequelizeException(error, 'No se pudo consultar el plan de tratamiento.'); }
+            const historyPagination = pagination ? (({ offset, ...rest }) => rest)(pagination) : undefined;
+            return response.success({ patient, permissions, config: { ...config, consentVersioningAvailable: versioningAvailable, consentDocumentAvailable: prepared.available }, activePlan: enriched.find(plan => plan.status === 'active') || null, history: enriched.filter(plan => plan.status !== 'active'), ...(paging ? { historyPagination } : {}) }, 'Plan de tratamiento consultado.');
+        } catch (error) {
+            if (error.message === 'INVALID_LIST_PAGE') return response.bad_request('Pagina o tamano de pagina invalido.');
+            return SequelizeException(error, 'No se pudo consultar el plan de tratamiento.');
+        }
     }
     async signingDoctors(body) {
         try {
@@ -144,6 +165,7 @@ class TreatmentPlanDao {
     async mutation(body, flag, work) {
         let transaction;
         try {
+            require('../../util/listPage').listPage(body, 5);
             const context = await this.context(body, flag);
             if (context.error) return context.error;
             transaction = await sequelize.transaction();
@@ -159,6 +181,7 @@ class TreatmentPlanDao {
             // A failed refresh must not turn a committed mutation into a reported failed save.
             return refreshed.status === 200 ? refreshed : response.success({ id_person: body.id_person, persisted: true, refreshRequired: true }, 'Cambios guardados. Reintenta la consulta del plan.');
         } catch (error) {
+            if (error.message === 'INVALID_LIST_PAGE') return response.bad_request('Pagina o tamano de pagina invalido.');
             if (transaction) await transaction.rollback();
             if (missingTable(error)) return response.bad_request('Falta habilitar el historial de versiones. No se guardaron ni reemplazaron datos.');
             return SequelizeException(error, 'No se pudieron guardar los cambios del plan.');

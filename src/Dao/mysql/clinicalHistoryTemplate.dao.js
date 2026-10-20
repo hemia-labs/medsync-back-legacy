@@ -47,8 +47,8 @@ const stringifySchema = (schema) => {
 };
 
 class ClinicalHistoryTemplateDao {
-    async hasPermission(idLogin, permission) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true});
+    async hasPermission(idLogin, permission, transaction = null) {
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction});
     }
 
     hydrate(row) {
@@ -251,7 +251,7 @@ class ClinicalHistoryTemplateDao {
     async createBusinessTemplate(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE);
+            const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE, transaction);
             if (!canManage) {
                 await transaction.rollback();
                 return responseData.unauthorized('No tienes permiso para configurar plantillas de historia clínica.');
@@ -380,7 +380,7 @@ class ClinicalHistoryTemplateDao {
     async createVersion(body) {
         const transaction = await sequelize.transaction();
         try {
-            const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE);
+            const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE, transaction);
             if (!canManage) {
                 await transaction.rollback();
                 return responseData.unauthorized('No tienes permiso para configurar plantillas de historia clínica.');

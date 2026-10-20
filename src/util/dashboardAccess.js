@@ -13,7 +13,13 @@ async function resolveDashboardAccess(idBusiness, idLogin, options = {}) {
         replacements: { login: idLogin, business: idBusiness }, type: QueryTypes.SELECT
     });
     if (!actors[0]) return { error: responseData.forbidden('Sesion de consultorio no disponible.') };
-    const codes = new Set((await effectivePermissions.rows(idLogin, { enabledCatalog: true })).map(row => row.code));
+    // Home also needs legacy module grants (which do not require is_active).
+    // Fetch both views once, scoped to this invocation; never cache across requests.
+    const includePermissions = options.includePermissions === true;
+    const permissionRows = await effectivePermissions.rows(idLogin, {
+        enabledCatalog: !includePermissions, includeCatalogState: includePermissions
+    });
+    const codes = new Set(permissionRows.filter(row => !includePermissions || Number(row.is_active) === 1).map(row => row.code));
     const actor = actors[0];
     const doctorProfile = actor.id_doctor_professional_profile ? { id_doctor_professional_profile: actor.id_doctor_professional_profile, professional_name: actor.professional_name } : null;
     const canSelectTenant = codes.has(PERMISSIONS.all);
@@ -28,6 +34,7 @@ async function resolveDashboardAccess(idBusiness, idLogin, options = {}) {
     };
     if (options.requireFamily !== false && !Object.values(families).some(Boolean)) return { error: responseData.forbidden('No tienes permisos para consultar estas familias de indicadores.') };
     return {
+        ...(includePermissions ? { permissionCodes: new Set(permissionRows.map(row => row.code)) } : {}),
         families, doctorProfile, canSelectTenant, canSelectOwn: Boolean(doctorProfile),
         administrativeTeam: mode === 'tenant' && families.administrative && canSelectTenant,
         scope: { mode, doctorProfileId: mode === 'own' ? actor.id_doctor_professional_profile : null,

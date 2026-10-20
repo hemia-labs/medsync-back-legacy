@@ -160,7 +160,8 @@ DeleteTreatment = async(req, res, next) =>{
   }
 
   GetTreatmentPlan = async(req, res, next) =>{
-    let _body = applyTenantToBody(req, { id_person: req.params.id_person });
+    const { page, page_size } = req.query || {};
+    let _body = applyTenantToBody(req, { id_person: req.params.id_person, page, page_size });
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
         response = await TreatmentDao.getPlan(_body);

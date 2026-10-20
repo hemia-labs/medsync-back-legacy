@@ -30,7 +30,7 @@ async function getRoleById(idRole) {
     return rows[0] || null;
 }
 
-async function getBusinessPlan(idBusiness) {
+async function getBusinessPlan(idBusiness, transaction = null) {
     if (!idBusiness) {
         return null;
     }
@@ -44,7 +44,7 @@ async function getBusinessPlan(idBusiness) {
             replacements: {
                 _id_business: idBusiness
             },
-            type: QueryTypes.SELECT
+            type: QueryTypes.SELECT, transaction
         }
     );
 
