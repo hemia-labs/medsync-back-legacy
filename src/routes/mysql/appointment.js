@@ -14,6 +14,8 @@ router.get('/config', Token.Auth, requireTenantOperational, requireAnyPermission
 
 router.post('/config/save', Token.Auth, csrfProtected, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.config.save' }), awaitHandlerFactory(AppointmentController.saveConfig));
 
+router.post('/config/timezone', Token.Auth, csrfProtected, requireTenantOperational, requireAnyPermission(['admin.config'], { resource: 'appointment.config.timezone' }), awaitHandlerFactory(AppointmentController.saveTimezone));
+
 router.get('/patient/:patientId/history', Token.Auth, requireTenantOperational, requireAnyPermission(['px.tab.monitoring', 'px.dates', 'admin.config'], { resource: 'appointment.patient.history' }), awaitHandlerFactory(AppointmentController.patientHistory));
 
 router.get('/list', Token.Auth, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.list' }), awaitHandlerFactory(AppointmentController.list));

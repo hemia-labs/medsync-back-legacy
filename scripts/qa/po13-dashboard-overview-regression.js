@@ -19,7 +19,7 @@ stub('../../src/db/Sequelize.connection', { async query(sql, options = {}) {
         if (failRetention) throw new Error('Synthetic retention failure');
         return [{ firstVisitPatients: 2, retainedPatients: 1 }];
     }
-    if (sql.includes('AS dueFollowUps')) return [{ dueFollowUps: 3, scheduledFollowUps: 1 }];
+    if (sql.includes('AS dueFollowUps')) return [{ dueFollowUps: 3, scheduledFollowUps: 1, overdueWithoutAppointment: 1, upcomingWithoutAppointment: 1 }];
     if (sql.includes('AS patientsWithEstimatedTreatment')) return [{ patientsWithEstimatedTreatment: 2, totalEstimatedTreatmentValue: 123 }];
     if (sql.includes('AS actorKey')) return [{ actorKey: 'profile:synthetic', professionalName: 'Synthetic Doctor', prescriptionsIssued: metric }];
     if (sql.includes('AS period')) return [{ period: '2026-10', total: metric }];
@@ -95,10 +95,11 @@ async function checkHttp() {
         ['professionalBreakdown', 'professionalBreakdown'], ['teamBreakdown', 'teamBreakdown']]) {
         assert.deepEqual(normalize(result.data.widgets[key]), normalize(baseline[method]), key + ' retains its contract');
     }
-    assert.equal(before, 56, 'Legacy controllers include one extra navigation query per endpoint');
-    assert.equal(after, 28);
+    assert.equal(before, 57, 'Legacy controllers include one extra navigation query per endpoint; follow-ups resolve the tenant calendar');
+    assert.equal(after, 29);
     assert.equal(queries.filter(q => q.sql.includes('SELECT id_business, name, plan, subscription_status, active, status')).length, 1);
     assert.equal(queries.filter(q => q.sql.includes('FROM login l LEFT JOIN doctor_professional_profile')).length, 1);
+    assert.equal(queries.filter(q => q.sql.includes('FROM appointment_config ac')).length, 1, 'Only authorized tenant clinical metrics read the business timezone');
     assert.equal(queries.filter(q => q.sql.includes('INNER JOIN cat_permission cp')).length, 2, 'Navigation and family catalog semantics remain separate');
     failRetention = true;
     result = await invoke('overview');

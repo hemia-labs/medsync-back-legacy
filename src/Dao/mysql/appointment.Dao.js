@@ -128,6 +128,37 @@ class AppointmentDao{
         return response;
     }
 
+    async saveTimezone(body) {
+        let transaction;
+        try {
+            const admin = await require('../../util/effectivePermissions').isTenantAdministrator(body.id_login, body.id_business, 'admin.config');
+            if (!admin) return responseData.forbidden('Solo el administrador puede cambiar la zona horaria del consultorio.');
+            if (typeof body.timezone !== 'string' || !body.timezone.trim() || body.timezone.length > 80) return responseData.bad_request('Zona horaria invalida.');
+            try {
+                const zone = new Intl.DateTimeFormat('es-MX', { timeZone: body.timezone }).resolvedOptions().timeZone;
+                if (/^[+-]/.test(zone)) return responseData.bad_request('Selecciona una zona horaria con nombre, no un desfase fijo.');
+            }
+            catch (_) { return responseData.bad_request('Zona horaria invalida.'); }
+            transaction = await sequelize.transaction();
+            await sequelize.query('SELECT id_business FROM business WHERE id_business = :business FOR UPDATE', {
+                replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction
+            });
+            const general = await this.readConfig(body.id_business, null, transaction);
+            if (!general || !general.id) throw new Error('No se pudo cargar la configuracion general del consultorio.');
+            // A dedicated update cannot overwrite concurrent closures or doctor availability.
+            await sequelize.query(`UPDATE appointment_config SET timezone = :timezone, updated_at = NOW(), updated_by = :actor
+                WHERE id_appointment_config = :config AND id_business = :business AND doctor_profile_id IS NULL AND active = 1`, {
+                replacements: { timezone: body.timezone, actor: body.id_login, config: general.id, business: body.id_business },
+                type: QueryTypes.UPDATE, transaction
+            });
+            await transaction.commit();
+            return responseData.success({ timezone: body.timezone }, Messages.DATA_GET_SUCCESSFULLY);
+        } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
+            return SequelizeException(error, Messages.DATA_GET_ERROR);
+        }
+    }
+
     async list(body) {
         let response;
         try {

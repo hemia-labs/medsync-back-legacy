@@ -50,9 +50,10 @@ function summarizeOperational(data) {
     : {};
 
   const followUpsWithoutAppointment = Math.max(Number(followUps.due || 0) - Number(followUps.scheduled || 0), 0);
+  const overdueFollowUpsWithoutAppointment = followUps.overdueWithoutAppointment;
   const priorityScore =
     Number(appointmentHealth.pendingConfirmation || 0) * 4
-    + followUpsWithoutAppointment * 4
+    + Number(overdueFollowUpsWithoutAppointment || 0) * 4
     + Number(clinicalHistories.pending || 0) * 3
     + Number(appointmentHealth.noShow || 0) * 3
     + Number(prescriptions.drafts || 0) * 2
@@ -83,13 +84,17 @@ function summarizeOperational(data) {
       due: followUps.due || 0,
       scheduled: followUps.scheduled || 0,
       withoutAppointment: followUpsWithoutAppointment,
-      coverageRate: followUps.coverageRate || 0
+      overdueWithoutAppointment: overdueFollowUpsWithoutAppointment,
+      upcomingWithoutAppointment: followUps.upcomingWithoutAppointment,
+      asOfDate: followUps.asOfDate,
+      timeZone: followUps.timeZone,
+      coverageRate: followUps.coverageRate === undefined ? null : followUps.coverageRate
     },
     treatmentEconomics,
     priorityScore,
     priorityInput: {
       pendingConfirmation: appointmentHealth.pendingConfirmation || 0,
-      followUpsWithoutAppointment,
+      overdueFollowUpsWithoutAppointment,
       clinicalPending: clinicalHistories.pending || 0,
       noShow: appointmentHealth.noShow || 0,
       prescriptionDrafts: prescriptions.drafts || 0,
