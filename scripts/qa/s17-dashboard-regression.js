@@ -4,7 +4,7 @@ const db = { async query(sql, options = {}) {
     queries.push({ sql, replacements: options.replacements });
     if (sql.includes('FROM login l LEFT JOIN doctor_professional_profile')) return [{ id_login: 'actor', id_doctor_professional_profile: profile, professional_name: profile ? 'QA Doctor' : null }];
     if (sql.includes('AS firstVisitPatients')) return [{ firstVisitPatients: metricRows, retainedPatients: metricRows / 2 }];
-    if (sql.includes('AS dueFollowUps')) return [{ dueFollowUps: metricRows, scheduledFollowUps: metricRows }];
+    if (sql.includes('AS dueFollowUps')) return [{ dueFollowUps: metricRows, scheduledFollowUps: metricRows, overdueWithoutAppointment: 0, upcomingWithoutAppointment: 0 }];
     if (sql.includes('AS actorKey')) return [{ actorKey: 'profile:qa', professionalName: 'QA Doctor', prescriptionsIssued: metricRows, clinicalHistoriesFinalized: 1 }];
     if (sql.includes('AS period')) return [{ period: '2026-01', total: metricRows }];
     if (sql.includes('AS status')) return [{ status: 'completed', total: metricRows }];
@@ -52,6 +52,9 @@ const clinicallyRead = () => queries.some(q => /FROM (prescription|clinical_hist
     response = await dao.operationalSummary('tenant', range, actor);
     assert.equal(response.data.decisionMetrics.followUps.available, false);
     assert.equal(response.data.decisionMetrics.followUps.due, null);
+    assert.equal(response.data.decisionMetrics.followUps.overdueWithoutAppointment, null);
+    assert.equal(response.data.decisionMetrics.followUps.upcomingWithoutAppointment, null);
+    assert.ok(!queries.some(q => q.sql.includes('FROM appointment_config ac')), 'Own scope never resolves institutional follow-up data');
     assert.equal(response.data.periodComparison.patientsCreated, null);
     response = await dao.trends('tenant', range, actor);
     assert.equal(response.data.series[0].patientsCreated, null);
@@ -84,5 +87,7 @@ const clinicallyRead = () => queries.some(q => /FROM (prescription|clinical_hist
     assert.equal(responseSink.code, 400, 'Unknown scope injection rejected');
     await controller.summary({ query: { id_business: 'foreign' }, tokenDecode: { id_login: 'actor', id_business: 'tenant' } }, responseSink);
     assert.equal(responseSink.code, 400, 'Tenant override rejected');
+    await controller.summary({ query: { asOfDate: '1900-01-01' }, tokenDecode: { id_login: 'actor', id_business: 'tenant' } }, responseSink);
+    assert.equal(responseSink.code, 400, 'Client cannot override the reference day');
     console.log('PASS S17 Dashboard: real DAO+scope resolver, independent families, no denied table reads, scope escalation denial, truthful unavailable values, responsible attribution contract, controller tenant/query guards. Mock DB; numeric SQL verified separately.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

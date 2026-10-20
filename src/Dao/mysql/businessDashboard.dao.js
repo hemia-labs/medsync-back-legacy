@@ -11,6 +11,7 @@ const {
     getEffectiveDashboardCapabilities
 } = require('../../config/dashboardCapabilities');
 const { assertPlanFeature } = require('../../util/planFeatures');
+const { followUpCalendar } = require('../../util/dashboardFollowUpCalendar');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -484,11 +485,15 @@ class BusinessDashboardDao {
                     dateBasis: 'Estado actual de recetas creadas en el periodo' };
                 result.clinicalHistories = { total: h.reduce((sum, row) => sum + row.count, 0), finalized: countStatus(h, 'FINALIZED'), drafts: countStatus(h, 'DRAFT'), pending: countStatus(h, 'DRAFT'), byStatus: h,
                     dateBasis: 'Estado actual de historias creadas en el periodo' };
-                if (ownScope(access)) result.decisionMetrics.followUps = unavailable('Los seguimientos actuales no tienen un doctor responsable atribuible.', ['due', 'scheduled', 'coverageRate']);
+                if (ownScope(access)) result.decisionMetrics.followUps = unavailable('Los seguimientos actuales no tienen un doctor responsable atribuible.', ['due', 'scheduled', 'coverageRate', 'overdueWithoutAppointment', 'upcomingWithoutAppointment']);
                 else {
                     const follow = (await this.followUpCoverageSummary(replacements))[0] || {}, due = Number(follow.dueFollowUps || 0), scheduled = Number(follow.scheduledFollowUps || 0);
                     result.decisionMetrics.followUps = { available: true, due, scheduled, coverageRate: percentage(scheduled, due),
-                        definition: 'Seguimientos activos con próxima fecha en el periodo y alguna cita vinculada vigente en esa fecha o después.' };
+                        overdueWithoutAppointment: Number(follow.overdueWithoutAppointment || 0),
+                        upcomingWithoutAppointment: Number(follow.upcomingWithoutAppointment || 0),
+                        asOfDate: follow.asOfDate, timeZone: follow.timeZone,
+                        definition: 'Seguimientos activos con fecha sugerida en el periodo. Una cita vigente vinculada del mismo paciente, para esa fecha o despues, cubre el seguimiento.',
+                        pendingDefinition: 'Sin cita: vencidos con fecha anterior a hoy; proximos con fecha de hoy o posterior, segun la zona horaria del consultorio.' };
                 }
             }
             if (families.financial) {
@@ -567,14 +572,21 @@ class BusinessDashboardDao {
                AND TIMESTAMP(a.appointment_date, a.start_time) <= NOW() GROUP BY a.id_person
         ) first_visits WHERE first_visits.firstAppointmentAt >= :_from AND first_visits.firstAppointmentAt <= :_to`, replacements);
     }
-    async followUpCoverageSummary(replacements) {
-        return this.countMetric(`SELECT COUNT(DISTINCT t.id_tracing) AS dueFollowUps,
-            COUNT(DISTINCT CASE WHEN a.id_appointment IS NOT NULL THEN t.id_tracing END) AS scheduledFollowUps
+    async followUpCoverageSummary(replacements, now = new Date()) {
+        const configs = await this.countMetric(`SELECT ac.timezone FROM appointment_config ac
+            WHERE ${collateEq('ac.id_business', ':_id_business')} AND ac.active = 1 AND ac.doctor_profile_id IS NULL
+            ORDER BY ac.created_at DESC, ac.id_appointment_config LIMIT 1`, replacements);
+        const calendar = followUpCalendar(configs[0] && configs[0].timezone, now);
+        const rows = await this.countMetric(`SELECT COUNT(DISTINCT t.id_tracing) AS dueFollowUps,
+            COUNT(DISTINCT CASE WHEN a.id_appointment IS NOT NULL THEN t.id_tracing END) AS scheduledFollowUps,
+            COUNT(DISTINCT CASE WHEN a.id_appointment IS NULL AND t.quote_date_after < :_follow_up_today THEN t.id_tracing END) AS overdueWithoutAppointment,
+            COUNT(DISTINCT CASE WHEN a.id_appointment IS NULL AND t.quote_date_after >= :_follow_up_today THEN t.id_tracing END) AS upcomingWithoutAppointment
             FROM tracing t LEFT JOIN appointment a ON ${collateEq('a.id_business', 't.id_business')}
-             AND ${collateEq('a.id_tracing', 't.id_tracing')} AND a.active = 1
+             AND ${collateEq('a.id_tracing', 't.id_tracing')} AND ${collateEq('a.id_person', 't.id_person')} AND a.active = 1
              AND a.status IN ('pending_confirmation', 'confirmed', 'completed') AND a.appointment_date >= t.quote_date_after
             WHERE ${collateEq('t.id_business', ':_id_business')} AND t.status = 'active'
-             AND t.quote_date_after >= :_from_date AND t.quote_date_after <= :_to_date`, replacements);
+             AND t.quote_date_after >= :_from_date AND t.quote_date_after <= :_to_date`, { ...replacements, _follow_up_today: calendar.asOfDate });
+        return rows.map(row => ({ ...row, ...calendar }));
     }
     async treatmentEconomicsSummary(replacements) {
         return this.countMetric(`SELECT COUNT(*) AS patientsWithEstimatedTreatment,

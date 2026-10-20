@@ -32,6 +32,11 @@ class AppointmentController extends httpResponseHelper{
     res.status(response.status).send(response);
   }
 
+  saveTimezone = async(req, res) => {
+    const response = await AppointmentDao.saveTimezone(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+
   list = async(req, res, next) =>{
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
