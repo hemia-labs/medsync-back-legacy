@@ -608,6 +608,7 @@ class PublicDocumentSignatureDao {
             await planConsentDocuments.syncSigned({ ...document, status: nextDocumentStatus, signed_at: signedAt }, transaction, null);
 
             await transaction.commit();
+            require('../../services/pulse/invalidation').invalidate(document.id_business);
 
             return ok({
                 status: SIGNATURE_REQUEST_STATUSES.SIGNED,

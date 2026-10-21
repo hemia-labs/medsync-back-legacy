@@ -3,10 +3,10 @@ const sequelize = require('../../db/Sequelize.connection');
 const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
-const {SequelizeException, SQLException} = require('../../util/sequelizeException');
-const { listProfessionals, resolveProfessional } = require('../../util/professionalContext');
+const { SequelizeException } = require('../../util/sequelizeException');
+const { resolveProfessional } = require('../../util/professionalContext');
 const { validateConfig, validateAppointment } = require('../../domain/appointments/agendaRules');
-const UserDao = require('./user.dao');
+const safeWrites = require('../../domain/appointments/safeWrites');
 
 const TENANT_COLLATION = 'utf8mb4_unicode_ci';
 const collatedText = (value) => {
@@ -52,11 +52,15 @@ function normalizeContactPhone(value) {
 
 class AppointmentDao{
 
-    async doctors(body) {
-        const rows = await listProfessionals(body.id_business);
-        return responseData.success(rows.map(d => ({ id_doctor_professional_profile: d.id_doctor_professional_profile,
-            id_login: d.id_login, professional_name: d.professional_name, professional_license: d.professional_license,
-            display_name: d.professional_name || 'Doctor sin nombre' })), Messages.DATA_GET_SUCCESSFULLY);
+    async doctors(body, transaction = null) {
+        const rows = await sequelize.query(`SELECT d.id_doctor_professional_profile,d.id_login,d.professional_name,d.professional_license,
+            COALESCE(NULLIF(d.professional_name,''),'Doctor sin nombre') AS display_name,
+            IF(d.is_active=1 AND l.active=1,1,0) AS active
+            FROM doctor_professional_profile d JOIN login l ON l.id_login=d.id_login AND l.id_business=d.id_business
+            WHERE d.id_business=:business AND ((d.is_active=1 AND l.active=1) OR EXISTS
+                (SELECT 1 FROM appointment a WHERE a.id_business=d.id_business AND a.doctor_profile_id=d.id_doctor_professional_profile AND a.active=1))
+            ORDER BY active DESC,display_name`, { replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction });
+        return responseData.success(rows, Messages.DATA_GET_SUCCESSFULLY);
     }
 
     async readConfig(business, profile, transaction = null) {
@@ -67,28 +71,39 @@ class AppointmentDao{
         const config = this.parseConfig(result);
         if (config && typeof config === 'object') {
             config.workingDays = [1,2,3,4,5,6,0].map(dayOfWeek => (config.workingDays || []).find(day => Number(day.dayOfWeek) === dayOfWeek) || { dayOfWeek, enabled: false, timeRanges: [] });
+            const [version] = await sequelize.query('SELECT revision FROM appointment_config WHERE id_appointment_config=:id AND id_business=:business', {
+                replacements: { id: config.id, business }, type: QueryTypes.SELECT, transaction
+            });
+            config.revision = version && Number(version.revision);
         }
         return config;
     }
 
     async getConfig(body) {
-        let response;
+        let transaction;
         try {
-            if (body.doctor_profile_id === 'business') return responseData.success(await this.readConfig(body.id_business, null), Messages.DATA_GET_SUCCESSFULLY);
-            const resolved = await resolveProfessional(body, body.doctor_profile_id);
-            if (resolved.error) return resolved.error;
-            const config = await this.readConfig(body.id_business, resolved.doctor.id_doctor_professional_profile);
-            const general = await this.readConfig(body.id_business, null);
-            config.doctorName = resolved.doctor.professional_name;
-            config.businessEnabled = !!general.enabled;
-            config.timezone = general.timezone;
-            config.businessBlockedDates = general.blockedDates || [];
-            config.businessBlockedHours = general.blockedHours || [];
-            response = responseData.success(config, Messages.DATA_GET_SUCCESSFULLY);
+            // Config JSON and its revision must describe the same committed state.
+            transaction = await sequelize.transaction();
+            await sequelize.query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE', { replacements:{business:body.id_business},type:QueryTypes.SELECT,transaction });
+            const general = await this.readConfig(body.id_business, null, transaction);
+            if (body.doctor_profile_id === 'business') { await transaction.commit(); return responseData.success(general, Messages.DATA_GET_SUCCESSFULLY); }
+            let resolved = await resolveProfessional(body, body.doctor_profile_id, transaction);
+            if (resolved.error && body.doctor_profile_id) {
+                const doctors = await this.doctors(body, transaction);
+                const historical = doctors.data.find(d => d.id_doctor_professional_profile === body.doctor_profile_id);
+                if (historical) resolved = { doctor: historical };
+            }
+            if (resolved.error) { await transaction.rollback(); return resolved.error; }
+            const config = await this.readConfig(body.id_business, resolved.doctor.id_doctor_professional_profile, transaction);
+            Object.assign(config, { doctorName: resolved.doctor.professional_name, doctorActive: resolved.doctor.active !== 0,
+                businessRevision: general.revision, businessEnabled: !!general.enabled, timezone: general.timezone,
+                businessBlockedDates: general.blockedDates || [], businessBlockedHours: general.blockedHours || [] });
+            await transaction.commit();
+            return responseData.success(config, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
+            if (transaction && !transaction.finished) await transaction.rollback();
+            return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
-        return response;
     }
 
     async saveConfig(body) {
@@ -106,6 +121,11 @@ class AppointmentDao{
             if (invalid) return responseData.bad_request(invalid);
             transaction = await sequelize.transaction();
             await sequelize.query('SELECT id_business FROM business WHERE id_business = :business FOR UPDATE', { replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction });
+            const current = await this.readConfig(body.id_business, isBusiness ? null : resolved.doctor.id_doctor_professional_profile, transaction);
+            const conflict = safeWrites.revisionConflict(configBody.revision, current, 'config');
+            if (conflict) { await transaction.rollback(); return conflict; }
+            // The timezone has its own endpoint/version. A doctor form never owns it.
+            configBody.timezone = current.timezone;
             const result = await sequelize.query(SequelizeSP.SP_APPOINTMENT_CONFIG_SAVE, {
                 replacements: {
                     _config: JSON.stringify(configBody),
@@ -119,6 +139,10 @@ class AppointmentDao{
             });
 
             const config = this.parseConfig(result);
+            await sequelize.query('UPDATE appointment_config SET revision=revision+1 WHERE id_appointment_config=:id AND id_business=:business', {
+                replacements: { id: current.id, business: body.id_business }, type: QueryTypes.UPDATE, transaction
+            });
+            config.revision = current.revision + 1;
             await transaction.commit();
             response = responseData.success(config, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
@@ -145,14 +169,16 @@ class AppointmentDao{
             });
             const general = await this.readConfig(body.id_business, null, transaction);
             if (!general || !general.id) throw new Error('No se pudo cargar la configuracion general del consultorio.');
+            const conflict = safeWrites.revisionConflict(body.revision, general, 'config');
+            if (conflict) { await transaction.rollback(); return conflict; }
             // A dedicated update cannot overwrite concurrent closures or doctor availability.
-            await sequelize.query(`UPDATE appointment_config SET timezone = :timezone, updated_at = NOW(), updated_by = :actor
+            await sequelize.query(`UPDATE appointment_config SET timezone = :timezone, revision=revision+1, updated_at = NOW(), updated_by = :actor
                 WHERE id_appointment_config = :config AND id_business = :business AND doctor_profile_id IS NULL AND active = 1`, {
                 replacements: { timezone: body.timezone, actor: body.id_login, config: general.id, business: body.id_business },
                 type: QueryTypes.UPDATE, transaction
             });
             await transaction.commit();
-            return responseData.success({ timezone: body.timezone }, Messages.DATA_GET_SUCCESSFULLY);
+            return responseData.success({ timezone: body.timezone, revision: general.revision + 1 }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_GET_ERROR);
@@ -160,121 +186,62 @@ class AppointmentDao{
     }
 
     async list(body) {
-        let response;
         try {
-            if (body.doctor_profile_id) {
-                const resolved = await resolveProfessional(body, body.doctor_profile_id);
-                if (resolved.error) return resolved.error;
+            if(body.doctor_profile_id) {
+                const rows = await sequelize.query('SELECT 1 FROM doctor_professional_profile WHERE id_business=:business AND id_doctor_professional_profile=:id', {replacements:{business:body.id_business,id:body.doctor_profile_id},type:QueryTypes.SELECT});
+                if(!rows.length) return responseData.forbidden('Doctor no disponible para este consultorio.');
             }
-            const result = await sequelize.query(SequelizeSP.SP_APPOINTMENT_LIST, {
-                replacements: {
-                    _date_from: body.date_from || null,
-                    _date_to: body.date_to || null,
-                    _id_person: body.id_person || null,
-                    _id_business: body.id_business,
-                    _doctor_profile_id: body.doctor_profile_id || null
-                },
-                type: QueryTypes.RAW
-            });
-
-            if(result){
-                const SQLValid = SQLException(result);
-                response = !SQLValid.hasError ? responseData.success(this.normalizeAppointmentRows(this.normalizeResultRows(result)), Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
-            }
-            else{
-                response = responseData.success([], Messages.DATA_GET_SUCCESSFULLY);
-            }
-        } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
+            for(const date of [body.date_from,body.date_to].filter(Boolean)) if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date+'T12:00:00Z')) || new Date(date+'T12:00:00Z').toISOString().slice(0,10)!==date) return responseData.bad_request('Fecha de consulta invalida.');
+            return responseData.success(this.normalizeAppointmentRows(await safeWrites.list(body)), Messages.DATA_GET_SUCCESSFULLY);
         }
-        return response;
+        catch (error) { return SequelizeException(error, Messages.DATA_GET_ERROR); }
     }
 
-    async save(body) {
-        let response;
-        let transaction;
-        try {
-            const appointment = this.normalizeAppointmentPayload(body.appointment || body);
-            transaction = await sequelize.transaction();
-            await sequelize.query('SELECT id_business FROM business WHERE id_business = :business FOR UPDATE', { replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction });
-            const resolved = await resolveProfessional(body, appointment.doctorProfileId, transaction);
-            if (resolved.error) { await transaction.rollback(); return resolved.error; }
-            appointment.doctorProfileId = resolved.doctor.id_doctor_professional_profile;
-            appointment.doctorName = resolved.doctor.professional_name;
-            if (appointment.id) {
-                const current = await sequelize.query('SELECT id_appointment FROM appointment WHERE id_appointment = :id AND id_business = :business AND active = 1', { replacements: { id: appointment.id, business: body.id_business }, type: QueryTypes.SELECT, transaction });
-                if (!current.length) { await transaction.rollback(); return responseData.forbidden('Cita no disponible para este consultorio.'); }
-            }
-            const validationResponse = await this.validateAppointmentPayload(appointment, body.id_business, transaction);
-            if(validationResponse) {
-                await transaction.rollback();
-                return validationResponse;
-            }
-            if (body.sync_follow_up === true) {
-                const followUpResponse = await this.validateFollowUpSync(appointment, body, transaction);
-                if (followUpResponse) {
-                    // A successful replay returns the appointment already committed, without another write.
-                    await transaction.rollback();
-                    return followUpResponse;
-                }
-            }
-            const config = await this.readConfig(body.id_business, appointment.doctorProfileId, transaction);
-            const general = await this.readConfig(body.id_business, null, transaction);
-            Object.assign(config, { businessEnabled: !!general.enabled, businessBlockedDates: general.blockedDates || [], businessBlockedHours: general.blockedHours || [] });
-            const invalid = validateAppointment(appointment, config);
-            if (invalid) { await transaction.rollback(); return responseData.bad_request(invalid); }
-            const conflictResponse = await this.validateAvailabilityConflict(appointment, body.id_business, transaction);
-            if(conflictResponse) {
-                await transaction.rollback();
-                return conflictResponse;
-            }
-
-            const result = await sequelize.query(SequelizeSP.SP_APPOINTMENT_SAVE, {
-                replacements: {
-                    _appointment: JSON.stringify(appointment),
-                    _id_login: body.id_login,
-                    _id_business: body.id_business
-                },
-                type: QueryTypes.RAW,
-                plain: true,
-                transaction
-            });
-
-            const rows = this.normalizeAppointmentRows(this.normalizeResultRows(result));
-            await transaction.commit();
-
-            if(rows.length){
-                const SQLValid = SQLException(rows);
-                response = !SQLValid.hasError ? responseData.success(rows, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(SQLValid.message || Messages.DATA_GET_ERROR);
-            }
-            else{
-                response = responseData.notSuccess(Messages.DATA_SAVE_ERROR, []);
-            }
-        } catch (error) {
-            if (transaction && !transaction.finished) await transaction.rollback();
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
-        }
-        return response;
-    }
+    async save(body) { return safeWrites.write(this, body); }
+    async reschedule(body) { return safeWrites.write(this, body, 'reschedule'); }
 
     async delete(body) {
-        let response;
-        try {
-            const result = await sequelize.query(SequelizeSP.SP_APPOINTMENT_DELETE, {
-                replacements: {
-                    _id_appointment: body.id_appointment,
-                    _id_login: body.id_login,
-                    _id_business: body.id_business
-                },
-                type: QueryTypes.RAW,
-                plain: true
-            });
+        // Preserve history. The legacy delete route now performs a versioned cancellation.
+        const current = await safeWrites.get(body.id_appointment, body.id_business);
+        if (!current) return responseData.forbidden('Cita no disponible para este consultorio.');
+        return this.save({ ...body, appointment: { ...current, revision: body.revision, status: 'cancelled', cancellationReason: body.cancellationReason } });
+    }
 
-            response = responseData.success(result, Messages.DATA_GET_SUCCESSFULLY);
-        } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
+    async get(body) {
+        const row = await safeWrites.get(body.id_appointment, body.id_business);
+        return row ? responseData.success(row, Messages.DATA_GET_SUCCESSFULLY) : responseData.forbidden('Cita no disponible para este consultorio.');
+    }
+
+    async audit(body) {
+        if (!await safeWrites.get(body.id_appointment, body.id_business)) return responseData.forbidden('Cita no disponible para este consultorio.');
+        const rows = await sequelize.query(`SELECT a.id,a.operation,a.revision,a.changes,a.created_at AS createdAt,l.name AS actorName
+            FROM appointment_audit a LEFT JOIN login l ON l.id_login=a.actor_id AND l.id_business=a.id_business
+            WHERE a.id_business=:business AND a.appointment_id=:id AND (:before IS NULL OR a.id < :before)
+            ORDER BY a.id DESC LIMIT 51`, { replacements: { business: body.id_business, id: body.id_appointment,
+                before: Number(body.before) > 0 ? Number(body.before) : null }, type: QueryTypes.SELECT });
+        return responseData.success({ items: rows.slice(0,50), hasMore: rows.length>50, nextBefore: rows.length>50 ? rows[49].id : null }, Messages.DATA_GET_SUCCESSFULLY);
+    }
+
+    async configImpact(body) {
+        const config = body.config;
+        const invalid = validateConfig(config);
+        if (invalid) return responseData.bad_request(invalid);
+        const general = await this.readConfig(body.id_business, null);
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: general.timezone, year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
+        const rows = await safeWrites.list({ id_business: body.id_business, date_from: today,
+            doctor_profile_id: config.doctorProfileId === 'business' ? null : config.doctorProfileId });
+        const affected = [], configs = new Map();
+        for (const a of rows) {
+            if (!APPOINTMENT_BLOCKING_STATUSES.includes(a.status)) continue;
+            let effective = config;
+            if (config.doctorProfileId === 'business') {
+                if (!configs.has(a.doctorProfileId)) configs.set(a.doctorProfileId, await this.readConfig(body.id_business, a.doctorProfileId));
+                effective = { ...configs.get(a.doctorProfileId), businessEnabled: !!config.enabled,
+                    businessBlockedDates: config.blockedDates, businessBlockedHours: config.blockedHours };
+            } else effective = { ...config, businessEnabled: !!general.enabled, businessBlockedDates: general.blockedDates, businessBlockedHours: general.blockedHours };
+            if (validateAppointment(a, effective)) affected.push({ id:a.id,date:a.date,startTime:a.startTime,doctorName:a.doctorName,patientName:a.patientName });
         }
-        return response;
+        return responseData.success({ count:affected.length,appointments:affected.slice(0,50),truncated:affected.length>50,asOf:today }, Messages.DATA_GET_SUCCESSFULLY);
     }
 
     async patientHistory(body) {
@@ -325,7 +292,7 @@ class AppointmentDao{
             const offset = normalizeInteger(body.offset, 0, 0, 100000);
             const rows = await sequelize.query(
                 `SELECT
-                    a.id_appointment AS id,
+                    a.id_appointment AS id, a.revision,
                     a.id_person AS patientId,
                     a.doctor_profile_id AS doctorProfileId,
                     a.doctor_name_snapshot AS doctorName,
@@ -408,7 +375,7 @@ class AppointmentDao{
             replacements: { id: appointment.followUpId, business: body.id_business, patient: appointment.patientId }, type: QueryTypes.SELECT, transaction
         });
         if (!followUp.length || followUp[0].status !== 'active') return responseData.bad_request('Solo se puede agendar desde un seguimiento vigente.');
-        const linked = await sequelize.query(`SELECT a.id_appointment AS id, a.id_person AS patientId,
+        const linked = await sequelize.query(`SELECT a.id_appointment AS id, a.revision, a.id_person AS patientId,
                 a.id_tracing AS followUpId, a.doctor_profile_id AS doctorProfileId, a.doctor_name_snapshot AS doctorName,
                 a.patient_name AS patientName, a.contact_phone AS contactPhone,
                 DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS date,

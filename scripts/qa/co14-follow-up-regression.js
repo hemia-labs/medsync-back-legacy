@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { v4: uuid } = require('uuid');
 const inject = (file, value) => { const id = require.resolve(file); require.cache[id] = { id, filename: id, loaded: true, exports: value }; };
 const body = { id_business: 'clinic', id_login: 'doctor', id_person: 'patient' };
+let receipts = [], audits = [];
 let traces = [], versions = [], appointments = [], allowed = true, queries = [], appointmentWrites = 0;
 let treatment = { id_patient_treatment: 'procedure', id_treatment_plan: 'plan', name: 'Procedimiento original', business: 'clinic', patient: 'patient', active: true, planActive: true, status: 'pending' };
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -10,14 +11,15 @@ const config = { enabled: true, defaultAppointmentDuration: 30, timezone: 'Ameri
     workingDays: Array.from({ length: 7 }, (_, dayOfWeek) => ({ dayOfWeek, enabled: true, timeRanges: [{ startTime: '09:00', endTime: '17:00' }] })) };
 const db = {
     async transaction() {
-        const before = clone({ traces, versions, appointments });
+        const before = clone({ traces, versions, appointments, receipts, audits });
         return { finished: false, async commit() { this.finished = true; }, async rollback() {
-            traces = before.traces; versions = before.versions; appointments = before.appointments; this.finished = true;
+            receipts = before.receipts; audits = before.audits; traces = before.traces; versions = before.versions; appointments = before.appointments; this.finished = true;
         } };
     },
     async query(sql, options = {}) {
         queries.push(sql);
         const r = options.replacements || {};
+        if (/SELECT revision FROM appointment_config/.test(sql)) return [{revision:1}];
         if (/SELECT l.id_login FROM login l/.test(sql)) return r.business === body.id_business && r.actor === body.id_login ? [{ id_login: body.id_login }] : [];
         if (/FROM person/.test(sql) && !/FROM appointment/.test(sql)) {
             const business = r.business || r._id_business, patient = r.patient || r._id_person;
@@ -45,7 +47,16 @@ const db = {
         if (/SELECT status FROM tracing/.test(sql)) return traces.filter(t => t.id_tracing === r.id && scoped(t, r)).map(t => ({ status: t.status }));
         if (/SELECT id_business FROM business/.test(sql)) { assert.match(sql, /FOR UPDATE/); return [{ id_business: body.id_business }]; }
         if (/SELECT id_appointment FROM appointment/.test(sql)) return appointments.filter(a => a.id === r.id && a.business === r.business).map(a => ({ id_appointment: a.id }));
+        if (/FROM appointment_write_request/.test(sql)) return receipts.filter(x=>x.business===r.business && x.requestId===r.requestId).map(x=>({actor_id:x.actor,operation:x.operation,payload_hash:x.hash,appointment_id:x.id}));
+        if (/INSERT INTO appointment_write_request/.test(sql)) { receipts.push(clone(r));return []; }
+        if (/INSERT INTO appointment_audit/.test(sql)) { audits.push(clone(r));return []; }
+        if (/^(INSERT INTO appointment\(|UPDATE appointment SET)/.test(sql)) {
+            appointmentWrites++;const index=appointments.findIndex(a=>a.id===r.id && a.business===r.business);
+            const item={...clone(r),revision:index<0?1:appointments[index].revision+1};
+            if(index<0)appointments.push(item);else appointments[index]=item;return [];
+        }
         if (/FROM appointment a/.test(sql)) {
+            if (/a.id_appointment=:id/.test(sql)) return appointments.filter(a=>a.id===r.id && a.business===r.business).map(clone);
             if (/SELECT 1/.test(sql)) {
                 return appointments.some(a => a.business === r._id_business && a.doctorProfileId === r._doctor_profile_id && a.date === r._appointment_date
                     && a.id !== r._id_appointment && ['pending_confirmation', 'confirmed', 'completed'].includes(a.status)
@@ -125,22 +136,22 @@ const validation = require('../../src/domain/tracing/tracingValidation');
 
     const appointment = { patientId: body.id_person, followUpId: free.id_tracing, doctorProfileId: 'doctor-profile', patientName: 'QA Patient',
         date: '2026-10-20', startTime: '09:00', endTime: '09:30', status: 'pending_confirmation', title: 'Revision de rutina', description: 'Proxima atencion', source: 'follow_up' };
-    const request = { ...body, appointment, sync_follow_up: true };
+    const request = { ...body, appointment, sync_follow_up: true, get request_id() { return uuid(); } };
     result = await agenda.save(request); assert.equal(result.status, 200, result.message); const appointmentId = result.data[0].id;
     assert.equal((await agenda.save(request)).status, 200); assert.equal(appointmentWrites, 1, 'Lost appointment response retry is idempotent');
     result = await agenda.save({ ...request, appointment: { ...appointment, startTime: '10:00', endTime: '10:30' } });
     assert.equal(result.status, 409); assert.equal(result.data.code, 'FOLLOW_UP_APPOINTMENT_ALREADY_EXISTS');
     assert.equal(result.data.appointment.id, appointmentId); assert.equal(appointmentWrites, 1, 'A changed retry slot never gets false success');
     assert.equal((await agenda.save({ ...request, appointment: { ...appointment, doctorProfileId: 'doctor-profile-2' } })).status, 409);
-    result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId, title: 'Correccion explicita' } });
+    result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId, revision: appointments.find(a=>a.id===appointmentId).revision, title: 'Correccion explicita' } });
     assert.equal(result.status, 200); assert.equal(appointmentWrites, 2);
     appointments.find(a => a.id === appointmentId).status = 'confirmed';
-    result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId, title: 'Correccion despues de confirmar' } });
+    result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId, revision: appointments.find(a=>a.id===appointmentId).revision, title: 'Correccion despues de confirmar' } });
     assert.equal(result.status, 200); assert.equal(result.data[0].status, 'confirmed', 'A stale pending payload cannot undo confirmation');
     for (const terminal of ['completed', 'cancelled', 'rescheduled', 'no_show']) {
         appointments.find(a => a.id === appointmentId).status = terminal;
-        result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId } });
-        assert.equal(result.status, 409); assert.equal(result.data.code, 'FOLLOW_UP_APPOINTMENT_TERMINAL');
+        result = await agenda.save({ ...request, appointment: { ...appointment, id: appointmentId, revision: appointments.find(a=>a.id===appointmentId).revision } });
+        assert.equal(result.status, 409); assert.equal(result.data.code, terminal === 'rescheduled' ? 'APPOINTMENT_REPLACED' : 'FOLLOW_UP_APPOINTMENT_TERMINAL');
         assert.equal((await agenda.save(request)).status, 409, `${terminal} does not create an implicit replacement`);
         assert.equal(appointments.find(a => a.id === appointmentId).status, terminal);
     }

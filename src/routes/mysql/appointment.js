@@ -24,4 +24,8 @@ router.post('/save', Token.Auth, csrfProtected, requireTenantOperational, requir
 
 router.delete('/delete', Token.Auth, csrfProtected, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.delete' }), awaitHandlerFactory(AppointmentController.delete));
 
+router.post('/reschedule', Token.Auth, csrfProtected, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.reschedule' }), awaitHandlerFactory(AppointmentController.reschedule));
+router.post('/config/impact', Token.Auth, csrfProtected, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.config.impact' }), awaitHandlerFactory(AppointmentController.configImpact));
+router.get('/:appointmentId/audit', Token.Auth, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.audit' }), awaitHandlerFactory(AppointmentController.audit));
+router.get('/:appointmentId', Token.Auth, requireTenantOperational, requireAnyPermission(['px.dates', 'admin.config'], { resource: 'appointment.get' }), awaitHandlerFactory(AppointmentController.get));
 module.exports = router;

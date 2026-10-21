@@ -75,6 +75,23 @@ class AppointmentController extends httpResponseHelper{
     res.status(response.status).send(response);
   }
 
+  reschedule = async(req, res) => {
+    const response = await AppointmentDao.reschedule(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+  configImpact = async(req, res) => {
+    const response = await AppointmentDao.configImpact(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+  get = async(req, res) => {
+    const response = await AppointmentDao.get({ id_business: getBusinessIdFromToken(req.tokenDecode), id_appointment: req.params.appointmentId });
+    res.status(response.status).send(response);
+  }
+  audit = async(req, res) => {
+    const response = await AppointmentDao.audit({ id_business: getBusinessIdFromToken(req.tokenDecode), id_appointment: req.params.appointmentId, before: req.query.before });
+    res.status(response.status).send(response);
+  }
+
   delete = async(req, res, next) =>{
     let body = applyTenantToBody(req, req.body);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);

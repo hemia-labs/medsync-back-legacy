@@ -7,8 +7,9 @@ const PERMISSIONS = Object.freeze({ administrative: 'dashboard.operations', clin
 
 async function resolveDashboardAccess(idBusiness, idLogin, options = {}) {
     if (!idBusiness || !idLogin) return { error: responseData.forbidden('Sesion de consultorio no disponible.') };
-    const actors = await sequelize.query(`SELECT l.id_login, d.id_doctor_professional_profile, d.professional_name
+    const actors = await sequelize.query(`SELECT l.id_login, d.id_doctor_professional_profile, d.professional_name, b.plan AS plan_code
         FROM login l LEFT JOIN doctor_professional_profile d ON d.id_login = l.id_login AND d.id_business = l.id_business AND d.is_active = 1
+        INNER JOIN business b ON b.id_business = l.id_business
         WHERE l.id_login = :login AND l.id_business = :business AND l.active = 1 LIMIT 1`, {
         replacements: { login: idLogin, business: idBusiness }, type: QueryTypes.SELECT
     });
@@ -23,8 +24,11 @@ async function resolveDashboardAccess(idBusiness, idLogin, options = {}) {
     const actor = actors[0];
     const doctorProfile = actor.id_doctor_professional_profile ? { id_doctor_professional_profile: actor.id_doctor_professional_profile, professional_name: actor.professional_name } : null;
     const canSelectTenant = codes.has(PERMISSIONS.all);
-    const mode = options.scope || (doctorProfile ? 'own' : 'tenant');
-    if (!['own', 'tenant'].includes(mode)) return { error: responseData.bad_request('Alcance de indicadores invalido.') };
+    if (options.scope && !['own', 'tenant'].includes(options.scope)) return { error: responseData.bad_request('Alcance de indicadores invalido.') };
+    // Single-professional plans use the institutional view only when already authorized.
+    // A plan never grants another role access to tenant-wide clinical/financial data.
+    const tenantOnly = ['basic', 'pro'].includes(String(actor.plan_code || '').trim().toLowerCase()) && canSelectTenant;
+    const mode = tenantOnly ? 'tenant' : options.scope || (doctorProfile ? 'own' : 'tenant');
     if (mode === 'own' && !doctorProfile) return { error: responseData.forbidden('El alcance propio requiere un perfil profesional activo.') };
     if (mode === 'tenant' && doctorProfile && !canSelectTenant) return { error: responseData.forbidden('No tienes permiso para consultar indicadores de todo el consultorio.') };
     const families = {
@@ -35,7 +39,7 @@ async function resolveDashboardAccess(idBusiness, idLogin, options = {}) {
     if (options.requireFamily !== false && !Object.values(families).some(Boolean)) return { error: responseData.forbidden('No tienes permisos para consultar estas familias de indicadores.') };
     return {
         ...(includePermissions ? { permissionCodes: new Set(permissionRows.map(row => row.code)) } : {}),
-        families, doctorProfile, canSelectTenant, canSelectOwn: Boolean(doctorProfile),
+        families, doctorProfile, canSelectTenant, canSelectOwn: Boolean(doctorProfile) && !tenantOnly,
         administrativeTeam: mode === 'tenant' && families.administrative && canSelectTenant,
         scope: { mode, doctorProfileId: mode === 'own' ? actor.id_doctor_professional_profile : null,
             idLogin: mode === 'own' ? idLogin : null, doctorName: mode === 'own' ? actor.professional_name : null,

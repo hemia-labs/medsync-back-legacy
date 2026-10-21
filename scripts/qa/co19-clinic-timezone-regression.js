@@ -21,9 +21,9 @@ stub('../../src/util/effectivePermissions', { isTenantAdministrator: async (acto
 const dao = require('../../src/Dao/mysql/appointment.Dao');
 dao.readConfig = async (business, profile, transaction) => {
     assert.equal(business, 'tenant'); assert.equal(profile, null); assert.equal(transaction, transactions.at(-1));
-    return { id: 'general-config', enabled: false, timezone: 'America/Mexico_City', blockedDates: [{ date: '2026-12-25' }] };
+    return { revision: 1, id: 'general-config', enabled: false, timezone: 'America/Mexico_City', blockedDates: [{ date: '2026-12-25' }] };
 };
-const body = { id_login: 'actor', id_business: 'tenant', timezone: 'America/Tijuana' };
+const body = { revision: 1, id_login: 'actor', id_business: 'tenant', timezone: 'America/Tijuana' };
 (async () => {
     admin = false;
     assert.equal((await dao.saveTimezone(body)).status, 403); assert.equal(calls.length, 0);
@@ -33,7 +33,7 @@ const body = { id_login: 'actor', id_business: 'tenant', timezone: 'America/Tiju
     }
     assert.equal(calls.length, 0); assert.equal(transactions.length, 0);
     const response = await dao.saveTimezone({ ...body, enabled: true, blockedDates: [], doctorProfileId: 'other-doctor' });
-    assert.equal(response.status, 200); assert.deepEqual(response.data, { timezone: 'America/Tijuana' });
+    assert.equal(response.status, 200); assert.deepEqual(response.data, { timezone: 'America/Tijuana', revision: 2 });
     assert.equal(transactions.at(-1).finished, 'commit');
     assert.match(calls[0].sql, /FROM business.*FOR UPDATE/);
     const update = calls[1];

@@ -208,6 +208,7 @@ const PERMISSION_LICENSING_CATEGORIES = Object.freeze({
 });
 
 const PERMISSION_RULE_OVERRIDES = Object.freeze({
+    'pulse.view.business': Object.freeze({ module: 'Pulso del consultorio', description: 'Lectura institucional con permisos core completos; sin importes ni auto-grants.', category: 'basic_permission' }),
     'dashboard.operations': Object.freeze({ module: 'Indicadores', description: 'Indicadores operativos autorizados.', category: 'basic_permission' }),
     'dashboard.clinical': Object.freeze({ module: 'Indicadores', description: 'Agregados clinicos; no otorga lectura del expediente.', category: 'clinical_read_permission' }),
     'dashboard.financial': Object.freeze({ module: 'Indicadores', description: 'Indicadores economicos con autorizacion explicita.', category: 'basic_permission' }),
