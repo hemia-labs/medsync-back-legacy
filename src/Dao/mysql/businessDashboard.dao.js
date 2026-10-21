@@ -279,7 +279,7 @@ function safeRoleRows(rows) {
 const unavailable = (reason, fields) => ({ available: false, reason, ...Object.fromEntries(fields.map(key => [key, null])) });
 const ownScope = access => access.scope.mode === 'own';
 const publicAccess = access => ({ families: access.families, scope: access.scope, canSelectTenant: access.canSelectTenant,
-    canSelectOwn: Boolean(access.doctorProfile), administrativeTeam: Boolean(access.administrativeTeam) });
+    canSelectOwn: Boolean(access.canSelectOwn), administrativeTeam: Boolean(access.administrativeTeam) });
 const PRESCRIPTION_ISSUED_AT = "COALESCE(pr.issued_at, CONCAT(pr.issue_date, ' 00:00:00'))";
 
 // An author/capturist is not necessarily the professional responsible for care.

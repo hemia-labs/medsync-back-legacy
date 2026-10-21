@@ -1,0 +1,41 @@
+'use strict';
+const { DAY, instant } = require('./time');
+const VERSIONS = Object.freeze({ contractVersion: '1.1-p1-draft', rulesVersion: 'pulse-r0.2-p1', catalogVersion: 'pulse-core-0.2' });
+const CORE = Object.freeze(['PUL-OP01', 'PUL-OP02', 'PUL-OP03']);
+const SOURCES = ['followUps', 'signatures', 'appointments'];
+const LABELS = { clear: 'Obligaciones evaluadas al dia', no_obligations: 'Sin obligaciones registradas para evaluar', attention: 'Hay obligaciones que requieren atencion', priority: 'Hay una prioridad administrativa', not_evaluable: 'No podemos concluir el estado operativo' };
+function category(n, d, priority, valid) { return priority > 0 ? 'priority' : n > 0 ? 'attention' : !valid ? 'not_evaluable' : d ? 'clear' : 'no_obligations'; }
+function build(input, metadata, previous = null) {
+    const now = metadata.asOf, iso = new Date(now).toISOString(), sources = [], incidents = [], errors = [];
+    const dimensions = CORE.map((id, index) => {
+        const sourceId = SOURCES[index], row = input[sourceId], read = Boolean(row), invalid = read ? Number(row.invalidRecords || 0) : null;
+        const reliable = read && invalid === 0 && (index === 1 || metadata.timeZoneSource === 'configured');
+        const n = read ? Number(row.numerator) : null, d = read ? Number(row.denominator) : null, p = read ? Number(row.priorityCount || 0) : 0;
+        if (read && (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || n < 0 || d < n || p > n)) throw Error('PULSE_INVALID_AGGREGATE');
+        const next = read ? instant(row.nextTransitionAt) : null;
+        sources.push({ id: sourceId, status: read ? 'fresh' : 'failed', readAt: read ? iso : null, lastSuccessfulReadAt: read ? iso : previous?.quality.sources.find(s => s.id === sourceId)?.lastSuccessfulReadAt || null, nextTransitionAt: next && next > now ? new Date(next).toISOString() : null, integrity: reliable ? 'checked' : read ? 'partial' : 'unknown', invalidRecords: invalid, errorCode: read ? invalid ? 'INTEGRITY_PARTIAL' : null : 'SOURCE_UNAVAILABLE' });
+        if (!read) errors.push({ sourceId, code: 'SOURCE_UNAVAILABLE', retryable: true });
+        const age = read && row.oldestAgeDays !== null ? Number(row.oldestAgeDays) : null;
+        for (const [severity, count] of [['priority', p], ['attention', read ? n - p : 0]]) if (count > 0) incidents.push({ id: `${id}:${severity}`, indicatorId: id, severity, count, oldestAgeDays: age, reasonCode: `${id}_${severity.toUpperCase()}`, explanation: 'Obligacion administrativa registrada; no indica gravedad clinica.', action: null });
+        return { id, applicability: !read || !reliable ? 'unknown' : d ? 'applicable' : 'not_applicable', category: category(n, d, p, reliable), numerator: n, denominator: d, rate: reliable && d ? Number((100 * n / d).toFixed(2)) : null, exclusions: { archived: read ? Number(row.excludedArchived || 0) : null }, unit: ['seguimientos', 'solicitudes por rol', 'citas'][index], window: { from: null, to: iso }, oldestAgeDays: age, sample: !read || !reliable ? 'unknown' : !d ? 'none' : d < 20 ? 'small' : 'regular', sourceId, explanation: !read ? 'No pudimos verificar esta fuente; no equivale a cero pendientes.' : !reliable ? 'Se muestran obligaciones conocidas; hay datos que no permiten evaluar toda la dimension.' : ['Programacion pendiente; una cita futura vinculada no demuestra atencion realizada.', 'Ultimas solicitudes efectivas por documento y rol todavia requerido.', 'Agenda pasada completa; sin recorte de antiguedad.'][index], action: null };
+    });
+    const evaluated = sources.filter(s => s.status === 'fresh' && s.integrity === 'checked').length;
+    const preparation = input.preparation || { state: 'unknown', items: [], quality: { classification: 'unavailable', readAt: null, explanation: 'No pudimos comprobar requisitos aplicables.' } };
+    const activity = input.activity || { available: false, counts: null, window: { from: iso, to: iso } };
+    activity.planning = { pendingConfirmationNext24h: input.appointments ? Number(input.appointments.upcoming || 0) : null, inProgressUnresolved: input.appointments ? Number(input.appointments.inProgress || 0) : null, window: { from: iso, to: new Date(now + DAY).toISOString(), fromInclusive: false, toInclusive: true } };
+    const useful = dimensions.some(d => d.numerator !== null) || preparation.items.some(i => i.class === 'necessary' && typeof i.ready === 'boolean') || (activity.available && Object.values(activity.counts || {}).some(n => Number.isFinite(n)));
+    if (!useful) return null;
+    const totalN = dimensions.reduce((n, d) => n + (d.numerator || 0), 0), totalD = dimensions.reduce((n, d) => n + (d.denominator || 0), 0);
+    const operational = incidents.some(i => i.severity === 'priority') ? 'priority' : totalN ? 'attention' : evaluated < 3 ? 'not_evaluable' : totalD ? 'clear' : 'no_obligations';
+    const blocked = preparation.items.find(i => i.class === 'necessary' && i.ready === false);
+    const nexts = sources.map(s => instant(s.nextTransitionAt)).filter(t => t && t > now);
+    const next = nexts.length ? Math.min(...nexts) : null;
+    const lastKnown = (previous ? [...previous.incidents.map(i => ({ id: i.id, indicatorId: i.indicatorId, observedAt: previous.snapshot.calculatedAt, lastSeverity: i.severity, count: i.count, resolution: 'unknown' })), ...previous.lastKnownUnresolved] : []).filter(i => { const source = sources.find(s => s.id === SOURCES[CORE.indexOf(i.indicatorId)]); return source?.status !== 'fresh' || source.integrity !== 'checked'; });
+    const uniqueLast = [...new Map(lastKnown.map(i => [i.id, i])).values()];
+    return { ...VERSIONS, snapshot: { id: metadata.id, serverEpoch: metadata.epoch, sequence: metadata.sequence, generation: metadata.generation, calculatedAt: iso, observationStart: null, observationEnd: iso, timeZone: metadata.timeZone, timeZoneSource: metadata.timeZoneSource, validUntil: new Date(Math.min(now + 30000, next || Infinity)).toISOString(), nextTransitionAt: next ? new Date(next).toISOString() : null, refreshPending: false }, operational: { category: operational, label: LABELS[operational] + (blocked ? `; hay una configuracion que impide ${blocked.tasks.join(', ')}` : ''), reasonCodes: incidents.map(i => i.reasonCode), scopeLabel: 'Todo el consultorio; estado operativo y preparacion con los datos registrados' }, dimensions, incidents, lastKnownUnresolved: uniqueLast, preparation, activity, quality: { coreMask: [...CORE], evaluated, expected: 3, coveragePercent: Number((100 * evaluated / 3).toFixed(2)), classification: evaluated === 3 ? 'complete' : evaluated ? 'partial' : 'unavailable', sources, notMeasured: ['finanzas', 'demanda', 'capacidad_asistencial'], limitations: ['Solo obligaciones registradas; no evalua calidad clinica.', ...(metadata.timeZoneSource === 'fallback' ? ['Zona fallback; no acreditada como configuracion del negocio.'] : [])] }, trend: { comparable: false, reason: 'LIVE_VS_DAILY_CUT', series: [] }, errors, actions: {} };
+}
+function projectVisual(snapshot) {
+    return { category: snapshot.operational.category, preparationState: snapshot.preparation.state, coverage: snapshot.quality.classification === 'complete' && snapshot.errors.length ? 'partial' : snapshot.quality.classification, causes: snapshot.dimensions.map(d => ({ dimensionId: d.id, category: d.category, hasPriority: d.category === 'priority', freshness: snapshot.quality.sources.find(s => s.id === d.sourceId).status })), recovery: null, lastKnownCaution: snapshot.lastKnownUnresolved.some(i => i.lastSeverity === 'priority') ? 'priority' : snapshot.lastKnownUnresolved.length ? 'attention' : null };
+}
+function comparable(a, b) { return ['rulesVersion', 'catalogVersion', 'timeZone', 'policyVersion'].every(k => a[k] === b[k]) && JSON.stringify(a.coreMask) === JSON.stringify(b.coreMask) && JSON.stringify(a.dimensions?.map(d => d.exclusions) || []) === JSON.stringify(b.dimensions?.map(d => d.exclusions) || []) && a.quality?.evaluated === 3 && b.quality?.evaluated === 3 && a.measurementKind === 'daily18' && b.measurementKind === 'daily18'; }
+module.exports = { VERSIONS, CORE, SOURCES, build, projectVisual, comparable };

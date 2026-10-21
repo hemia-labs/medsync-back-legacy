@@ -7,6 +7,7 @@ const Config = require('./config/config');
 const Sequelize = require('./db/Sequelize.connection');
 const SecurityConfig = require('./config/security');
 const { startSaasTrialLifecycleJob } = require('./jobs/saasTrialLifecycle.job');
+const { startBusinessPulseJob } = require('./jobs/businessPulse.job');
 const sanitizePublicTokenLogs = require('./middleware/sanitizePublicTokenLogs.middleware');
 const noStore = require('./middleware/noStore.middleware');
 const { corsCredentialedAllowlist } = require('./middleware/corsCredentialed.middleware');
@@ -73,6 +74,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(corsCredentialedAllowlist());
 app.use('/api', noStore);
 app.use(defaultBodyParser);
+app.use('/api', require('./middleware/pulseInvalidation.middleware').pulseInvalidation);
 
 
 //routes
@@ -93,6 +95,7 @@ app.use('/api/odontogram', require('./routes/mysql/odontogram'));
 app.use('/api/config', require('./routes/mysql/config'));
 app.use('/api/appointment', require('./routes/mysql/appointment'));
 app.use('/api/business/dashboard', require('./routes/mysql/business-dashboard'));
+app.use('/api/business/pulse', require('./routes/mysql/business-pulse'));
 app.use('/api/business', require('./routes/mysql/business'));
 app.use('/api/saas-legal', require('./routes/mysql/saas-legal'));
 app.use('/api/super-admin/saas-legal', require('./routes/mysql/super-admin-saas-legal'));
@@ -128,6 +131,8 @@ app.listen(app.get('port'), () => {
   Sequelize.sync({force: false}).then(() => {
     console.log("Autenticacion correcta a mysql");
     startSaasTrialLifecycleJob();
+    startBusinessPulseJob();
+    require('./services/pulse/runtime').startMetricsLogging();
   }).catch(error => {console.log("Error a conectar mysql", error);});
 });
 

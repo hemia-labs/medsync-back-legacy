@@ -233,7 +233,7 @@ class ClinicalHistoryTemplateDao {
         try {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar plantillas de historia clínica.');
+                return responseData.forbidden('No tienes permiso para consultar plantillas de historia clínica.', { code: 'PERMISSION_DENIED' });
             }
 
             const current = await this.getCurrentTemplateForBusiness(body.id_business);
@@ -254,7 +254,7 @@ class ClinicalHistoryTemplateDao {
             const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE, transaction);
             if (!canManage) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para configurar plantillas de historia clínica.');
+                return responseData.forbidden('No tienes permiso para configurar plantillas de historia clínica.', { code: 'PERMISSION_DENIED' });
             }
 
             const existing = await this.getBusinessTemplate(body.id_business, transaction);
@@ -383,13 +383,13 @@ class ClinicalHistoryTemplateDao {
             const canManage = await this.hasPermission(body.id_login, PERMISSIONS.MANAGE, transaction);
             if (!canManage) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para configurar plantillas de historia clínica.');
+                return responseData.forbidden('No tienes permiso para configurar plantillas de historia clínica.', { code: 'PERMISSION_DENIED' });
             }
 
             const template = await this.getEditableTemplate(body.template_id, body.id_business, transaction);
             if (!template) {
                 await transaction.rollback();
-                return responseData.unauthorized('La plantilla no pertenece al negocio activo o es plantilla del sistema.');
+                return responseData.forbidden('La plantilla no pertenece al negocio activo o es plantilla del sistema.', { code: 'PERMISSION_DENIED' });
             }
 
             const validation = this.validateSchema(body.schema_json);

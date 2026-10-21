@@ -1,0 +1,1328 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MedSync Pulse backend DTO 1.1 P2 local draft",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "status": {
+          "const": 200
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/snapshot"
+            },
+            {
+              "$ref": "#/definitions/incidents"
+            },
+            {
+              "$ref": "#/definitions/history"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            400,
+            401,
+            403,
+            429,
+            500,
+            503
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "null"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "nullableUtc": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/utc"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "category": {
+      "enum": [
+        "clear",
+        "no_obligations",
+        "attention",
+        "priority",
+        "not_evaluable"
+      ]
+    },
+    "numberOrNull": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "window": {
+      "type": "object",
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/definitions/nullableUtc"
+        },
+        "to": {
+          "$ref": "#/definitions/utc"
+        },
+        "fromInclusive": {
+          "type": "boolean"
+        },
+        "toInclusive": {
+          "type": "boolean"
+        }
+      }
+    },
+    "action": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "label",
+            "target"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "target": {
+              "type": "object",
+              "required": [
+                "routeName",
+                "query"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "routeName": {
+                  "enum": [
+                    "pulse-incidents",
+                    "admin",
+                    "home",
+                    "Citas",
+                    "ShowPx"
+                  ]
+                },
+                "query": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean"
+                    ]
+                  }
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "qualityBlock": {
+      "type": "object",
+      "required": [
+        "classification",
+        "readAt",
+        "explanation"
+      ],
+      "properties": {
+        "classification": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "readAt": {
+          "$ref": "#/definitions/nullableUtc"
+        },
+        "explanation": {
+          "type": "string"
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "required": [
+        "id",
+        "applicability",
+        "category",
+        "numerator",
+        "denominator",
+        "rate",
+        "unit",
+        "window",
+        "oldestAgeDays",
+        "sample",
+        "sourceId",
+        "explanation",
+        "action"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "PUL-OP01",
+            "PUL-OP02",
+            "PUL-OP03"
+          ]
+        },
+        "applicability": {
+          "enum": [
+            "applicable",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "category": {
+          "$ref": "#/definitions/category"
+        },
+        "numerator": {
+          "$ref": "#/definitions/numberOrNull"
+        },
+        "denominator": {
+          "$ref": "#/definitions/numberOrNull"
+        },
+        "rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "unit": {
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/definitions/window"
+        },
+        "oldestAgeDays": {
+          "$ref": "#/definitions/numberOrNull"
+        },
+        "sample": {
+          "enum": [
+            "small",
+            "regular",
+            "none",
+            "unknown"
+          ]
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/definitions/action"
+        },
+        "exclusions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "archived"
+          ],
+          "properties": {
+            "archived": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "readAt",
+        "lastSuccessfulReadAt",
+        "nextTransitionAt",
+        "integrity",
+        "invalidRecords",
+        "errorCode"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "fresh",
+            "stale",
+            "failed",
+            "unknown"
+          ]
+        },
+        "readAt": {
+          "$ref": "#/definitions/nullableUtc"
+        },
+        "lastSuccessfulReadAt": {
+          "$ref": "#/definitions/nullableUtc"
+        },
+        "nextTransitionAt": {
+          "$ref": "#/definitions/nullableUtc"
+        },
+        "integrity": {
+          "enum": [
+            "checked",
+            "partial",
+            "unknown"
+          ]
+        },
+        "invalidRecords": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "rulesVersion",
+        "catalogVersion",
+        "context",
+        "snapshot",
+        "operational",
+        "dimensions",
+        "incidents",
+        "lastKnownUnresolved",
+        "preparation",
+        "activity",
+        "quality",
+        "trend",
+        "errors",
+        "actions",
+        "visual"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "1.1-p1-draft"
+        },
+        "rulesVersion": {
+          "const": "pulse-r0.2-p1"
+        },
+        "catalogVersion": {
+          "const": "pulse-core-0.2"
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "businessId",
+            "scope",
+            "authorizationRevision"
+          ],
+          "properties": {
+            "businessId": {
+              "type": "string"
+            },
+            "scope": {
+              "const": "business"
+            },
+            "authorizationRevision": {
+              "type": "string"
+            }
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "required": [
+            "id",
+            "serverEpoch",
+            "sequence",
+            "generation",
+            "calculatedAt",
+            "observationStart",
+            "observationEnd",
+            "timeZone",
+            "timeZoneSource",
+            "validUntil",
+            "nextTransitionAt",
+            "refreshPending",
+            "serverNow"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "serverEpoch": {
+              "type": "string"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "calculatedAt": {
+              "$ref": "#/definitions/utc"
+            },
+            "observationStart": {
+              "$ref": "#/definitions/nullableUtc"
+            },
+            "observationEnd": {
+              "$ref": "#/definitions/utc"
+            },
+            "timeZone": {
+              "type": "string"
+            },
+            "timeZoneSource": {
+              "enum": [
+                "configured",
+                "fallback"
+              ]
+            },
+            "validUntil": {
+              "$ref": "#/definitions/utc"
+            },
+            "nextTransitionAt": {
+              "$ref": "#/definitions/nullableUtc"
+            },
+            "refreshPending": {
+              "type": "boolean"
+            },
+            "serverNow": {
+              "$ref": "#/definitions/utc"
+            }
+          }
+        },
+        "operational": {
+          "type": "object",
+          "required": [
+            "category",
+            "label",
+            "reasonCodes",
+            "scopeLabel"
+          ],
+          "properties": {
+            "category": {
+              "$ref": "#/definitions/category"
+            },
+            "label": {
+              "type": "string"
+            },
+            "reasonCodes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "scopeLabel": {
+              "const": "Todo el consultorio; estado operativo y preparacion con los datos registrados"
+            }
+          }
+        },
+        "dimensions": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/definitions/dimension"
+          }
+        },
+        "incidents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "indicatorId",
+              "severity",
+              "count",
+              "oldestAgeDays",
+              "reasonCode",
+              "explanation",
+              "action"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "indicatorId": {
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "attention",
+                  "priority"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "oldestAgeDays": {
+                "$ref": "#/definitions/numberOrNull"
+              },
+              "reasonCode": {
+                "type": "string"
+              },
+              "explanation": {
+                "type": "string"
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              }
+            }
+          }
+        },
+        "lastKnownUnresolved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "indicatorId",
+              "observedAt",
+              "lastSeverity",
+              "count",
+              "resolution"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "indicatorId": {
+                "type": "string"
+              },
+              "observedAt": {
+                "$ref": "#/definitions/utc"
+              },
+              "lastSeverity": {
+                "enum": [
+                  "attention",
+                  "priority"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "resolution": {
+                "const": "unknown"
+              }
+            }
+          }
+        },
+        "preparation": {
+          "type": "object",
+          "required": [
+            "state",
+            "items",
+            "quality"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "ready",
+                "blocked",
+                "needs_confirmation",
+                "not_applicable",
+                "unknown"
+              ]
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "class",
+                  "ready",
+                  "tasks",
+                  "cause",
+                  "help",
+                  "action"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "class": {
+                    "enum": [
+                      "necessary",
+                      "optional",
+                      "not_applicable",
+                      "needs_confirmation"
+                    ]
+                  },
+                  "ready": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "tasks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "help": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "action": {
+                    "$ref": "#/definitions/action"
+                  }
+                }
+              }
+            },
+            "quality": {
+              "$ref": "#/definitions/qualityBlock"
+            }
+          }
+        },
+        "activity": {
+          "type": "object",
+          "required": [
+            "available",
+            "window",
+            "counts",
+            "planning"
+          ],
+          "properties": {
+            "available": {
+              "type": "boolean"
+            },
+            "window": {
+              "$ref": "#/definitions/window"
+            },
+            "counts": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            },
+            "planning": {
+              "type": "object",
+              "required": [
+                "pendingConfirmationNext24h",
+                "inProgressUnresolved",
+                "window"
+              ],
+              "properties": {
+                "pendingConfirmationNext24h": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "inProgressUnresolved": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "window": {
+                  "$ref": "#/definitions/window"
+                }
+              }
+            }
+          }
+        },
+        "quality": {
+          "type": "object",
+          "required": [
+            "coreMask",
+            "evaluated",
+            "expected",
+            "coveragePercent",
+            "classification",
+            "sources",
+            "notMeasured",
+            "limitations"
+          ],
+          "properties": {
+            "coreMask": {
+              "const": [
+                "PUL-OP01",
+                "PUL-OP02",
+                "PUL-OP03"
+              ]
+            },
+            "evaluated": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "expected": {
+              "const": 3
+            },
+            "coveragePercent": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "classification": {
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable"
+              ]
+            },
+            "sources": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/definitions/source"
+              }
+            },
+            "notMeasured": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "trend": {
+          "type": "object",
+          "required": [
+            "comparable",
+            "reason",
+            "series"
+          ],
+          "properties": {
+            "comparable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sourceId",
+              "code",
+              "retryable"
+            ],
+            "properties": {
+              "sourceId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "actions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/action"
+          }
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "category",
+            "preparationState",
+            "coverage",
+            "causes",
+            "recovery",
+            "lastKnownCaution"
+          ],
+          "properties": {
+            "category": {
+              "$ref": "#/definitions/category"
+            },
+            "preparationState": {
+              "enum": [
+                "ready",
+                "blocked",
+                "needs_confirmation",
+                "not_applicable",
+                "unknown"
+              ]
+            },
+            "coverage": {
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable"
+              ]
+            },
+            "causes": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dimensionId",
+                  "category",
+                  "hasPriority",
+                  "freshness"
+                ],
+                "properties": {
+                  "dimensionId": {
+                    "enum": [
+                      "PUL-OP01",
+                      "PUL-OP02",
+                      "PUL-OP03"
+                    ]
+                  },
+                  "category": {
+                    "$ref": "#/definitions/category"
+                  },
+                  "hasPriority": {
+                    "type": "boolean"
+                  },
+                  "freshness": {
+                    "enum": [
+                      "fresh",
+                      "stale",
+                      "failed",
+                      "unknown"
+                    ]
+                  }
+                }
+              }
+            },
+            "recovery": {
+              "type": "null"
+            },
+            "lastKnownCaution": {
+              "enum": [
+                "priority",
+                "attention",
+                null
+              ]
+            }
+          }
+        }
+      }
+    },
+    "incidents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "items",
+        "totalKnown",
+        "nextCursor",
+        "asOf",
+        "timeZone",
+        "indicatorId",
+        "rulesVersion",
+        "consistency"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "1.1-p1-draft"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "recordId",
+              "patientId",
+              "indicatorId",
+              "severity",
+              "timeBasis",
+              "dueDate",
+              "overdueSince",
+              "oldestAgeDays",
+              "action",
+              "documentId",
+              "appointmentDate",
+              "doctorProfileId",
+              "patientLabel"
+            ],
+            "properties": {
+              "recordId": {
+                "type": "string"
+              },
+              "patientId": {
+                "type": "string"
+              },
+              "indicatorId": {
+                "enum": [
+                  "PUL-OP01",
+                  "PUL-OP02",
+                  "PUL-OP03"
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "attention",
+                  "priority"
+                ]
+              },
+              "timeBasis": {
+                "enum": [
+                  "business_civil_date",
+                  "utc_instant"
+                ]
+              },
+              "dueDate": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "overdueSince": {
+                "$ref": "#/definitions/nullableUtc"
+              },
+              "oldestAgeDays": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "documentId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "appointmentDate": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "doctorProfileId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "patientLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1001
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "indicatorId": {
+                      "const": "PUL-OP01"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "timeBasis": {
+                      "const": "business_civil_date"
+                    },
+                    "dueDate": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "overdueSince": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "timeBasis": {
+                      "const": "utc_instant"
+                    },
+                    "dueDate": {
+                      "type": "null"
+                    },
+                    "overdueSince": {
+                      "$ref": "#/definitions/utc"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "totalKnown": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asOf": {
+          "$ref": "#/definitions/utc"
+        },
+        "timeZone": {
+          "type": "string"
+        },
+        "indicatorId": {
+          "enum": [
+            "PUL-OP01",
+            "PUL-OP02",
+            "PUL-OP03"
+          ]
+        },
+        "rulesVersion": {
+          "const": "pulse-r0.2-p1"
+        },
+        "consistency": {
+          "type": "string"
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "label",
+        "retentionDays",
+        "window",
+        "observation",
+        "series",
+        "missingDates",
+        "gaps",
+        "liveComparable"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "1.1-p1-draft"
+        },
+        "label": {
+          "type": "string"
+        },
+        "retentionDays": {
+          "const": 30
+        },
+        "window": {
+          "const": "[18:00,18:05)"
+        },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "to",
+            "timeZone",
+            "timeZoneSource"
+          ],
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "to": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "timeZone": {
+              "type": "string"
+            },
+            "timeZoneSource": {
+              "enum": [
+                "configured",
+                "fallback"
+              ]
+            }
+          }
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "localDate",
+              "capturedAt",
+              "state",
+              "timeZone",
+              "rulesVersion",
+              "catalogVersion",
+              "quality",
+              "coreMask",
+              "dimensions",
+              "reason",
+              "comparableToPrevious"
+            ],
+            "properties": {
+              "localDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "capturedAt": {
+                "$ref": "#/definitions/nullableUtc"
+              },
+              "state": {
+                "enum": [
+                  "claimed",
+                  "valid",
+                  "partial",
+                  "gap"
+                ]
+              },
+              "timeZone": {
+                "type": "string"
+              },
+              "rulesVersion": {
+                "type": "string"
+              },
+              "catalogVersion": {
+                "type": "string"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evaluated",
+                      "expected",
+                      "classification"
+                    ],
+                    "properties": {
+                      "evaluated": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3
+                      },
+                      "expected": {
+                        "const": 3
+                      },
+                      "classification": {
+                        "enum": [
+                          "complete",
+                          "partial",
+                          "unavailable"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "coreMask": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "dimensions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "numerator",
+                    "denominator",
+                    "rate",
+                    "category",
+                    "exclusions"
+                  ],
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "PUL-OP01",
+                        "PUL-OP02",
+                        "PUL-OP03"
+                      ]
+                    },
+                    "numerator": {
+                      "$ref": "#/definitions/numberOrNull"
+                    },
+                    "denominator": {
+                      "$ref": "#/definitions/numberOrNull"
+                    },
+                    "rate": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "category": {
+                      "$ref": "#/definitions/category"
+                    },
+                    "exclusions": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "archived"
+                      ],
+                      "properties": {
+                        "archived": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "comparableToPrevious": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "missingDates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "gaps": {
+          "type": "string"
+        },
+        "liveComparable": {
+          "const": false
+        }
+      }
+    }
+  }
+}

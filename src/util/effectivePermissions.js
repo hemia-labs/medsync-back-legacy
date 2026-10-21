@@ -41,4 +41,4 @@ async function isTenantAdministrator(idLogin, business, permission) {
     return hasPermission(idLogin, permission, {admin:true,business});
 }
 
-module.exports = { rows, hasPermission, isTenantAdministrator, ADMIN_ROLES };
+module.exports = { rows, hasPermission, isTenantAdministrator, ADMIN_ROLES, joins };
