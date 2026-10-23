@@ -34,7 +34,7 @@ function preparationStatus(state, permissions) {
     }
     const agendaProfileReady = yes(state.profile_exists) && yes(state.profile_active);
     if (codes.has('px.dates')) add('agenda', ownProfile ? 'Tu agenda de atención' : 'Agenda de atención', yes(state.agenda_ready),
-        yes(state.agenda_ready) ? 'Hay horarios activos de atención.' : !yes(state.has_doctor) ? 'Primero se necesita un doctor con perfil activo; después configura sus horarios.' : 'Configura y activa los horarios del doctor. Los cierres generales no sustituyen su agenda.',
+        yes(state.agenda_ready) ? 'Hay horarios activos de atención.' : state.agenda_detail || (!yes(state.has_doctor) ? 'Primero se necesita un doctor con perfil activo; después configura sus horarios.' : 'Configura y activa los horarios del doctor. Los cierres generales no sustituyen su agenda.'),
         ownProfile && !agendaProfileReady ? 'doctor-identity' : 'agenda', ownProfile);
     if (['documents.view','documents.create','documents.sign','documents.config','clinical_history.create','clinical_history.finalize'].some(code => codes.has(code))) add('consent', 'Consentimiento de datos personales sensibles', yes(state.consent_ready),
         yes(state.consent_ready) ? 'Existe un formato activo con versión vigente para generar documentos nuevos.' : 'Prepara y activa este formato antes de generar el consentimiento del paciente.', 'documents', codes.has('documents.config'));
