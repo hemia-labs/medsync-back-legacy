@@ -22,7 +22,10 @@ class BusinessController extends httpResponseHelper {
     }
 
     preparation = async(req, res) => {
-        const response = await PreparationDao.current(getBusinessIdFromToken(req.tokenDecode), req.tokenDecode && req.tokenDecode.id_login);
+        const query = req.query || {};
+        const response = await PreparationDao.current(getBusinessIdFromToken(req.tokenDecode), req.tokenDecode && req.tokenDecode.id_login, {
+            agenda:query.agenda === '1', clinicalHistory:query.clinical_history === '1', doctorProfileId:query.doctor_profile_id
+        });
         res.set('Cache-Control', 'no-store');
         res.status(response.status).send(response);
     }

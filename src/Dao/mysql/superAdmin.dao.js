@@ -1783,6 +1783,16 @@ class SuperAdminDao {
                     return responseData.bad_request('El telefono del administrador inicial es obligatorio.');
                 }
 
+                if (!adminEmail) {
+                    await transaction.rollback();
+                    return responseData.bad_request('El correo del administrador es obligatorio como dato de contacto.');
+                }
+
+                if (adminEmail.length > 254 || !isValidEmail(adminEmail)) {
+                    await transaction.rollback();
+                    return responseData.bad_request('El correo del administrador no tiene un formato valido.');
+                }
+
                 if (!adminPassword || adminPassword.length < 8) {
                     await transaction.rollback();
                     return responseData.bad_request('La contrasena del administrador inicial debe tener al menos 8 caracteres.');
@@ -1821,7 +1831,7 @@ class SuperAdminDao {
                       WHERE active = 1
                         AND (
                             telephone COLLATE ${TENANT_COLLATION} = :_telephone COLLATE ${TENANT_COLLATION}
-                            OR (:_email IS NOT NULL AND email COLLATE ${TENANT_COLLATION} = :_email COLLATE ${TENANT_COLLATION})
+                            OR email COLLATE ${TENANT_COLLATION} = :_email COLLATE ${TENANT_COLLATION}
                         )
                       LIMIT 1`,
                     {
