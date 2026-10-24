@@ -6,7 +6,7 @@ const { SESv2Client, TestRenderEmailTemplateCommand } = require('@aws-sdk/client
 const EmailService = require('../../src/services/email/email.service');
 async function main() {
     if (!process.argv.includes('--aws-render')) {
-        console.log('Use --aws-render to check the three published templates with synthetic variables. No email is sent.');
+        console.log('Use --aws-render to check the two published templates with synthetic variables. No email is sent.');
         return;
     }
     const ready = EmailService.initialize();
@@ -19,7 +19,6 @@ async function main() {
         doctorName: '', expiresAt: '20 de octubre de 2026, 18:00 (CDMX)', publicUrl: 'https://example.invalid/firma/qa-render' };
     const cases = [
         [process.env.EMAIL_PASSWORD_RESET_TEMPLATE, { code: '048291', ttlMinutes: 10, html: { code: '048291', ttlMinutes: '10' } }],
-        [process.env.EMAIL_PASSWORD_CHANGED_TEMPLATE, {}],
         [process.env.EMAIL_DOCUMENT_SIGNATURE_TEMPLATE, { ...signature, html: { ...signature } }]
     ];
     const checks = [];

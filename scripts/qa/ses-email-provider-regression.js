@@ -18,7 +18,7 @@ const base = {
     AWS_ACCESS_KEY_ID:synthetic.accessKey,AWS_SECRET_ACCESS_KEY:synthetic.secret,
     EMAIL_FROM_NAME:'MedSync QA',EMAIL_FROM_AUTH:'auth@example.test',EMAIL_FROM_NOTIFICATIONS:'notifications@example.test',EMAIL_REPLY_TO:'support@example.test',
     EMAIL_CONFIGURATION_SET_AUTH:'qa-auth-set',EMAIL_CONFIGURATION_SET_TRANSACTIONAL:'qa-transactional-set',
-    EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_PASSWORD_CHANGED_TEMPLATE:'Exact-Changed-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
+    EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
     SMTP_HOST:'relay.qa.invalid',SMTP_PORT:'2525',SMTP_SECURE:'false',SMTP_USER:'synthetic-smtp-user',SMTP_PASSWORD:'synthetic-smtp-password',EMAIL_FROM:'legacy@example.test'
 };
 const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','EMAIL_REGISTRATION_CODE_TEMPLATE'];
@@ -69,6 +69,12 @@ function assertTemplateOnly(request) {
     assert.equal(request.Destination.ToAddresses.length,1);assert.deepEqual(Object.keys(request.Destination),['ToAddresses']);
     assert.equal(request.Content.Template.TemplateArn,undefined);assert.equal(request.Content.Template.TemplateContent,undefined);
     assert.equal(request.Content.Simple,undefined);assert.equal(request.Content.Raw,undefined);
+}
+function assertSimpleOnly(request) {
+    assert.deepEqual(Object.keys(request.Content),['Simple'],'Locally rendered messages must send their subject, text and HTML through SES Simple content');
+    assert.equal(request.Content.Template,undefined);assert.equal(request.Content.Raw,undefined);
+    assert.deepEqual(Object.keys(request.Content.Simple),['Subject','Body']);
+    assert.deepEqual(Object.keys(request.Content.Simple.Body),['Text','Html']);
 }
 function decodeEscapedText(value) {
     return String(value).replace(/&(amp|lt|gt|quot|#0*39|#x0*27);/gi,(_match,key)=>({amp:'&',lt:'<',gt:'>',quot:'"'}[key.toLowerCase()] || "'"));
@@ -125,11 +131,14 @@ async function credentials(config) {return typeof config.credentials==='function
         }
         assertNoSecretLogs();
     });
-    await check('password-changed ignores supplied template data and shares the configured auth channel',async()=>{
+    await check('password-changed uses the branded local email and shares the configured auth channel',async()=>{
         const service=configure();
         assert.equal((await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{code:'004200',publicUrl:synthetic.privateLink,from:'attacker@example.test'}})).success,true);
-        assertTemplateOnly(input());assert.equal(input().Content.Template.TemplateName,'Exact-Changed-Template-QA');assert.equal(input().ConfigurationSetName,'qa-auth-set');
-        assert.match(input().FromEmailAddress,/auth@example\.test/);assert.deepEqual(data(),{});assertNoSecretLogs();
+        assertSimpleOnly(input());assert.equal(input().ConfigurationSetName,'qa-auth-set');
+        assert.match(input().FromEmailAddress,/auth@example\.test/);assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
+        assert.match(input().Content.Simple.Body.Html.Data,/Tu contraseña fue actualizada/);
+        assert.match(input().Content.Simple.Body.Html.Data,/background:#f4f8f7/);
+        assert.doesNotMatch(input().Content.Simple.Body.Html.Data,/004200|offline-secret-token|attacker@example\.test/);assertNoSecretLogs();
     });
     await check('document signature sends seven plain values plus seven escaped HTML copies, HTTPS links and the transactional channel',async()=>{
         const service=configure();
@@ -171,7 +180,7 @@ async function credentials(config) {return typeof config.credentials==='function
             {EMAIL_FROM_AUTH:'auth@example.test\r\n'},{EMAIL_FROM_NOTIFICATIONS:'\r\nnotifications@example.test'},
             {EMAIL_FROM_NAME:'MedSync\r\nInjectedHeader'},{EMAIL_FROM_NAME:'MedSync\r\n'},{EMAIL_REPLY_TO:'support@example.test\r\nInjectedHeader'},{EMAIL_REPLY_TO:'support@example.test\r\n'},
             {EMAIL_CONFIGURATION_SET_AUTH:undefined},{EMAIL_CONFIGURATION_SET_TRANSACTIONAL:undefined},
-            {EMAIL_CONFIGURATION_SET_AUTH:'auth\r\nInjectedHeader'},{EMAIL_PASSWORD_RESET_TEMPLATE:undefined},{EMAIL_PASSWORD_CHANGED_TEMPLATE:undefined},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:undefined},
+            {EMAIL_CONFIGURATION_SET_AUTH:'auth\r\nInjectedHeader'},{EMAIL_PASSWORD_RESET_TEMPLATE:undefined},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:undefined},
             {EMAIL_PASSWORD_RESET_TEMPLATE:'Reset\r\nInjectedHeader'},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA\r\n'},{EMAIL_CONFIGURATION_SET_AUTH:'qa-auth-set\r\n'}
         ];
         for(const override of invalidConfigurations) {
@@ -203,7 +212,7 @@ async function credentials(config) {return typeof config.credentials==='function
         configure();let mail=require(mailPath);
         assert.deepEqual(await mail.SendPasswordResetCode('patient@example.test',{code:'004200',ttlMinutes:14}),{process:true});
         assert.equal(input().Content.Template.TemplateName,'Exact-Reset-Template-QA');assert.deepEqual(data(),{code:'004200',ttlMinutes:14,html:{code:'004200',ttlMinutes:'14'}});
-        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true});assert.equal(input().Content.Template.TemplateName,'Exact-Changed-Template-QA');assert.deepEqual(data(),{});
+        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true});assertSimpleOnly(input());assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
         const count=commands.length;assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:false});assert.equal(commands.length,count,'Untyped generic mail must not be sent through SES');
         configure({EMAIL_PROVIDER:'smtp'});mail=require(mailPath);
         assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:true});

@@ -3,6 +3,7 @@ require('../../config/env');
 const NodemailerProvider = require('./providers/nodemailer.provider');
 const SesProvider = require('./providers/ses.provider');
 const renderTransactionalEmail = require('./transactionalEmail.renderer');
+const { logEmailError } = require('./emailErrorDiagnostics');
 
 function normalizeProviderName() {
     return String(process.env.EMAIL_PROVIDER || 'smtp').trim().toLowerCase();
@@ -80,6 +81,7 @@ class EmailService {
                 : message;
             return await provider.send(payload);
         } catch (error) {
+            logEmailError(error, { provider: normalizeProviderName(), type: message && message.type });
             return normalizeError(error);
         }
     }

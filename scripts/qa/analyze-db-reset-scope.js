@@ -83,6 +83,7 @@ async function dashboardRelevantCounts() {
     patientTreatments: await countRows('patient_treatment'),
     sessions: await countRows('session'),
     refreshTokens: await countRows('refresh_token'),
+    passwordChangeTokens: await countRows('auth_password_change_tokens'),
     passwordResetTokens: await countRows('auth_password_reset_tokens')
   };
 

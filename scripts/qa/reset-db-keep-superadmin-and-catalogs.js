@@ -26,6 +26,7 @@ async function totals() {
     'patient_treatment',
     'session',
     'refresh_token',
+    'auth_password_change_tokens',
     'auth_password_reset_tokens',
     'admin_audit_log'
   ];

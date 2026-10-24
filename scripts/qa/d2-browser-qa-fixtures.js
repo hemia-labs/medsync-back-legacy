@@ -160,6 +160,7 @@ const REQUIRED_TABLES = [
 ];
 
 const OPTIONAL_CLEANUP_TABLES = [
+  'auth_password_change_tokens',
   'auth_password_reset_tokens',
   'clinical_history_events',
   'patient_document_events',
@@ -824,6 +825,7 @@ async function removeFixtures(transaction = null) {
   await queryIfTable('query', 'DELETE FROM `query` WHERE id_person IN (:personIds) OR id_query LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('address', 'DELETE FROM address WHERE id_person IN (:personIds) OR id_address LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('person', 'DELETE FROM person WHERE id_person IN (:personIds) OR id_person LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
+  await queryIfTable('auth_password_change_tokens', 'DELETE FROM auth_password_change_tokens WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('auth_password_reset_tokens', 'DELETE FROM auth_password_reset_tokens WHERE id_login IN (:loginIds) OR phone_normalized IN (:phones)', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('refresh_token', 'DELETE FROM refresh_token WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('session', 'DELETE FROM `session` WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
