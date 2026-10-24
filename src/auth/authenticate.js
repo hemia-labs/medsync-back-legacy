@@ -5,6 +5,7 @@ const configjwt = require('../config/jwt');
 const AuthCookieConfig = require('../config/authCookie.config');
 const { getHeaders } = require('../util/headers');
 const activePrincipal = require('./activePrincipal');
+const { enforcePendingActivation } = require('./pendingActivation');
 
 //Colocar en false para productivo
 const Istest = false;
@@ -84,6 +85,7 @@ var Auth = require('express').Router();
             res.status(response.status).send(response); return;
           }
           req.tokenDecode = principal;
+          if (enforcePendingActivation(req, res)) return;
           next();
         } catch (error) { next(error); }
       } else {
@@ -121,7 +123,10 @@ var Auth = require('express').Router();
       }
       try {
         const principal = await activePrincipal(decoded);
-        if (principal) req.tokenDecode = principal;
+        if (principal) {
+          req.tokenDecode = principal;
+          if (enforcePendingActivation(req, res)) return;
+        }
         else {
           req.authTokenInvalid = true;
           req.authTokenError = 'inactive_session';

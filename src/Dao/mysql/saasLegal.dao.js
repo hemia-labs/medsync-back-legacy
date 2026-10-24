@@ -123,33 +123,59 @@ class SaasLegalDao {
                 title: row.title, version_number: Number(row.version_number), version: versionDto(row) })) });
         } catch(_) { return unavailable(); }
     }
+    async registrationVersions(acceptances, transaction) {
+        if (!transaction) throw Error('LEGAL_TRANSACTION_REQUIRED');
+        const versions = [];
+        // Same lock order for every registration; publication locks the same heads.
+        for (const key of ['privacy_notice', 'terms_conditions']) {
+            const requested = acceptances.find(item => item.documentKey === key);
+            const head = await this.head(key, transaction, true);
+            if (!head || !head.current_version_id) return fail(503, 'LEGAL_UNAVAILABLE', 'Los documentos iniciales aun no estan publicados.');
+            if (!requested || requested.acknowledged !== true || requested.versionId !== head.current_version_id)
+                return fail(409, 'LEGAL_VERSION_STALE', 'Consulta y acepta las versiones vigentes.');
+            const version = (await this.query(`SELECT * FROM saas_legal_versions WHERE id_version=:version
+                AND id_document=:document AND published_at<=UTC_TIMESTAMP(6) LIMIT 1`,
+            {version:requested.versionId, document:head.id_document}, transaction))[0];
+            if (!version || head.acceptance_scope !== 'user' || version.acceptance_scope !== 'user'
+                || !meaningfulDocumentContent(version.content_html) || legalHash(key, version) !== version.content_hash)
+                return fail(503, 'LEGAL_UNAVAILABLE', 'No hay una version inicial valida disponible.');
+            versions.push({documentKey:key, versionId:version.id_version});
+        }
+        return ok({versions});
+    }
     async accept(context, source) {
         const validation = validateAcceptance(source);
+        if (!validation.isValid) return badFields(validation.fieldErrors);
+        return this.transaction(transaction => this.acceptInTransaction(context, source, transaction));
+    }
+    async acceptInTransaction(context, source, transaction) {
+        if (!transaction) throw Error('LEGAL_TRANSACTION_REQUIRED');
+        const validation = validateAcceptance(source);
         if(!validation.isValid) return badFields(validation.fieldErrors);
-        return this.transaction(async transaction => {
-            const versions = await this.query('SELECT * FROM saas_legal_versions WHERE id_version=:version LIMIT 1', { version: source.id_version }, transaction);
-            const version = versions[0];
-            if(!version) return fail(404, 'LEGAL_DOCUMENT_NOT_FOUND', 'La versión seleccionada no está publicada.');
-            const head = (await this.query('SELECT * FROM saas_legal_documents WHERE id_document=:document LIMIT 1 FOR UPDATE', { document: version.id_document }, transaction))[0];
-            if(!head || !isDocumentKey(head.document_key)) return fail(404, 'LEGAL_DOCUMENT_NOT_FOUND', 'El documento legal no está disponible.');
-            const actor = await this.actor(context, transaction, true);
-            if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'La cuenta ya no pertenece al consultorio activo.');
-            if(head.current_version_id !== version.id_version) return fail(409, 'LEGAL_VERSION_STALE', 'Este documento tiene una nueva versión. Consúltala antes de aceptar.');
-            const scope = DOCUMENT_SCOPES[head.document_key];
-            if(scope === 'business' && !['admin', 'business_admin'].includes(actor.role)) return fail(403, 'LEGAL_ADMIN_REQUIRED', 'El contrato del consultorio debe aceptarlo su administrador.');
-            const values = { version: version.id_version, business: context.id_business, subject: scope === 'business' ? 'business' : 'user:' + actor.id_login };
-            const existing = await this.query(`SELECT * FROM saas_legal_acceptances WHERE id_version=:version
-                AND ${eq('id_business', ':business')} AND subject_key=:subject LIMIT 1 FOR UPDATE`, values, transaction);
-            if(existing[0]) return ok({ acceptance: acceptanceDto(existing[0]), already_accepted: true }, 'Esta versión ya estaba aceptada.');
-            await this.query(`INSERT INTO saas_legal_acceptances (id_acceptance,id_version,id_business,subject_key,acceptance_scope,
-                    accepted_by_id,accepted_by_name,accepted_at,content_hash)
-                VALUES (:id,:version,:business,:subject,:scope,:actor,:name,UTC_TIMESTAMP(6),:hash)`,
-            { ...values, id: uuid(), scope, actor: actor.id_login, name: actor.name || 'Usuario del consultorio', hash: version.content_hash }, transaction, QueryTypes.INSERT);
-            const acceptance = (await this.query(`SELECT * FROM saas_legal_acceptances WHERE id_version=:version
-                AND ${eq('id_business', ':business')} AND subject_key=:subject LIMIT 1`, values, transaction))[0];
-            if(!acceptance) throw Error('Acceptance readback unavailable');
-            return ok({ acceptance: acceptanceDto(acceptance), already_accepted: false }, 'Aceptación registrada para esta versión.');
-        });
+
+        const versions = await this.query('SELECT * FROM saas_legal_versions WHERE id_version=:version LIMIT 1', { version: source.id_version }, transaction);
+        const version = versions[0];
+        if(!version) return fail(404, 'LEGAL_DOCUMENT_NOT_FOUND', 'La versión seleccionada no está publicada.');
+        const head = (await this.query('SELECT * FROM saas_legal_documents WHERE id_document=:document LIMIT 1 FOR UPDATE', { document: version.id_document }, transaction))[0];
+        if(!head || !isDocumentKey(head.document_key)) return fail(404, 'LEGAL_DOCUMENT_NOT_FOUND', 'El documento legal no está disponible.');
+        const actor = await this.actor(context, transaction, true);
+        if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'La cuenta ya no pertenece al consultorio activo.');
+        if(head.current_version_id !== version.id_version) return fail(409, 'LEGAL_VERSION_STALE', 'Este documento tiene una nueva versión. Consúltala antes de aceptar.');
+        const scope = DOCUMENT_SCOPES[head.document_key];
+        if(scope === 'business' && !['admin', 'business_admin'].includes(actor.role)) return fail(403, 'LEGAL_ADMIN_REQUIRED', 'El contrato del consultorio debe aceptarlo su administrador.');
+        const values = { version: version.id_version, business: context.id_business, subject: scope === 'business' ? 'business' : 'user:' + actor.id_login };
+        const existing = await this.query(`SELECT * FROM saas_legal_acceptances WHERE id_version=:version
+            AND ${eq('id_business', ':business')} AND subject_key=:subject LIMIT 1 FOR UPDATE`, values, transaction);
+        if(existing[0]) return ok({ acceptance: acceptanceDto(existing[0]), already_accepted: true }, 'Esta versión ya estaba aceptada.');
+        await this.query(`INSERT INTO saas_legal_acceptances (id_acceptance,id_version,id_business,subject_key,acceptance_scope,
+                accepted_by_id,accepted_by_name,accepted_at,content_hash)
+            VALUES (:id,:version,:business,:subject,:scope,:actor,:name,UTC_TIMESTAMP(6),:hash)`,
+        { ...values, id: uuid(), scope, actor: actor.id_login, name: actor.name || 'Usuario del consultorio', hash: version.content_hash }, transaction, QueryTypes.INSERT);
+        const acceptance = (await this.query(`SELECT * FROM saas_legal_acceptances WHERE id_version=:version
+            AND ${eq('id_business', ':business')} AND subject_key=:subject LIMIT 1`, values, transaction))[0];
+        if(!acceptance) throw Error('Acceptance readback unavailable');
+        return ok({ acceptance: acceptanceDto(acceptance), already_accepted: false }, 'Aceptación registrada para esta versión.');
+
     }
     async adminList(context) {
         try {

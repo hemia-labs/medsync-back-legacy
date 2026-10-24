@@ -4,6 +4,7 @@ const express = require('express');
 const MB = 1024 * 1024;
 const GENERAL_LIMIT = MB;
 const AUTH_LIMIT = 32 * 1024;
+const REGISTRATION_PATH = /^\/api\/(?:auth\/register|account\/(?:contact-verifications(?:\/confirm)?|activation\/contact))\/?$/i;
 
 // Large bodies are deferred to route middleware, AFTER authentication, CSRF
 // and tenant checks. Public signing has its own rate/token gate before parsing.
@@ -46,6 +47,7 @@ function parseError(error, res, next, bytes) {
         code = 'PAYLOAD_INVALID';
         message = 'No fue posible leer la solicitud. Revisa los datos e intenta de nuevo.';
     } else return next(error);
+    if (REGISTRATION_PATH.test(String(res.req?.originalUrl || '').split('?')[0])) return res.status(status).json({code,message});
     return res.status(status).json({ status, success: false, code, data: null, message, limitBytes: bytes });
 }
 
@@ -67,6 +69,9 @@ function parse(req, res, next, bytes) {
 function defaultBodyParser(req, res, next) {
     if (policyFor(req)) return next();
     const path = String(req.originalUrl || req.url || '').split('?')[0];
+    if (REGISTRATION_PATH.test(path)) {
+        return parse(req, res, next, 8 * 1024);
+    }
     return parse(req, res, next, /^\/api\/auth(?:\/|$)/i.test(path) ? AUTH_LIMIT : GENERAL_LIMIT);
 }
 

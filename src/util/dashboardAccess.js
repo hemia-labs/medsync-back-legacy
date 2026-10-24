@@ -68,11 +68,11 @@ const seedSql = `INSERT IGNORE INTO business_role_permission (id_business, id_ro
           AND NOT EXISTS (SELECT 1 FROM doctor_professional_profile d JOIN login colleague ON colleague.id_login = d.id_login AND colleague.id_business = d.id_business
               WHERE colleague.id_rol = l.id_rol AND colleague.id_business = l.id_business AND colleague.active = 1 AND d.is_active = 1)))`;
 
-async function seedDashboardPermissions(business, login = null, transaction = null) {
+async function seedDashboardPermissions(business, login = null, transaction = null, database = sequelize) {
     if (!business) return;
-    await sequelize.query(receptionSafetySql, { replacements: { business, login }, transaction });
-    await sequelize.query(assistantTreatmentSql, { replacements: { business, login }, transaction });
-    return sequelize.query(seedSql, { replacements: { business, login }, transaction });
+    await database.query(receptionSafetySql, { replacements: { business, login }, transaction });
+    await database.query(assistantTreatmentSql, { replacements: { business, login }, transaction });
+    return database.query(seedSql, { replacements: { business, login }, transaction });
 }
 
 // The historical reception role inherited full clinical draft access. Narrow only

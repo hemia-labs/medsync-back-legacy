@@ -17,9 +17,9 @@ const seedSql = `INSERT IGNORE INTO business_role_permission (id_business, id_ro
             LEFT JOIN business_role_permission chb ON chb.id_business = l.id_business AND chb.id_rol = l.id_rol AND chb.id_cat_permission = ch.id_cat_permission
             WHERE ch.code = 'clinical_history.edit_draft' AND ch.active = 1 AND COALESCE(chb.active, chr.active, 0) = 1)))`;
 
-async function seedTracingPermissions(business, login = null, transaction = null) {
+async function seedTracingPermissions(business, login = null, transaction = null, database = sequelize) {
     if (!business) return;
-    return sequelize.query(seedSql, { replacements: { business, login }, transaction });
+    return database.query(seedSql, { replacements: { business, login }, transaction });
 }
 
 module.exports = { seedTracingPermissions, seedSql };

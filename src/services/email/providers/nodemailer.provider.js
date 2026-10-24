@@ -41,6 +41,7 @@ function validateConfig(config) {
 }
 
 class NodemailerProvider {
+    initialize() { validateConfig(this.config); }
     constructor() {
         this.config = smtpConfig();
     }

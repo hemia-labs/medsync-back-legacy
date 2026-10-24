@@ -1,3 +1,4 @@
+const { BusinessProvisioning } = require('../../services/registration/businessProvisioning');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
@@ -21,8 +22,6 @@ const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
 const LicenseUsageDao = require('./licenseUsage.dao');
 const { getDashboardMetrics } = require('./superAdminDashboard.dao');
 const SecurityConfig = require('../../config/security');
-const { seedTracingPermissions } = require('../../util/tracingPermissions');
-const { seedDashboardPermissions } = require('../../util/dashboardAccess');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -1695,6 +1694,7 @@ class SuperAdminDao {
     }
 
     async createBusiness(payload = {}, actor = {}) {
+        const provisioning = new BusinessProvisioning(sequelize);
         const transaction = await sequelize.transaction();
         let businessCreated = null;
         let adminCreated = null;
@@ -1851,119 +1851,24 @@ class SuperAdminDao {
             }
 
             const idBusiness = uuidv4();
-            await sequelize.query(
-                `INSERT INTO business (
-                    id_business,
-                    name,
-                    legal_name,
-                    slug,
-                    email,
-                    phone,
-                    address,
-                    status,
-                    subscription_status,
-                    trial_starts_at,
-                    trial_ends_at,
-                    current_period_starts_at,
-                    current_period_ends_at,
-                    plan,
-                    active,
-                    created_at,
-                    created_by
-                ) VALUES (
-                    :_id_business,
-                    :_name,
-                    :_legal_name,
-                    :_slug,
-                    :_email,
-                    :_phone,
-                    :_address,
-                    :_status,
-                    :_subscription_status,
-                    CASE WHEN :_subscription_status = 'trial' THEN COALESCE(:_trial_starts_at, NOW()) ELSE NULL END,
-                    CASE
-                        WHEN :_subscription_status != 'trial' THEN NULL
-                        WHEN :_trial_ends_at IS NOT NULL THEN :_trial_ends_at
-                        ELSE DATE_ADD(COALESCE(:_trial_starts_at, NOW()), INTERVAL :_trial_days DAY)
-                    END,
-                    CASE WHEN :_subscription_status = 'active' THEN NOW() ELSE NULL END,
-                    NULL,
-                    :_plan,
-                    :_active,
-                    NOW(),
-                    :_created_by
-                )`,
-                {
-                    replacements: {
-                        _id_business: idBusiness,
-                        _name: businessName,
-                        _legal_name: normalizeOptionalString(businessInput.legalName || businessInput.legal_name),
-                        _slug: slug,
-                        _email: normalizeOptionalString(businessInput.email),
-                        _phone: normalizeOptionalString(businessInput.phone),
-                        _address: normalizeOptionalString(businessInput.address),
-                        _status: status,
-                        _subscription_status: subscriptionStatus,
-                        _trial_starts_at: trialStartsAt || null,
-                        _trial_ends_at: trialEndsAt || null,
-                        _trial_days: subscriptionStatus === 'trial' ? trialDays : DEFAULT_TRIAL_DAYS,
-                        _plan: plan,
-                        _active: active,
-                        _created_by: actor.actorLoginId || null
-                    },
-                    type: QueryTypes.INSERT,
-                    transaction
-                }
-            );
-
-            await sequelize.query(
-                `INSERT INTO appointment_config (
-                    id_appointment_config, id_business, enabled, default_appointment_duration, timezone, active, created_at, created_by
-                ) VALUES (
-                    :_id_appointment_config, :_id_business, 1, 30, 'America/Mexico_City', 1, NOW(), :_created_by
-                )`,
-                {
-                    replacements: {
-                        _id_appointment_config: `${idBusiness}-default`,
-                        _id_business: idBusiness,
-                        _created_by: actor.actorLoginId || null
-                    },
-                    type: QueryTypes.INSERT,
-                    transaction
-                }
-            );
-
-            const defaultTheme = await sequelize.query(
-                `SELECT id_cat_ui_theme
-                   FROM cat_ui_theme
-                  WHERE code = 'medical-blue'
-                    AND active = 1
-                  LIMIT 1`,
-                {
-                    type: QueryTypes.SELECT,
-                    transaction
-                }
-            );
-
-            if (defaultTheme.length) {
-                await sequelize.query(
-                    `INSERT INTO ui_theme_configuration (
-                        id_ui_theme_configuration, id_business, id_cat_ui_theme, active, created_by, created_at
-                    ) VALUES (
-                        :_id_ui_theme_configuration, :_id_business, :_id_cat_ui_theme, 1, :_created_by, NOW()
-                    )`,
-                    {
-                        replacements: {
-                            _id_ui_theme_configuration: uuidv4(),
-                            _id_business: idBusiness,
-                            _id_cat_ui_theme: defaultTheme[0].id_cat_ui_theme,
-                            _created_by: actor.actorLoginId || null
-                        },
-                        type: QueryTypes.INSERT,
-                        transaction
-                    }
-                );
-            }
+            await provisioning.business({
+                _id_business: idBusiness,
+                _name: businessName,
+                _legal_name: normalizeOptionalString(businessInput.legalName || businessInput.legal_name),
+                _slug: slug,
+                _email: normalizeOptionalString(businessInput.email),
+                _phone: normalizeOptionalString(businessInput.phone),
+                _address: normalizeOptionalString(businessInput.address),
+                _status: status,
+                _subscription_status: subscriptionStatus,
+                _trial_starts_at: trialStartsAt || null,
+                _trial_ends_at: trialEndsAt || null,
+                _trial_days: subscriptionStatus === 'trial' ? trialDays : DEFAULT_TRIAL_DAYS,
+                _plan: plan,
+                _active: active,
+                _created_by: actor.actorLoginId || null
+            }, transaction);
+            const defaults = await provisioning.defaults(idBusiness, actor.actorLoginId || null, transaction);
 
             businessCreated = {
                 id_business: idBusiness,
@@ -1984,31 +1889,16 @@ class SuperAdminDao {
                 const idLogin = uuidv4();
                 const passwordHash = await encript(adminInput.password);
 
-                await sequelize.query(
-                    `INSERT INTO login (
-                        id_login, id_business, id_rol, name, email, telephone, password, locked, active, created_at, created_by
-                    ) VALUES (
-                        :_id_login, :_id_business, :_id_rol, :_name, :_email, :_telephone, :_password, 0, 1, NOW(), :_created_by
-                    )`,
-                    {
-                        replacements: {
-                            _id_login: idLogin,
-                            _id_business: idBusiness,
-                            _id_rol: adminRole.id_rol,
-                            _name: normalizeString(adminInput.name),
-                            _email: adminEmail,
-                            _telephone: adminTelephone,
-                            _password: passwordHash,
-                            _created_by: actor.actorLoginId || null
-                        },
-                        type: QueryTypes.INSERT,
-                        transaction
-                    }
-                );
-
-                await seedDashboardPermissions(idBusiness, idLogin, transaction);
-
-                await seedTracingPermissions(idBusiness, idLogin, transaction);
+                await provisioning.administrator({
+                    _id_login: idLogin,
+                    _id_business: idBusiness,
+                    _id_rol: adminRole.id_rol,
+                    _name: normalizeString(adminInput.name),
+                    _email: adminEmail,
+                    _telephone: adminTelephone,
+                    _password: passwordHash,
+                    _created_by: actor.actorLoginId || null
+                }, transaction);
                 adminCreated = {
                     id_login: idLogin,
                     name: normalizeString(adminInput.name),
@@ -2082,7 +1972,7 @@ class SuperAdminDao {
                     plan: businessCreated.plan,
                     default_operational_config: {
                         appointment_config: true,
-                        ui_theme: Boolean(defaultTheme.length)
+                        ui_theme: defaults.themeCreated
                     }
                 }
             });
