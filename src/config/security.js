@@ -13,6 +13,7 @@ const DEFAULT_CORS_ALLOWED_HEADERS = [
   'Content-Type',
   'Accept',
   'X-CSRF-Token',
+  'Idempotency-Key',
   'X-Requested-With',
   'Authorization',
   'X-API-KEY',
@@ -491,10 +492,11 @@ function validateStartupConfig(logger = console) {
     }
 
     const requiredCorsHeaders = ['Content-Type', 'Accept', 'X-CSRF-Token', 'X-Requested-With'];
+    if (process.env.REGISTRATION_ENABLED === 'true') requiredCorsHeaders.push('Idempotency-Key');
     const missingCorsHeaders = requiredCorsHeaders.filter((header) => !hasListValue(corsState.allowedHeaders, header));
 
     if (missingCorsHeaders.length > 0) {
-      throw new Error('[SECURITY CONFIG] D2 CORS preflight must allow Content-Type, Accept, X-CSRF-Token and X-Requested-With.');
+      throw new Error(`[SECURITY CONFIG] D2 CORS preflight is missing required headers: ${missingCorsHeaders.join(', ')}.`);
     }
 
     const missingCorsMethods = DEFAULT_CORS_ALLOWED_METHODS.filter((method) => !hasListValue(corsState.allowedMethods, method));

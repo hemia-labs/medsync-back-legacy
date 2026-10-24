@@ -7,6 +7,14 @@ const passwordChangedEmailTemplate = require('./templates/passwordChangedEmail.t
 const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 module.exports = function renderTransactionalEmail(type, variables = {}) {
+    if (type === 'registration-contact-code') {
+        if (!/^[0-9]{6}$/.test(variables.code || '')) throw new Error('EMAIL_VERIFICATION_CODE_INVALID');
+        return {
+            subject: 'Verifica tu correo en MedSync',
+            text: `Tu codigo para verificar este correo en MedSync es: ${variables.code}. Vence en 10 minutos. No compartas el codigo. Si no creaste una cuenta, ignora este mensaje.`,
+            html: `<p>Verifica tu correo en MedSync.</p><p><strong>${escapeHtml(variables.code)}</strong></p><p>Vence en 10 minutos. No compartas el codigo. Si no creaste una cuenta, ignora este mensaje.</p>`
+        };
+    }
     if (type === 'document-signature') return documentSignatureEmailTemplate(variables);
     if (type === 'password-reset-code') {
         const { code, ttlMinutes } = variables;

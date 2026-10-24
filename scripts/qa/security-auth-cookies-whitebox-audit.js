@@ -282,6 +282,7 @@ function parseRouteLines() {
         role: item.text.includes('requireRole') ||
           item.text.includes('requirePermission') ||
           item.text.includes('requireAnyPermission') ||
+          item.text.includes('requireTenantAdministrator') ||
           item.text.includes('requireSelfOrPermission'),
         tenant: item.text.includes('requireTenantOperational')
       };
@@ -337,14 +338,16 @@ function auditSuperAdminIsolation() {
 function auditBackendPermissions() {
   const gaps = LEGACY_PERMISSION_GAP_FILES.map((routeFile) => {
     const routeText = read(routeFile);
-    const hasRequirePermissionImport = routeText.includes('requirePermission.middleware');
+    const hasTenantAdministratorImport = routeText.includes('requireTenantAdministrator.middleware');
+    const hasRequirePermissionImport = routeText.includes('requirePermission.middleware') || hasTenantAdministratorImport;
     const mutatingRoutes = routeText.split(/\r?\n/)
       .map((line, index) => ({ line: index + 1, text: line.trim() }))
       .filter((item) => /router\.(post|put|patch|delete)\s*\(/.test(item.text) && item.text.includes('Token.Auth'));
     const unprotectedMutatingRoutes = mutatingRoutes.filter((item) => !(
       item.text.includes('requirePermission') ||
       item.text.includes('requireAnyPermission') ||
-      item.text.includes('requireSelfOrPermission')
+      item.text.includes('requireSelfOrPermission') ||
+      (hasTenantAdministratorImport && item.text.includes('requireTenantAdministrator('))
     ));
     return {
       routeFile,

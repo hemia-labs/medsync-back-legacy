@@ -21,7 +21,7 @@ const base = {
     EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
     SMTP_HOST:'relay.qa.invalid',SMTP_PORT:'2525',SMTP_SECURE:'false',SMTP_USER:'synthetic-smtp-user',SMTP_PASSWORD:'synthetic-smtp-password',EMAIL_FROM:'legacy@example.test'
 };
-const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS'];
+const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','EMAIL_REGISTRATION_CODE_TEMPLATE'];
 const originalEnv=new Map(envKeys.map(key=>[key,process.env[key]]));
 const originalLoad=Module._load;
 const originalConsole={log:console.log,warn:console.warn,error:console.error};
@@ -223,6 +223,21 @@ async function credentials(config) {return typeof config.credentials==='function
         const disabled=await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}});assert.equal(disabled.success,true);assert.equal(disabled.provider,'disabled');assert.equal(clients.length,0);assert.equal(transports.length,0);
         service=configure({EMAIL_PROVIDER:'disabled',NODE_ENV:'production',APP_ENV:'production',ENVIRONMENT:'production'});assertSafeFailure(await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}}),'Disabled production provider');assert.equal(clients.length,0);assert.equal(transports.length,0);
         service=configure({EMAIL_PROVIDER:'unsupported'});assertSafeFailure(await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}}),'Unsupported provider');assert.equal(clients.length,0);assert.equal(transports.length,0);assertNoSecretLogs();
+    });
+    await check('registration email uses a separate optional SES template and SMTP verification copy without changing recovery templates',async()=>{
+        let service=configure();
+        assert.equal(service.initialize().success,true);
+        assertSafeFailure(await service.sendTransactionalEmail({type:'registration-contact-code',to:'patient@example.test',variables:{code:'004200',ttlMinutes:10}}));
+        assert.equal(commands.length,0);
+        service=configure({EMAIL_REGISTRATION_CODE_TEMPLATE:'Exact-Registration-Template-QA'});
+        assert.equal((await service.sendTransactionalEmail({type:'registration-contact-code',to:'patient@example.test',variables:{code:'004200',ttlMinutes:10}})).success,true);
+        assert.equal(input().Content.Template.TemplateName,'Exact-Registration-Template-QA');assert.equal(data().code,'004200');
+        service=configure({EMAIL_PROVIDER:'smtp'});
+        assert.equal(service.initialize().success,true);
+        assert.equal((await service.sendTransactionalEmail({type:'registration-contact-code',to:'patient@example.test',variables:{code:'004200',ttlMinutes:10}})).success,true);
+        assert.match(smtpMessages[0].subject,/Verifica tu correo/);assert.match(smtpMessages[0].text,/004200/);assert.doesNotMatch(smtpMessages[0].text,/recuperacion/);
+        service=configure({EMAIL_PROVIDER:'smtp',SMTP_PASSWORD:undefined});assert.equal(service.initialize().success,false);
+        assertNoSecretLogs();
     });
     assert.ok(envLoads>0,'All real env module imports are intercepted rather than reading dotenv files');
     const failed=results.filter(result=>!result.ok);

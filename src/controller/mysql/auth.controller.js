@@ -200,6 +200,8 @@ function buildBusinessSessionData(data, decoded) {
         slug: business.slug || decoded.business_slug || null,
         status: business.status || decoded.business_status || null,
         subscriptionStatus: business.subscription_status || decoded.business_subscription_status || null,
+        registrationWelcomePending: business.registrationWelcomePending === true,
+        registrationActivationConfirmed: business.registrationActivationConfirmed === true,
         plan: business.plan || decoded.business_plan || null
     };
 }
@@ -676,3 +678,5 @@ class AuthController extends httpResponseHelper{
 }
 
 module.exports = new AuthController;
+// Shared D2 issuance for self-registration; never serialize legacy token data.
+module.exports.applyD2LoginCookies = applyD2LoginCookies;

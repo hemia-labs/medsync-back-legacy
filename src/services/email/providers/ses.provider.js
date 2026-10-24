@@ -6,6 +6,7 @@ const { validatedAwsRegion } = require('../../../config/aws/region');
 const renderTransactionalEmail = require('../transactionalEmail.renderer');
 const { logEmailError } = require('../emailErrorDiagnostics');
 const ROUTES = Object.freeze({
+    'registration-contact-code': ['EMAIL_REGISTRATION_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-reset-code': ['EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-change-code': [null, 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-changed': [null, 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
@@ -34,7 +35,10 @@ function templateData(type, input = {}) {
     if (type === 'password-changed') return {};
     const variables = input || {};
     let data;
-    if (type === 'password-reset-code' || type === 'password-change-code') {
+    if (type === 'password-reset-code' || type === 'password-change-code' || type === 'registration-contact-code') {
+        if (type === 'registration-contact-code' && !/^[0-9]{6}$/.test(variables.code || '')) {
+            throw invalid('El codigo de verificacion debe tener seis digitos.', 'EMAIL_SES_MESSAGE_INVALID');
+        }
         if (typeof variables.code !== 'string' || !variables.code.trim() || CONTROLS.test(variables.code)) {
             throw invalid('El código de verificación debe ser una cadena no vacía.', 'EMAIL_SES_MESSAGE_INVALID');
         }
@@ -56,7 +60,7 @@ function templateData(type, input = {}) {
     }
     return { ...data, html: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, escapeHtml(value)])) };
 }
-function config(routeTypes = Object.keys(ROUTES).filter(type => type !== 'password-change-code')) {
+function config() {
     const region = required('AWS_REGION');
     try { validatedAwsRegion(region); } catch (_) { throw invalid('Revisa la configuración de AWS_REGION.'); }
     const credentials = { accessKeyId: required('AWS_ACCESS_KEY_ID'), secretAccessKey: required('AWS_SECRET_ACCESS_KEY') };
@@ -66,8 +70,9 @@ function config(routeTypes = Object.keys(ROUTES).filter(type => type !== 'passwo
     const replyTo = required('EMAIL_REPLY_TO');
     if (!emailAddress(replyTo)) throw invalid('Revisa la configuración de EMAIL_REPLY_TO.');
     const routes = {};
-    for (const type of routeTypes) {
-        const [templateKey, fromKey, setKey] = ROUTES[type];
+    for (const [type, [templateKey, fromKey, setKey]] of Object.entries(ROUTES)) {
+        // Optional new capability must not break existing transactional templates.
+        if (type === 'registration-contact-code' && !process.env[templateKey]) continue;
         const template = templateKey ? required(templateKey) : null;
         const from = required(fromKey), configurationSet = required(setKey);
         if (template && !/^[A-Za-z0-9_-]{1,64}$/.test(template)) throw invalid(`Revisa la configuración de ${templateKey}.`);
@@ -79,10 +84,9 @@ function config(routeTypes = Object.keys(ROUTES).filter(type => type !== 'passwo
 }
 
 class SesProvider {
-    initialize(type = null) {
-        const requestedTypes = type ? [type] : undefined;
-        this.config = config(requestedTypes);
+    initialize() {
         if (!this.client) {
+            this.config = config();
             this.client = new SESv2Client({
                 region: this.config.region, credentials: this.config.credentials,
                 // An accepted-but-lost response must not trigger a second delivery.
@@ -95,8 +99,9 @@ class SesProvider {
         if (typeof type !== 'string' || !Object.hasOwn(ROUTES, type)) throw invalid('Selecciona un tipo de correo transaccional permitido.', 'EMAIL_SES_MESSAGE_INVALID');
         if (!emailAddress(to)) throw invalid('El destinatario del correo no es válido.', 'EMAIL_SES_MESSAGE_INVALID');
         const data = templateData(type, variables);
-        this.initialize(type);
+        this.initialize();
         const route = this.config.routes[type];
+        if (!route) throw invalid('La plantilla de verificacion no esta configurada.', 'EMAIL_SES_CONFIG_INVALID');
         const content = type === 'password-change-code' || type === 'password-changed'
             ? (() => {
                 const email = renderTransactionalEmail(type, variables);
@@ -125,15 +130,7 @@ class SesProvider {
         } catch (error) {
             // SDK errors may contain addresses, token links or credential details.
             logEmailError(error, { provider: 'ses', type });
-            const rawCode = error && (error.code || error.Code || error.name);
-            const providerErrorCode = `SES_${String(rawCode || 'UNKNOWN').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)}`;
-            return {
-                success: false,
-                provider: 'ses',
-                code: 'EMAIL_SES_SEND_FAILED',
-                providerErrorCode,
-                message: 'No se pudo enviar el correo. Revisa el servicio de correo e intenta de nuevo.'
-            };
+            return { success: false, provider: 'ses', code: 'EMAIL_SES_SEND_FAILED', message: 'No se pudo enviar el correo. Revisa el servicio de correo e intenta de nuevo.' };
         }
     }
 }

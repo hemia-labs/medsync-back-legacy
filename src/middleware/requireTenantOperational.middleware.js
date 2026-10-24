@@ -91,7 +91,8 @@ module.exports = async function requireTenantOperational(req, res, next) {
             req.tenantOperational = buildTenantOperationalData(result);
             req.tenantOperationalMessage = result.message;
 
-            if (isMinimalReadAllowed(req)) {
+            const pendingActivation = String(business && business.subscription_status || '').trim().toLowerCase() === 'pending_activation';
+            if (!pendingActivation && isMinimalReadAllowed(req)) {
                 next();
                 return;
             }
