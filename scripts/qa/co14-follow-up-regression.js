@@ -50,6 +50,10 @@ const db = {
         if (/FROM appointment_write_request/.test(sql)) return receipts.filter(x=>x.business===r.business && x.requestId===r.requestId).map(x=>({actor_id:x.actor,operation:x.operation,payload_hash:x.hash,appointment_id:x.id}));
         if (/INSERT INTO appointment_write_request/.test(sql)) { receipts.push(clone(r));return []; }
         if (/INSERT INTO appointment_audit/.test(sql)) { audits.push(clone(r));return []; }
+        if (/UPDATE appointment SET status='rescheduled'/.test(sql)) {
+            const item = appointments.find(a => a.id === r.id && a.business === r.business);
+            item.status = 'rescheduled'; item.blocks = 0; return [];
+        }
         if (/^(INSERT INTO appointment\(|UPDATE appointment SET)/.test(sql)) {
             appointmentWrites++;const index=appointments.findIndex(a=>a.id===r.id && a.business===r.business);
             const item={...clone(r),revision:index<0?1:appointments[index].revision+1};
@@ -186,5 +190,16 @@ const validation = require('../../src/domain/tracing/tracingValidation');
     assert.equal((await agenda.patientHistory({ ...body, upcoming_from: '2026-10-14', upcoming_time: '25:00' })).status, 400);
     assert.equal((await agenda.patientHistory({ ...body, upcoming_from: '2026-02-30' })).status, 400);
     assert.equal((await agenda.patientHistory({ ...body, id_business: 'foreign-clinic' })).status, 403);
+    const origin = { ...appointment, id: uuid(), business: body.id_business, revision: 1, status: 'confirmed' };
+    appointments.push(origin);
+    result = await agenda.reschedule({ ...body, request_id: uuid(), appointment: { ...origin, date: '2026-10-28', title: 'Motivo actualizado desde agenda' } });
+    assert.equal(result.status, 200, result.message);
+    const moved = result.data[0];
+    assert.equal(moved.followUpId, origin.followUpId, 'Reprogramming preserves exact follow-up link despite changed date and reason');
+    assert.equal(moved.rescheduledFromAppointmentId, origin.id);
+    result = await agenda.save({ ...body, appointment: { ...moved, status: 'confirmed' } });
+    assert.equal(result.status, 200, result.message);
+    assert.equal(result.data[0].followUpId, origin.followUpId);
+    assert.equal(result.data[0].status, 'confirmed');
     console.log('PASS CO14: free procedure, immutable validated plan link, no inferred treatment transition, idempotent follow-up/appointment retries, changed-payload conflicts, terminal appointment preservation, explicit replacement, exact/paginated and upcoming appointment scopes. Real DAOs with simulated SQL; no DB connection or live writes.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
