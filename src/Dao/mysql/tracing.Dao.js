@@ -213,8 +213,20 @@ class TracingDao {
             if (context.error) return context.error;
             const result = await sequelize.query(`SELECT t.*, DATE_FORMAT(t.quote_date_now, '%d-%m-%Y') AS quote_date_now,
                 DATE_FORMAT(t.quote_date_after, '%d-%m-%Y') AS quote_date_after,
-                l.name AS author_name
+                l.name AS author_name,
+                a.id_appointment AS linked_appointment_id, a.status AS linked_appointment_status,
+                DATE_FORMAT(a.appointment_date, '%d-%m-%Y') AS linked_appointment_date,
+                DATE_FORMAT(a.start_time, '%H:%i') AS linked_appointment_time,
+                a.title AS linked_appointment_title
                 FROM tracing t LEFT JOIN login l ON ${eq('l.id_login', 't.created_by')} AND ${eq('l.id_business', 't.id_business')}
+                LEFT JOIN appointment a ON a.id_appointment = (
+                    SELECT linked.id_appointment FROM appointment linked
+                    WHERE ${eq('linked.id_business', 't.id_business')} AND ${eq('linked.id_person', 't.id_person')}
+                      AND ${eq('linked.id_tracing', 't.id_tracing')} AND linked.active = 1
+                      AND linked.status IN ('pending_confirmation', 'confirmed', 'completed')
+                      AND linked.appointment_date >= t.quote_date_after
+                    ORDER BY linked.appointment_date DESC, linked.start_time DESC, linked.id_appointment DESC LIMIT 1
+                )
                 WHERE ${eq('t.id_person', ':patient')} AND ${eq('t.id_business', ':business')}
                 ORDER BY t.quote_date_now DESC, t.created_at DESC`, {
                 replacements: { patient: body.id_person, business: body.id_business }, type: QueryTypes.SELECT
