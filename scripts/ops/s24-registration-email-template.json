@@ -1,0 +1,8 @@
+{
+  "TemplateName": "medsync-dev-registration-contact-code-v1",
+  "TemplateContent": {
+    "Subject": "Verifica tu correo en MedSync",
+    "Text": "Tu codigo para verificar este correo en MedSync es: {{code}}. Vence en {{ttlMinutes}} minutos. No compartas el codigo. Si no creaste una cuenta, ignora este mensaje.",
+    "Html": "<!doctype html><html lang=\"es\"><meta charset=\"utf-8\"><body style=\"font-family:Arial,sans-serif;color:#17202a;line-height:1.5\"><h1 style=\"font-size:22px\">Verifica tu correo en MedSync</h1><p>Usa este codigo para verificar el correo de tu nueva cuenta.</p><p style=\"font-size:28px;font-weight:bold;letter-spacing:4px\">{{html.code}}</p><p>Vence en {{html.ttlMinutes}} minutos.</p><p>No compartas el codigo. Si no creaste una cuenta, ignora este mensaje.</p></body></html>"
+  }
+}

@@ -31,6 +31,7 @@ const ENV_KEYS = [
   'CORS_ALLOWED_ORIGINS',
   'CORS_ORIGIN',
   'CORS_ALLOWED_HEADERS',
+  'REGISTRATION_ENABLED',
   'CORS_ALLOWED_METHODS',
   'CORS_MAX_AGE_SECONDS',
   'JWT_SECRET',
@@ -97,7 +98,8 @@ function baseSecurityEnv(overrides) {
     AUTH_COOKIE_SAMESITE: 'Lax',
     CSRF_ENABLED: 'false',
     CORS_CREDENTIALS: 'false',
-    CORS_ALLOWED_ORIGINS: '*'
+    CORS_ALLOWED_ORIGINS: '*',
+    REGISTRATION_ENABLED: 'false'
   }, overrides || {});
 }
 
@@ -332,6 +334,24 @@ async function validate() {
         : fail('OPTIONS without Origin returns 204 without wildcard/credentials', noOriginOptions)
     );
   });
+
+  await withEnv(d2Env({ REGISTRATION_ENABLED: 'true', CORS_ALLOWED_HEADERS: '' }), async () => {
+    delete process.env.CORS_ALLOWED_HEADERS;
+    const preflight = runCors({ method: 'OPTIONS', origin: ALLOWED_ORIGIN,
+      url: '/api/auth/register', headers: {
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,idempotency-key,x-csrf-token'
+      } });
+    checks.push(preflight.status === 204 && csvIncludes(preflight.headers['access-control-allow-headers'], 'Idempotency-Key')
+      ? pass('Default registration preflight permits Idempotency-Key')
+      : fail('Default registration preflight permits Idempotency-Key', preflight));
+  });
+
+  checks.push(await expectStartupInvalid(
+    'Registration rejects custom CORS headers without Idempotency-Key',
+    d2Env({ REGISTRATION_ENABLED: 'true' }),
+    'Idempotency-Key'
+  ));
 
   checks.push(await expectStartupInvalid(
     'Wildcard with credentials fails startup validation',

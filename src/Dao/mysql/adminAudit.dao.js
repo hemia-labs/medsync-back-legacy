@@ -2,9 +2,10 @@ const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 
 class AdminAuditDao {
-    async record(action, context = {}) {
+    constructor(database = sequelize) { this.db = database; }
+    async record(action, context = {}, options = {}) {
         try {
-            await sequelize.query(
+            await this.db.query(
                 `INSERT INTO admin_audit_log (
                     id_admin_audit_log,
                     actor_login_id,
@@ -45,15 +46,18 @@ class AdminAuditDao {
                         _ip: context.ip || null,
                         _user_agent: context.user_agent || null
                     },
-                    type: QueryTypes.INSERT
+                    type: QueryTypes.INSERT,
+                    transaction: options.transaction || null
                 }
             );
 
             return true;
         } catch (error) {
+            if (options.strict) throw error;
             return false;
         }
     }
 }
 
 module.exports = new AdminAuditDao();
+module.exports.AdminAuditDao = AdminAuditDao;

@@ -11,8 +11,13 @@ async function encript(password) {
 }
 
 async function compare(password, storedPassword) {
+    if (typeof storedPassword === 'string' && storedPassword.startsWith('scrypt-v1$')) {
+        return require('../services/security/registrationPassword.service').verify(password, storedPassword);
+    }
     try {
-        return await bcrypt.compare(password, storedPassword);
+        // Login historically trims input. Preserve that behavior only for bcrypt;
+        // scrypt credentials preserve spaces and use their versioned NFC policy.
+        return await bcrypt.compare(typeof password === 'string' ? password.trim() : password, storedPassword);
     } catch (error) {
         console.error(error);
     }

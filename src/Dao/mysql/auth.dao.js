@@ -1,4 +1,6 @@
 const effectivePermissions = require('../../util/effectivePermissions');
+const identityAuth = require('../../services/registration/identityAuth');
+const registrationPasswords = require('../../services/security/registrationPassword.service');
 const Auth = require('../../models/mysql/auth.model');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -121,6 +123,7 @@ const getLoginByPhone = async (phone) => {
 };
 
 const getLoginRecoveryAccountByPhone = async (phone) => {
+    if (identityAuth.enabled()) return identityAuth.findOwner(sequelize, phone, { recovery: true });
     if (!phone) {
         return null;
     }
@@ -246,7 +249,7 @@ const getLatestPasswordResetChallenge = async (phone, statuses, transaction = nu
             AND purpose = :_purpose
             AND status IN (:_statuses)
           ORDER BY issued_at DESC, id DESC
-          LIMIT 1`,
+          LIMIT 1${transaction ? ' FOR UPDATE' : ''}`,
         {
             replacements: {
                 _phone_normalized: phone,
@@ -304,7 +307,8 @@ const getPasswordResetAccountById = async (idLogin, transaction = null) => {
         `SELECT
                 id_login,
                 email,
-                telephone
+                telephone,
+                password
            FROM login
           WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
             AND active = 1
@@ -569,6 +573,18 @@ const buildAuthPayload = async (authRow, fallbackIdLogin) => {
     const role = await getLoginRole(idLogin);
     const permissionRows = await getRolePermissions(idLogin);
     const permissions = permissionRows.map((item) => item.code);
+    let registrationWelcomePending=false;
+    let registrationActivationConfirmed=false;
+    if(require('../../services/registration/accountActivation.service').enabled() && role?.code==='admin' && role.id_business) {
+        const [registration]=await sequelize.query(`SELECT a.setup_welcome_acknowledged_at,a.activation_completed_at,
+            EXISTS(SELECT 1 FROM auth_identity i JOIN login l ON l.id_login=i.id_login AND l.email=i.normalized_value
+                WHERE i.id_login=a.id_login AND i.kind='email' AND i.reservation_status='verified' AND i.verified_at IS NOT NULL AND i.expires_at IS NULL) email_verified
+            FROM registration_account a WHERE a.id_login=:login AND a.id_business=:business`,
+        {replacements:{login:idLogin,business:role.id_business},type:QueryTypes.SELECT});
+        registrationWelcomePending=Boolean(registration && !registration.setup_welcome_acknowledged_at);
+        registrationActivationConfirmed=Boolean(registration?.activation_completed_at && registration.email_verified
+            && role.subscription_status==='active' && role.business_plan==='professional' && role.business_status==='active' && role.business_active);
+    }
 
     return {
         tokenData: {
@@ -588,6 +604,8 @@ const buildAuthPayload = async (authRow, fallbackIdLogin) => {
         },
         permissions,
         business: role ? {
+            registrationWelcomePending,
+            registrationActivationConfirmed,
             id_business: role.id_business || null,
             name: role.business_name || null,
             slug: role.business_slug || null,
@@ -886,7 +904,9 @@ class AuthDao{
     async login(body, metadata = {}) {
         let response;        
         try {
-            let result = await sequelize.query(SequelizeSP.SP_LOGIN_BY_TELEPHONE, {
+            let result = identityAuth.enabled()
+                ? await identityAuth.findOwner(sequelize, body.param, {allowExpired:true}).then(row => row ? [row] : null)
+                : await sequelize.query(SequelizeSP.SP_LOGIN_BY_TELEPHONE, {
                 replacements: {
                     _param : body.param
                 },
@@ -906,6 +926,10 @@ class AuthDao{
                         response = responseData.notSuccess(Messages.PASSWORD_NOT_FOUND);
                     }
                     else{
+                        if ((metadata.expectedLoginId && result[0].id_login !== metadata.expectedLoginId)
+                            || (identityAuth.enabled() && !await identityAuth.confirmLoginOwner(sequelize, body.param, result[0].id_login, result[0].password))) {
+                            return responseData.notSuccess(Messages.AUTH_NOT_FOUND);
+                        }
                         const keepSession = body.refresh === true;
                         let resultAuth = await sequelize.query(SequelizeSP.SP_LOGIN_BY_ID_LOGIN, {
                             replacements: {
@@ -947,6 +971,17 @@ class AuthDao{
                                     metadata
                                 })).rawToken
                                 : null;
+
+                            // Password reset or identity reassignment can race the
+                            // legacy session SP. Check again after all issuance writes;
+                            // a later reset will revoke these already-created artifacts.
+                            if (identityAuth.enabled()) {
+                                const current = await identityAuth.findOwner(sequelize, body.param);
+                                if (!current || current.id_login !== result[0].id_login || current.password !== result[0].password) {
+                                    await invalidateAuthArtifacts(result[0].id_login, authRow.id_session);
+                                    return responseData.notSuccess(Messages.AUTH_NOT_FOUND);
+                                }
+                            }
         
                             let auth = token.GetAccessToken(authPayload.tokenData);
         
@@ -1385,7 +1420,21 @@ async reseetPassword(body) {
             );
         }
 
-        const pwd = await encript(body.password);
+        if (identityAuth.enabled()) {
+            const owner = await identityAuth.findOwner(sequelize, phone, { recovery: true, transaction, lock: true });
+            if (!owner || owner.id_login !== account.id_login
+                || PasswordResetTokenService.fingerprintEmail(owner.email) !== challenge.destination_email_fingerprint) {
+                await transaction.rollback();
+                return responseData.notSuccess(Messages.DATA_SAVE_ERROR);
+            }
+        }
+        const modern = typeof account.password === 'string' && account.password.startsWith('scrypt-v1$');
+        const legacyPassword = typeof body.password === 'string' ? body.password.trim() : '';
+        if (!modern && (legacyPassword.length < 8 || legacyPassword.length > 128 || !/[A-Za-z]/.test(legacyPassword) || !/\d/.test(legacyPassword))) {
+            await transaction.rollback();
+            return responseData.notSuccess(Messages.DATA_SAVE_ERROR);
+        }
+        const pwd = modern ? await registrationPasswords.hash(body.password) : await encript(legacyPassword);
         const updateResult = await sequelize.query(
             `UPDATE login
                 SET password = :_password,

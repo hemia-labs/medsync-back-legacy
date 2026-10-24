@@ -82,6 +82,7 @@ app.use(require('../src/routes/index'));
 
 //Api
 app.use('/api/auth', require('./routes/mysql/auth'));
+app.use('/api', require('./routes/mysql/registration'));
 app.use('/api/rol', require('./routes/mysql/rol'));
 app.use('/api/user', require('./routes/mysql/user'));
 app.use('/api/home', require('./routes/mysql/home'));

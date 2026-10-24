@@ -1,6 +1,7 @@
 const SUPER_ADMIN_ROLE = 'super_admin';
 
 const STATUS = {
+    PENDING_ACTIVATION: 'pending_activation',
     TRIAL: 'trial',
     ACTIVE: 'active',
     PAST_DUE: 'past_due',
@@ -56,6 +57,10 @@ function isBusinessOperational(business, now = new Date()) {
     }
 
     const subscriptionStatus = String(business.subscription_status || '').trim().toLowerCase();
+
+    if (subscriptionStatus === STATUS.PENDING_ACTIVATION) {
+        return deny('ACCOUNT_PENDING_ACTIVATION', 'Completa la verificacion y activacion de tu cuenta para comenzar.', STATUS.PENDING_ACTIVATION);
+    }
 
     if (subscriptionStatus === STATUS.TRIAL) {
         const trialEndsAt = parseDate(business.trial_ends_at);

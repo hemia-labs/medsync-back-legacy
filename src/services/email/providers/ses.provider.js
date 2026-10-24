@@ -4,6 +4,7 @@ require('../../../config/env');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const { validatedAwsRegion } = require('../../../config/aws/region');
 const ROUTES = Object.freeze({
+    'registration-contact-code': ['EMAIL_REGISTRATION_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-reset-code': ['EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-changed': ['EMAIL_PASSWORD_CHANGED_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'document-signature': ['EMAIL_DOCUMENT_SIGNATURE_TEMPLATE', 'EMAIL_FROM_NOTIFICATIONS', 'EMAIL_CONFIGURATION_SET_TRANSACTIONAL']
@@ -31,7 +32,10 @@ function templateData(type, input = {}) {
     if (type === 'password-changed') return {};
     const variables = input || {};
     let data;
-    if (type === 'password-reset-code') {
+    if (type === 'password-reset-code' || type === 'registration-contact-code') {
+        if (type === 'registration-contact-code' && !/^[0-9]{6}$/.test(variables.code || '')) {
+            throw invalid('El codigo de verificacion debe tener seis digitos.', 'EMAIL_SES_MESSAGE_INVALID');
+        }
         if (typeof variables.code !== 'string' || !variables.code.trim() || CONTROLS.test(variables.code)) {
             throw invalid('El código de recuperación debe ser una cadena no vacía.', 'EMAIL_SES_MESSAGE_INVALID');
         }
@@ -64,6 +68,8 @@ function config() {
     if (!emailAddress(replyTo)) throw invalid('Revisa la configuración de EMAIL_REPLY_TO.');
     const routes = {};
     for (const [type, [templateKey, fromKey, setKey]] of Object.entries(ROUTES)) {
+        // Optional new capability must not break existing transactional templates.
+        if (type === 'registration-contact-code' && !process.env[templateKey]) continue;
         const template = required(templateKey), from = required(fromKey), configurationSet = required(setKey);
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(template)) throw invalid(`Revisa la configuración de ${templateKey}.`);
         if (!emailAddress(from)) throw invalid(`Revisa la configuración de ${fromKey}.`);
@@ -91,6 +97,7 @@ class SesProvider {
         const data = templateData(type, variables);
         this.initialize();
         const route = this.config.routes[type];
+        if (!route) throw invalid('La plantilla de verificacion no esta configurada.', 'EMAIL_SES_CONFIG_INVALID');
         try {
             const result = await this.client.send(new SendEmailCommand({
                 FromEmailAddress: `${this.config.fromName} <${route.from}>`,

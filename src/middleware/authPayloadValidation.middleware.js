@@ -87,14 +87,14 @@ function validateAuthPayload(type) {
 
         if (type === 'login') {
             const phone = normalizePhone(body.param);
-            const pwd = normalizeString(body.pwd);
+            const pwd = typeof body.pwd === 'string' ? body.pwd : '';
 
             if (!isValidPhone(phone)) {
                 reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
                 return;
             }
 
-            if (!pwd) {
+            if (!pwd || pwd.length > 1024) {
                 reject(res, 'La contrasena es requerida.');
                 return;
             }
@@ -147,8 +147,9 @@ function validateAuthPayload(type) {
         if (type === 'resetPassword') {
             const phone = normalizePhone(body.phone || body.telephone);
             const otp = normalizeOtp(body.otp || body.code);
-            const password = normalizeString(body.password);
-            const confirmPassword = body.confirmPassword === undefined ? null : normalizeString(body.confirmPassword);
+            const identityMode = require('../services/registration/identityAuth').enabled();
+            const password = identityMode && typeof body.password === 'string' ? body.password : normalizeString(body.password);
+            const confirmPassword = body.confirmPassword === undefined ? null : identityMode ? body.confirmPassword : normalizeString(body.confirmPassword);
 
             if (!isValidPhone(phone)) {
                 reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
@@ -165,7 +166,11 @@ function validateAuthPayload(type) {
                 return;
             }
 
-            const passwordError = passwordPolicyError(password);
+            let passwordError = passwordPolicyError(password);
+            if (identityMode) {
+                try { require('../services/security/registrationPassword.service').normalizePassword(password); passwordError = null; }
+                catch (_) { /* The DAO applies the exact policy of the stored hash version. */ }
+            }
             if (passwordError) {
                 reject(res, passwordError);
                 return;
