@@ -13,11 +13,17 @@ const ALLOWED_FIELDS = {
     sendOtp: ['phone'],
     validateOtp: ['telephone', 'phone', 'code'],
     resetPassword: ['phone', 'telephone', 'otp', 'code', 'password', 'confirmPassword'],
+    requestPasswordChangeCode: ['currentPassword', 'newPassword', 'confirmPassword'],
+    confirmPasswordChange: ['code'],
     refreshToken: ['id_refresh_token', 'refresh_token']
 };
 
 function normalizeString(value) {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizePassword(value) {
+    return typeof value === 'string' ? value : '';
 }
 
 function normalizePhone(value) {
@@ -173,6 +179,52 @@ function validateAuthPayload(type) {
 
             req.body = { phone, otp, password };
             req.authIdentity = { phone };
+            next();
+            return;
+        }
+
+        if (type === 'requestPasswordChangeCode') {
+            const currentPassword = normalizePassword(body.currentPassword);
+            const newPassword = normalizePassword(body.newPassword);
+            const confirmPassword = normalizePassword(body.confirmPassword);
+
+            if (!currentPassword.trim()) {
+                reject(res, 'La contrasena actual es requerida.');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                reject(res, 'La confirmacion de contrasena no coincide.');
+                return;
+            }
+
+            const passwordError = passwordPolicyError(newPassword);
+            if (passwordError) {
+                reject(res, passwordError);
+                return;
+            }
+
+            if (newPassword === currentPassword) {
+                reject(res, 'Elige una contrasena diferente de la actual.');
+                return;
+            }
+
+            req.body = { currentPassword, newPassword, confirmPassword };
+            req.authIdentity = { loginId: req.tokenDecode && req.tokenDecode.id_login };
+            next();
+            return;
+        }
+
+        if (type === 'confirmPasswordChange') {
+            const code = normalizeOtp(body.code);
+
+            if (!isValidOtp(code)) {
+                reject(res, 'El codigo de verificacion tiene un formato invalido.');
+                return;
+            }
+
+            req.body = { code };
+            req.authIdentity = { loginId: req.tokenDecode && req.tokenDecode.id_login };
             next();
             return;
         }

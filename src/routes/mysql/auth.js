@@ -26,4 +26,8 @@ router.post('/validateOtp', csrfAuthEndpoint, validateAuthPayload('validateOtp')
 
 router.put('/resetPassword', csrfAuthEndpoint, validateAuthPayload('resetPassword'), authRateLimit('resetPassword'), awaitHandlerFactory(AuthController.ressetPassword));
 
+router.post('/changePassword/sendCode', Token.Auth, csrfAuthEndpoint, validateAuthPayload('requestPasswordChangeCode'), authRateLimit('requestPasswordChangeCode'), awaitHandlerFactory(AuthController.requestPasswordChangeCode));
+
+router.post('/changePassword/confirm', Token.Auth, csrfAuthEndpoint, validateAuthPayload('confirmPasswordChange'), authRateLimit('confirmPasswordChange'), awaitHandlerFactory(AuthController.confirmPasswordChange));
+
 module.exports = router; 

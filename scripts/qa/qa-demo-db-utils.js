@@ -156,6 +156,7 @@ const TENANT_OPERATIONAL_TABLES = Object.freeze([
 ]);
 
 const AUTH_RUNTIME_TABLES = Object.freeze([
+  'auth_password_change_tokens',
   'auth_password_reset_tokens',
   'otp',
   'refresh_token',
@@ -166,6 +167,7 @@ const AUDIT_TABLES = Object.freeze(['admin_audit_log']);
 
 const FULL_RESET_DELETE_ORDER = Object.freeze([
   'admin_audit_log',
+  'auth_password_change_tokens',
   'auth_password_reset_tokens',
   'refresh_token',
   'session',
@@ -639,6 +641,7 @@ async function deleteDataForBusinessIds(businessIds, transaction = null) {
 
   const loginReplacements = {};
   const loginCondition = inCondition('id_login', 'loginIds', loginIds, loginReplacements);
+  summary.push(await deleteScoped('auth_password_change_tokens', [loginCondition], loginReplacements, transaction));
   summary.push(await deleteScoped('auth_password_reset_tokens', [loginCondition], loginReplacements, transaction));
   summary.push(await deleteScoped('refresh_token', [loginCondition], loginReplacements, transaction));
   summary.push(await deleteScoped('session', [loginCondition], loginReplacements, transaction));

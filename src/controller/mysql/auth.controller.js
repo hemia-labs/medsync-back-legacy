@@ -629,6 +629,50 @@ class AuthController extends httpResponseHelper{
       res.status(response.status).send(response);
   }
 
+    requestPasswordChangeCode = async(req, res) => {
+        let response;
+        try {
+            response = await AuthDao.requestPasswordChangeCode(req.tokenDecode.id_login, req.body, {
+                ip: req.ip,
+                userAgent: req.get ? req.get('user-agent') : null
+            });
+            const securityEvent = response ? response.securityEvent : null;
+            if (response && response.securityEvent) delete response.securityEvent;
+            recordSecurityEvent(req, securityEvent, 'auth.password_change.code_requested', {
+                accepted: isSuccess(response)
+            });
+        } catch {
+            recordSecurityEvent(req, null, 'auth.password_change.code_requested', {
+                accepted: false,
+                reason: 'exception'
+            });
+            response = responseData.error('No se pudo iniciar el cambio de contrasena.');
+        }
+        res.status(response.status).send(response);
+    }
+
+    confirmPasswordChange = async(req, res) => {
+        let response;
+        try {
+            response = await AuthDao.confirmPasswordChange(
+                req.tokenDecode.id_login,
+                req.tokenDecode.id_session,
+                req.body.code
+            );
+            const securityEvent = response ? response.securityEvent : null;
+            if (response && response.securityEvent) delete response.securityEvent;
+            recordSecurityEvent(req, securityEvent, 'auth.password_change.code_failed', {
+                accepted: isSuccess(response)
+            });
+        } catch {
+            recordSecurityEvent(req, null, 'auth.password_change.failed', {
+                reason: 'exception'
+            });
+            response = responseData.error('No se pudo confirmar el cambio de contrasena.');
+        }
+        res.status(response.status).send(response);
+    }
+
 }
 
 module.exports = new AuthController;

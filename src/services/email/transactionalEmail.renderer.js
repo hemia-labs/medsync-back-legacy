@@ -1,7 +1,9 @@
 'use strict';
 
-// Compatibility renderer for SMTP only. SES renders its published templates.
+// Shared rendering for SMTP and transactional SES messages; other SES types use published templates.
 const documentSignatureEmailTemplate = require('./templates/documentSignatureEmail.template');
+const passwordChangeCodeEmailTemplate = require('./templates/passwordChangeCodeEmail.template');
+const passwordChangedEmailTemplate = require('./templates/passwordChangedEmail.template');
 const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 module.exports = function renderTransactionalEmail(type, variables = {}) {
@@ -20,11 +22,8 @@ module.exports = function renderTransactionalEmail(type, variables = {}) {
                 <p>Nunca compartas este codigo con otra persona.</p></div>`
         };
     }
-    if (type === 'password-changed') return {
-        subject: 'Tu contrasena de MedSync fue actualizada',
-        text: ['MedSync', '', 'Tu contrasena fue actualizada correctamente.', '', 'Si no realizaste este cambio, contacta a soporte de inmediato.'].join('\n'),
-        html: '<div style="font-family: Arial, sans-serif; color: #17202a; line-height: 1.5;"><h1 style="font-size: 20px; margin: 0 0 12px;">MedSync</h1><p>Tu contrasena fue actualizada correctamente.</p><p>Si no realizaste este cambio, contacta a soporte de inmediato.</p></div>'
-    };
+    if (type === 'password-change-code') return passwordChangeCodeEmailTemplate(variables);
+    if (type === 'password-changed') return passwordChangedEmailTemplate();
     const error = new Error('Selecciona un tipo de correo transaccional permitido.');
     error.code = 'EMAIL_MESSAGE_TYPE_UNSUPPORTED'; error.safe = true; throw error;
 };

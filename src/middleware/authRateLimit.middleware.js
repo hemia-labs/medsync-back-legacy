@@ -29,6 +29,18 @@ const LIMITS = {
         ip: Number(process.env.AUTH_RESET_PASSWORD_IP_LIMIT || 20),
         identity: Number(process.env.AUTH_RESET_PASSWORD_PHONE_LIMIT || 5),
         identityMode: 'request'
+    },
+    requestPasswordChangeCode: {
+        endpoint: 'passwordChangeCode',
+        ip: Number(process.env.AUTH_PASSWORD_CHANGE_CODE_IP_LIMIT || 10),
+        identity: Number(process.env.AUTH_PASSWORD_CHANGE_CODE_LOGIN_LIMIT || 3),
+        identityMode: 'request'
+    },
+    confirmPasswordChange: {
+        endpoint: 'passwordChangeConfirm',
+        ip: Number(process.env.AUTH_PASSWORD_CHANGE_CONFIRM_IP_LIMIT || 30),
+        identity: Number(process.env.AUTH_PASSWORD_CHANGE_CONFIRM_LOGIN_LIMIT || 5),
+        identityMode: 'request'
     }
 };
 
@@ -179,9 +191,11 @@ function authRateLimit(type) {
 
         const endpoint = config.endpoint;
         const ip = getClientIp(req);
-        const phone = req.authIdentity && req.authIdentity.phone ? req.authIdentity.phone : null;
+        const identity = req.authIdentity && (req.authIdentity.phone || req.authIdentity.loginId)
+            ? (req.authIdentity.phone || req.authIdentity.loginId)
+            : null;
         const ipKey = `auth:${endpoint}:ip:${ip}`;
-        const identityKey = phone ? `auth:${endpoint}:identity:${phone}` : null;
+        const identityKey = identity ? `auth:${endpoint}:identity:${identity}` : null;
 
         const ipResult = increment(ipKey, config.ip, options);
         if (ipResult.limited) {

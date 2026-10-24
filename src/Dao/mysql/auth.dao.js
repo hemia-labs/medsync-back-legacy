@@ -1,4 +1,5 @@
 const effectivePermissions = require('../../util/effectivePermissions');
+const { randomUUID } = require('crypto');
 const Auth = require('../../models/mysql/auth.model');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -13,6 +14,7 @@ const SessionDao = require('./session.Dao');
 const TenantOperationalDao = require('./tenantOperational.dao');
 const RefreshTokenService = require('../../services/security/refreshToken.service');
 const PasswordResetTokenService = require('../../services/security/passwordResetToken.service');
+const PasswordChangeTokenService = require('../../services/security/passwordChangeToken.service');
 const SecurityConfig = require('../../config/security');
 const {
     buildTenantOperationalData,
@@ -638,6 +640,43 @@ const invalidateAuthArtifacts = async (idLogin, idSession = null, idRefreshToken
         reason: idSession ? 'session_invalidated' : 'user_invalidated',
         transaction
     });
+};
+
+const invalidateOtherAuthArtifacts = async (idLogin, currentSessionId, transaction = null) => {
+    if (!idLogin || !currentSessionId) {
+        return;
+    }
+
+    await sequelize.query(
+        `UPDATE \`session\`
+            SET active = 0,
+                \`last\` = 0,
+                updated_at = NOW(),
+                updated_by = :_id_login
+          WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+            AND id_session COLLATE utf8mb4_unicode_ci <> :_current_session COLLATE utf8mb4_unicode_ci
+            AND (active = 1 OR \`last\` = 1)`,
+        {
+            replacements: { _id_login: idLogin, _current_session: currentSessionId },
+            type: QueryTypes.UPDATE,
+            transaction
+        }
+    );
+
+    await sequelize.query(
+        `UPDATE refresh_token
+            SET \`last\` = 0,
+                revoked_at = COALESCE(revoked_at, NOW()),
+                revoked_reason = COALESCE(revoked_reason, 'password_changed')
+          WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+            AND (id_session IS NULL OR id_session COLLATE utf8mb4_unicode_ci <> :_current_session COLLATE utf8mb4_unicode_ci)
+            AND (\`last\` = 1 OR revoked_at IS NULL)`,
+        {
+            replacements: { _id_login: idLogin, _current_session: currentSessionId },
+            type: QueryTypes.UPDATE,
+            transaction
+        }
+    );
 };
 
 const getTenantAuthenticationState = async (authPayload, idLogin, idSession = null, idRefreshToken = null) => {
@@ -1323,8 +1362,356 @@ async validateOtp(body) {
 
 
 /**
- * Permite establecer una nueva contraseña para el usuario especifico
- * @returns Lista de paises
+ * Valida la contraseña actual y envia un código para confirmar el cambio.
+ */
+async requestPasswordChangeCode(idLogin, body, metadata = {}) {
+    if (!idLogin) {
+        return responseData.unauthorized('La sesion no es valida.');
+    }
+
+    let transaction = null;
+    const challengeId = randomUUID();
+
+    try {
+        transaction = await sequelize.transaction();
+        const accounts = await sequelize.query(
+            `SELECT id_login, email, password
+               FROM login
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND active = 1
+              LIMIT 1
+              FOR UPDATE`,
+            { replacements: { _id_login: idLogin }, type: QueryTypes.SELECT, transaction }
+        );
+        const account = accounts[0];
+
+        if (!account) {
+            await transaction.rollback();
+            transaction = null;
+            return responseData.unauthorized('La cuenta de la sesion ya no esta activa.');
+        }
+
+        if (!account.email) {
+            await transaction.rollback();
+            transaction = null;
+            return responseData.bad_request('La cuenta no tiene un correo asociado para enviar el codigo.');
+        }
+
+        if (!await compare(body.currentPassword, account.password)) {
+            await transaction.rollback();
+            transaction = null;
+            return withSecurityEvent(
+                responseData.bad_request('La contrasena actual no es correcta.'),
+                { event: 'auth.password_change.current_password_failed', id_login: idLogin }
+            );
+        }
+
+        if (await compare(body.newPassword, account.password)) {
+            await transaction.rollback();
+            transaction = null;
+            return responseData.bad_request('La nueva contrasena debe ser diferente de la actual.');
+        }
+
+        const pendingPasswordHash = await encript(body.newPassword);
+        if (!pendingPasswordHash) {
+            await transaction.rollback();
+            transaction = null;
+            return responseData.error('No fue posible preparar el cambio de contrasena.');
+        }
+
+        const tokenRecord = PasswordChangeTokenService.buildCodeRecord(idLogin);
+
+        await sequelize.query(
+            `UPDATE auth_password_change_tokens
+                SET status = CASE WHEN expires_at <= UTC_TIMESTAMP() THEN 'expired' ELSE 'revoked' END,
+                    expired_at = CASE WHEN expires_at <= UTC_TIMESTAMP() THEN COALESCE(expired_at, UTC_TIMESTAMP()) ELSE expired_at END,
+                    revoked_at = CASE WHEN expires_at > UTC_TIMESTAMP() THEN COALESCE(revoked_at, UTC_TIMESTAMP()) ELSE revoked_at END,
+                    pending_password_hash = NULL,
+                    updated_at = UTC_TIMESTAMP()
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND status = 'pending'`,
+            { replacements: { _id_login: idLogin }, type: QueryTypes.UPDATE, transaction }
+        );
+
+        await sequelize.query(
+            `INSERT INTO auth_password_change_tokens (
+                id, id_login, destination_email_fingerprint, code_hash, code_fingerprint,
+                pending_password_hash, source_password_fingerprint, status, attempts, max_attempts,
+                issued_at, expires_at, requested_ip, requested_user_agent, created_at, updated_at
+            ) VALUES (
+                :_id, :_id_login, :_email_fingerprint, :_code_hash, :_code_fingerprint,
+                :_pending_password_hash, :_source_password_fingerprint, 'pending', 0, :_max_attempts,
+                UTC_TIMESTAMP(), TIMESTAMPADD(MINUTE, :_ttl_minutes, UTC_TIMESTAMP()),
+                :_requested_ip, :_requested_user_agent, UTC_TIMESTAMP(), UTC_TIMESTAMP()
+            )`,
+            {
+                replacements: {
+                    _id: challengeId,
+                    _id_login: idLogin,
+                    _email_fingerprint: PasswordChangeTokenService.fingerprintEmail(account.email),
+                    _code_hash: tokenRecord.code_hash,
+                    _code_fingerprint: tokenRecord.code_fingerprint,
+                    _pending_password_hash: pendingPasswordHash,
+                    _source_password_fingerprint: PasswordChangeTokenService.fingerprintPasswordHash(account.password),
+                    _max_attempts: tokenRecord.max_attempts,
+                    _ttl_minutes: tokenRecord.ttl_minutes,
+                    _requested_ip: normalizeClientIp(metadata.ip),
+                    _requested_user_agent: normalizeUserAgent(metadata.userAgent)
+                },
+                type: QueryTypes.INSERT,
+                transaction
+            }
+        );
+
+        await transaction.commit();
+        transaction = null;
+
+        const sendMail = await mail.SendPasswordChangeCode(account.email, {
+            code: tokenRecord.code,
+            ttlMinutes: tokenRecord.ttl_minutes
+        });
+
+        if (!sendMail || !sendMail.process) {
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = 'revoked',
+                        revoked_at = COALESCE(revoked_at, UTC_TIMESTAMP()),
+                        pending_password_hash = NULL,
+                        updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id AND status = 'pending'`,
+                { replacements: { _id: challengeId }, type: QueryTypes.UPDATE }
+            );
+
+            return withSecurityEvent(
+                responseData.error('No se pudo enviar el codigo. Intentalo de nuevo.'),
+                {
+                    event: 'auth.password_change.email_failed',
+                    id_login: idLogin,
+                    email_error_code: sendMail && sendMail.errorCode,
+                    email_fingerprint: PasswordChangeTokenService.fingerprintEmail(account.email),
+                    code_fingerprint: tokenRecord.code_fingerprint
+                }
+            );
+        }
+
+        return withSecurityEvent(
+            responseData.success({
+                sent: true,
+                emailMasked: PasswordChangeTokenService.maskEmail(account.email),
+                ttlMinutes: tokenRecord.ttl_minutes
+            }, 'Enviamos un codigo al correo asociado a tu cuenta.'),
+            {
+                event: 'auth.password_change.code_requested',
+                id_login: idLogin,
+                email_fingerprint: PasswordChangeTokenService.fingerprintEmail(account.email),
+                code_fingerprint: tokenRecord.code_fingerprint
+            }
+        );
+    } catch (error) {
+        if (transaction && !transaction.finished) {
+            await transaction.rollback();
+        }
+        return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    }
+}
+
+/**
+ * Consume el OTP y actualiza la contraseña en una sola transacción.
+ */
+async confirmPasswordChange(idLogin, currentSessionId, code) {
+    if (!idLogin || !currentSessionId) {
+        return responseData.unauthorized('La sesion no es valida.');
+    }
+
+    const transaction = await sequelize.transaction();
+    try {
+        const accounts = await sequelize.query(
+            `SELECT password, email
+               FROM login
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND active = 1
+              LIMIT 1
+              FOR UPDATE`,
+            { replacements: { _id_login: idLogin }, type: QueryTypes.SELECT, transaction }
+        );
+        const account = accounts[0];
+
+        if (!account) {
+            await transaction.rollback();
+            return responseData.unauthorized('La cuenta de la sesion ya no esta activa.');
+        }
+
+        const challenges = await sequelize.query(
+            `SELECT id, destination_email_fingerprint, code_hash, code_fingerprint, pending_password_hash,
+                    source_password_fingerprint, status, attempts, max_attempts,
+                    expires_at <= UTC_TIMESTAMP() AS is_expired
+               FROM auth_password_change_tokens
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND status = 'pending'
+              ORDER BY issued_at DESC, id DESC
+              LIMIT 1
+              FOR UPDATE`,
+            { replacements: { _id_login: idLogin }, type: QueryTypes.SELECT, transaction }
+        );
+        const challenge = challenges[0];
+
+        if (!challenge) {
+            await transaction.rollback();
+            return withSecurityEvent(
+                responseData.notSuccess('No hay un codigo activo. Solicita uno nuevo.'),
+                { event: 'auth.password_change.code_failed', id_login: idLogin, reason: 'not_found' }
+            );
+        }
+
+        if (Number(challenge.is_expired) === 1) {
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = 'expired', expired_at = COALESCE(expired_at, UTC_TIMESTAMP()),
+                        pending_password_hash = NULL, updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id`,
+                { replacements: { _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+            );
+            await transaction.commit();
+            return withSecurityEvent(
+                responseData.notSuccess('El codigo vencio. Solicita uno nuevo.'),
+                { event: 'auth.password_change.code_expired', id_login: idLogin, code_fingerprint: challenge.code_fingerprint }
+            );
+        }
+
+        const candidateHash = PasswordChangeTokenService.hashCode(idLogin, code);
+        if (!PasswordChangeTokenService.safeCompareHash(candidateHash, challenge.code_hash)) {
+            const attempts = Number(challenge.attempts || 0) + 1;
+            const maxAttempts = Number(challenge.max_attempts || SecurityConfig.getPasswordResetMaxAttempts());
+            const locked = attempts >= maxAttempts;
+
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = :_status,
+                        attempts = :_attempts,
+                        locked_at = CASE WHEN :_locked = 1 THEN COALESCE(locked_at, UTC_TIMESTAMP()) ELSE locked_at END,
+                        pending_password_hash = CASE WHEN :_locked = 1 THEN NULL ELSE pending_password_hash END,
+                        updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id`,
+                {
+                    replacements: {
+                        _id: challenge.id,
+                        _status: locked ? 'locked' : 'pending',
+                        _attempts: attempts,
+                        _locked: locked ? 1 : 0
+                    },
+                    type: QueryTypes.UPDATE,
+                    transaction
+                }
+            );
+            await transaction.commit();
+            return withSecurityEvent(
+                responseData.notSuccess(locked ? 'Se agotaron los intentos. Solicita un nuevo codigo.' : 'El codigo no es correcto.'),
+                {
+                    event: locked ? 'auth.password_change.code_locked' : 'auth.password_change.code_failed',
+                    id_login: idLogin,
+                    code_fingerprint: challenge.code_fingerprint,
+                    attempts,
+                    max_attempts: maxAttempts
+                }
+            );
+        }
+
+        if (!challenge.pending_password_hash) {
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = 'revoked', revoked_at = COALESCE(revoked_at, UTC_TIMESTAMP()), updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id`,
+                { replacements: { _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+            );
+            await transaction.commit();
+            return responseData.notSuccess('La solicitud ya no es valida. Inicia el cambio de nuevo.');
+        }
+
+        if (!account.email || PasswordChangeTokenService.fingerprintEmail(account.email) !== challenge.destination_email_fingerprint) {
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = 'revoked', revoked_at = COALESCE(revoked_at, UTC_TIMESTAMP()),
+                        pending_password_hash = NULL, updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id`,
+                { replacements: { _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+            );
+            await transaction.commit();
+            return withSecurityEvent(
+                responseData.notSuccess('El correo asociado a la cuenta cambio. Inicia el cambio de contrasena de nuevo.'),
+                { event: 'auth.password_change.failed', id_login: idLogin, reason: 'destination_email_changed' }
+            );
+        }
+
+        if (PasswordChangeTokenService.fingerprintPasswordHash(account.password) !== challenge.source_password_fingerprint) {
+            await sequelize.query(
+                `UPDATE auth_password_change_tokens
+                    SET status = 'revoked', revoked_at = COALESCE(revoked_at, UTC_TIMESTAMP()),
+                        pending_password_hash = NULL, updated_at = UTC_TIMESTAMP()
+                  WHERE id = :_id`,
+                { replacements: { _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+            );
+            await transaction.commit();
+            return withSecurityEvent(
+                responseData.notSuccess('La contrasena cambio durante el proceso. Inicia el cambio de nuevo.'),
+                { event: 'auth.password_change.failed', id_login: idLogin, reason: 'source_password_changed' }
+            );
+        }
+
+        await sequelize.query(
+            `UPDATE login
+                SET password = :_password,
+                    updated_at = NOW(),
+                    updated_by = :_id_login
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND active = 1`,
+            {
+                replacements: { _id_login: idLogin, _password: challenge.pending_password_hash },
+                type: QueryTypes.UPDATE,
+                transaction
+            }
+        );
+
+        await sequelize.query(
+            `UPDATE auth_password_change_tokens
+                SET status = 'used', used_at = COALESCE(used_at, UTC_TIMESTAMP()),
+                    pending_password_hash = NULL, updated_at = UTC_TIMESTAMP()
+              WHERE id = :_id`,
+            { replacements: { _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+        );
+
+        await sequelize.query(
+            `UPDATE auth_password_change_tokens
+                SET status = 'revoked', revoked_at = COALESCE(revoked_at, UTC_TIMESTAMP()),
+                    pending_password_hash = NULL, updated_at = UTC_TIMESTAMP()
+              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
+                AND status = 'pending' AND id <> :_id`,
+            { replacements: { _id_login: idLogin, _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
+        );
+
+        await invalidateOtherAuthArtifacts(idLogin, currentSessionId, transaction);
+        await transaction.commit();
+
+        const notification = await mail.SendPasswordChanged(account.email);
+
+        return withSecurityEvent(
+            responseData.success({ password_updated: true, other_sessions_invalidated: true }, 'Tu contrasena se actualizo correctamente.'),
+            {
+                event: 'auth.password_change.success',
+                id_login: idLogin,
+                code_fingerprint: challenge.code_fingerprint,
+                notification_sent: Boolean(notification && notification.process)
+            }
+        );
+    } catch (error) {
+        if (!transaction.finished) {
+            await transaction.rollback();
+        }
+        return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    }
+}
+
+/**
+ * Permite restablecer una contraseña desde el flujo público de recuperación.
  */
 async reseetPassword(body) {
     const transaction = await sequelize.transaction();
