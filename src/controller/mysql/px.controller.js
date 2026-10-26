@@ -4,6 +4,7 @@ const HttpStatus = require('../../util/httpStatusCode');
 const PxDao = require('../../Dao/mysql/px.dao');
 const PatientAllergyDao = require('../../Dao/mysql/patientAllergy.dao');
 const { hasPermission } = require('../../util/effectivePermissions');
+const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access');
 const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
 
 class PxController extends httpResponseHelper{
@@ -228,7 +229,8 @@ getFamilyPath = async(req, res, next) =>{
     let id_business = getBusinessIdFromToken(req.tokenDecode);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
     try {
-        const clinical = await hasPermission(req.tokenDecode.id_login, 'clinical_history.view');
+        const clinical = await canReadClinicalHistory(permission =>
+            hasPermission(req.tokenDecode.id_login, permission, { enabledCatalog: true }));
         response = await PxDao.getPxById(id, id_business, { clinical });
     } catch (error) {
         response = this.HttpError(error.status, error.message);
