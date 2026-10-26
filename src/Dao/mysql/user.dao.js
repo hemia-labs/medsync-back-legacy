@@ -1,3 +1,4 @@
+const { beginLicenseMutation } = require('../../util/licenseMutation');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { seedTracingPermissions } = require('../../util/tracingPermissions');
 const { seedDashboardPermissions } = require('../../util/dashboardAccess');
@@ -17,6 +18,11 @@ const {
     validateLicenseForProfessionalProfile,
     validateLicenseTransition
 } = require('../../util/licenseLimits');
+
+function tenantAssignable(role) {
+    const code = String(role && role.code || '').trim().toLowerCase();
+    return [...LicenseUsageDao.PROFESSIONAL_ROLE_CODES, ...LicenseUsageDao.AUXILIARY_ROLE_CODES].includes(code);
+}
 
 function normalizeUpdateActive(value, fallback) {
     if (value === undefined || value === null || value === '') {
@@ -45,6 +51,7 @@ class UserDao{
  * @returns Lista de paises
  */
  async saveUser(body) {
+    let transaction = null;
     let response;        
     try {
         const existingUser = await sequelize.query(
@@ -54,7 +61,7 @@ class UserDao{
                     _telephone: body.phone,
                     _email: body.email
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
@@ -68,7 +75,7 @@ class UserDao{
                 replacements: {
                     _id_rol: body.id_rol
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
@@ -76,8 +83,11 @@ class UserDao{
             return responseData.bad_request('Id rol invalido.');
         }
 
-        const licenseValidation = await validateLicenseForNewUser(body.id_business, role[0], body.id_login || null);
+        if (!tenantAssignable(role[0])) return responseData.forbidden('Rol no asignable a usuarios del consultorio.');
+        transaction = await beginLicenseMutation(sequelize, body.id_business);
+        const licenseValidation = await validateLicenseForNewUser(body.id_business, role[0], body.id_login || null, transaction);
         if (licenseValidation && licenseValidation.allowed === false) {
+            await transaction.commit(); transaction = null;
             return licenseValidation.response;
         }
         if (licenseValidation && licenseValidation.status) {
@@ -128,13 +138,13 @@ class UserDao{
                     _created_by: body.id_login || null,
                     _id_business: body.id_business || null
                 },
-                type: QueryTypes.INSERT
+                transaction, type: QueryTypes.INSERT
             }
         );
 
-        await seedDashboardPermissions(body.id_business, idLogin);
+        await seedDashboardPermissions(body.id_business, idLogin, transaction);
 
-        await seedTracingPermissions(body.id_business, idLogin);
+        await seedTracingPermissions(body.id_business, idLogin, transaction);
         let result = await sequelize.query(
             `SELECT
                 l.id_login,
@@ -149,50 +159,25 @@ class UserDao{
                 replacements: {
                     _id_login: idLogin
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
+        await transaction.commit();
+        transaction = null;
         response = responseData.success(result[0], Messages.DATA_SAVE_SUCCESSFULLY);
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    } finally {
+        if (transaction && !transaction.finished) await transaction.rollback();
     }
     return response;
 }
 
 /**
- * Permite registrar un nuevo usuario usando el SP legado.
- * Se conserva por referencia mientras migramos a SQL directo.
+ * Compatibilidad del nombre legado con los controles actuales de rol y cuota.
  */
- async saveUserLegacy(body) {
-    let response;
-    try {
-        let pwd = await encript(body.password);
-        let result = await sequelize.query(SequelizeSP.SP_USER_SAVE, {
-            replacements: {
-                _id_rol : body.id_rol,
-                _name : body.name,
-                _email : body.email,
-                _telephone : body.phone,
-                _password : pwd,
-                _id_business : body.id_business || null
-            },
-            type: QueryTypes.RAW,
-            plain: true
-        });
-
-        if(result){/*Validamos si existe un registro de salida */
-            let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_SAVE_SUCCESSFULLY) : responseData.notSuccess(SQLValid.message);
-        }
-        else{/* regresamos una excepción controlada al no obtener una respuesta */
-            response = responseData.notSuccess(Messages.DATA_SAVE_ERROR)    
-        }
-    } catch (error) {
-            response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
-    }
-    return response;
-}
+ async saveUserLegacy(body) { return this.saveUser(body); }
 
 /**
  * Permite actualizar un usuario especifico
@@ -201,9 +186,13 @@ class UserDao{
  * @returns 
  */
 async updateUser(body,id_login) {
+    let transaction = null;
     let response;        
     try {
-        const currentState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login);
+        const target = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login);
+        if (!target || !target.id_business) return responseData.forbidden('Usuario no disponible para gestion de consultorio.');
+        transaction = await beginLicenseMutation(sequelize, target.id_business);
+        const currentState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login, transaction);
         if (!currentState) {
             return responseData.bad_request('Usuario invalido para este negocio.');
         }
@@ -211,12 +200,13 @@ async updateUser(body,id_login) {
         const nextRoleId = pickValue(body.id_rol, currentState.id_rol);
         const nextRole = nextRoleId === currentState.id_rol
             ? { id_rol: currentState.id_rol, code: currentState.roleCode }
-            : await LicenseUsageDao.getRoleById(nextRoleId);
+            : await LicenseUsageDao.getRoleById(nextRoleId, transaction);
 
         if (!nextRole || !nextRole.code) {
             return responseData.bad_request('Id rol invalido.');
         }
 
+        if (!tenantAssignable(nextRole) || !tenantAssignable({ code: currentState.roleCode })) return responseData.forbidden('Rol no asignable a usuarios del consultorio.');
         const nextActive = normalizeUpdateActive(body.active, currentState.active);
         const currentResource = classifyLicenseResource(currentState, { unknownAsStaff: true });
         const nextResource = classifyLicenseResource({
@@ -227,6 +217,7 @@ async updateUser(body,id_login) {
         });
         const targetBusiness = currentState.id_business || body.id_business;
         const licenseValidation = await validateLicenseTransition({
+            transaction,
             idBusiness: targetBusiness,
             targetLoginId: id_login,
             currentResource,
@@ -237,14 +228,18 @@ async updateUser(body,id_login) {
         });
 
         if (licenseValidation && licenseValidation.allowed === false) {
+            await transaction.commit(); transaction = null;
             return licenseValidation.response;
         }
         if (licenseValidation && licenseValidation.status) {
             return licenseValidation;
         }
 
-        let result = await sequelize.query(SequelizeSP.SP_USER_UPDATE, {
+        let result = await sequelize.query(`UPDATE login SET id_rol = :_id_rol, name = :_name, email = :_email,
+            telephone = :_telephone, active = :_active, updated_at = NOW(), updated_by = :_actor
+            WHERE id_login = :_id_login AND id_business = :_id_business`, {
             replacements: {
+                _actor: body.id_login,
                 _id_login : id_login,
                 _id_rol : nextRoleId,
                 _name : pickValue(body.name, currentState.name),
@@ -254,23 +249,22 @@ async updateUser(body,id_login) {
                 _id_business : targetBusiness,
                 _is_super_admin : body.is_super_admin ? 1 : 0
             },
-            type: QueryTypes.RAW,
+            transaction, type: QueryTypes.UPDATE,
             plain: true
         });
 
-        if(result){/*Validamos si existe un registro de salida */
-            let SQLValid = SQLException(result);
-            if (!SQLValid.hasError) {
-                await seedDashboardPermissions(targetBusiness, id_login);
-                await seedTracingPermissions(targetBusiness, id_login);
-            }
-            response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_SAVE_SUCCESSFULLY) : responseData.notSuccess(SQLValid.message);
-        }
-        else{/* regresamos una excepción controlada al no obtener una respuesta */
-            response = responseData.notSuccess(Messages.DATA_SAVE_ERROR)    
-        }
+        if (!result || !Number(result[1])) return responseData.notSuccess('Usuario no disponible.');
+        await seedDashboardPermissions(targetBusiness, id_login, transaction);
+        await seedTracingPermissions(targetBusiness, id_login, transaction);
+        const rows = await sequelize.query('SELECT id_login, id_rol, name, email, telephone, id_business FROM login WHERE id_login = :login AND id_business = :business', {
+            replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
+        });
+        response = responseData.success(rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
+        if (response && response.status === 200) { await transaction.commit(); transaction = null; }
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    } finally {
+        if (transaction && !transaction.finished) await transaction.rollback();
     }
     return response;
 }
@@ -337,10 +331,10 @@ async getbyId(id, id_business, is_super_admin = false) {
     return response;
 }
 
-async getProfessionalProfile(idLogin, idBusiness, actorLogin = null) {
+async getProfessionalProfile(idLogin, idBusiness, actorLogin = null, transaction = null) {
     try {
         if (actorLogin && actorLogin !== idLogin) {
-            const canManageUsers = await this.hasPermission(actorLogin, 'admin.users');
+            const canManageUsers = await this.hasPermission(actorLogin, 'admin.users', transaction);
             if (!canManageUsers) {
                 return responseData.unauthorized('No tienes permiso para consultar este perfil profesional.');
             }
@@ -364,7 +358,7 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null) {
                     _id_login: idLogin,
                     _id_business: idBusiness
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
@@ -375,6 +369,7 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null) {
 }
 
 async saveProfessionalProfile(body) {
+    let transaction = null;
     try {
         const targetLogin = body.target_id_login || body.id_user || body.id_login;
         if (!targetLogin || !body.id_business) {
@@ -392,6 +387,7 @@ async saveProfessionalProfile(body) {
             return responseData.bad_request(professionalPhone.message, { fieldErrors: { professional_phone: professionalPhone.message } });
         }
 
+        transaction = await beginLicenseMutation(sequelize, body.id_business);
         const user = await sequelize.query(
             `SELECT l.id_login, l.id_business, r.code AS rol
                FROM login l
@@ -405,7 +401,7 @@ async saveProfessionalProfile(body) {
                     _id_login: targetLogin,
                     _id_business: body.id_business
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
@@ -424,7 +420,7 @@ async saveProfessionalProfile(body) {
                     _id_login: targetLogin,
                     _id_business: body.id_business
                 },
-                type: QueryTypes.SELECT
+                transaction, type: QueryTypes.SELECT
             }
         );
 
@@ -440,7 +436,7 @@ async saveProfessionalProfile(body) {
                   LIMIT 1`,
                 {
                     replacements: { _id_doctor_professional_profile: existing[0].id_doctor_professional_profile },
-                    type: QueryTypes.SELECT
+                    transaction, type: QueryTypes.SELECT
                 }
             )
             : [];
@@ -452,8 +448,9 @@ async saveProfessionalProfile(body) {
             : normalizeUpdateActive(body.is_active, true);
 
         if (nextProfileActive && !currentProfileActive) {
-            const licenseValidation = await validateLicenseForProfessionalProfile(body.id_business, targetLogin, body.id_login || null);
+            const licenseValidation = await validateLicenseForProfessionalProfile(body.id_business, targetLogin, body.id_login || null, transaction);
             if (licenseValidation && licenseValidation.allowed === false) {
+                await transaction.commit(); transaction = null;
                 return licenseValidation.response;
             }
             if (licenseValidation && licenseValidation.status) {
@@ -494,7 +491,7 @@ async saveProfessionalProfile(body) {
                         updated_at = NOW(),
                         updated_by = :_updated_by
                   WHERE id_doctor_professional_profile COLLATE utf8mb4_unicode_ci = :_id_doctor_professional_profile COLLATE utf8mb4_unicode_ci`,
-                { replacements, type: QueryTypes.UPDATE }
+                { replacements, transaction, type: QueryTypes.UPDATE }
             );
         } else {
             await sequelize.query(
@@ -509,21 +506,27 @@ async saveProfessionalProfile(body) {
                     :_professional_phone, :_signature_image, :_can_issue_prescriptions,
                     :_can_sign_documents, :_is_active, NOW(), :_updated_by
                 )`,
-                { replacements, type: QueryTypes.INSERT }
+                { replacements, transaction, type: QueryTypes.INSERT }
             );
         }
 
-        await seedDashboardPermissions(body.id_business, targetLogin);
+        await seedDashboardPermissions(body.id_business, targetLogin, transaction);
 
-        await seedTracingPermissions(body.id_business, targetLogin);
-        return this.getProfessionalProfile(targetLogin, body.id_business, body.id_login);
+        await seedTracingPermissions(body.id_business, targetLogin, transaction);
+        const result = await this.getProfessionalProfile(targetLogin, body.id_business, body.id_login, transaction);
+        if (result.status !== 200) return result;
+        await transaction.commit();
+        transaction = null;
+        return result;
     } catch (error) {
         return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    } finally {
+        if (transaction && !transaction.finished) await transaction.rollback();
     }
 }
 
-async hasPermission(idLogin, permission) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false});
+async hasPermission(idLogin, permission, transaction = null) {
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false, transaction});
     }
 
 

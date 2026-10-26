@@ -13,17 +13,14 @@ function sanitizeDiagnosticText(value) {
 }
 
 function describeEmailError(error) {
-    const details = error && typeof error === 'object' ? error : {};
-    const stack = typeof details.stack === 'string'
-        ? sanitizeDiagnosticText(details.stack).split('\n').slice(0, 32).join('\n').slice(0, 12000)
-        : null;
-
-    return {
-        name: String(details.name || 'Error').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80) || 'Error',
-        code: String(details.code || details.Code || 'EMAIL_SEND_FAILED').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80),
-        message: sanitizeDiagnosticText(details.message).slice(0, 1000) || null,
-        stack
-    };
+    // SDK messages/stacks can embed links, codes and credentials without labels.
+    const allowed = new Set(['MessageRejected','ThrottlingException','TooManyRequestsException',
+        'MailFromDomainNotVerifiedException','NotFoundException','BadRequestException',
+        'AccountSuspendedException','SendingPausedException','AccessDeniedException',
+        'CredentialsProviderError','TimeoutError','EAUTH','ECONNECTION','ETIMEDOUT','ESOCKET']);
+    const name = allowed.has(error && error.name) ? error.name : 'EmailDeliveryError';
+    const code = allowed.has(error && error.code) ? error.code : name;
+    return { name, code };
 }
 
 function logEmailError(error, context = {}) {

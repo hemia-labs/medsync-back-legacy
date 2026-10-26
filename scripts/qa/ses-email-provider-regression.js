@@ -210,12 +210,12 @@ async function credentials(config) {return typeof config.credentials==='function
     });
     await check('real mail wrappers preserve reset codes and changed variables while generic mail remains SMTP-only',async()=>{
         configure();let mail=require(mailPath);
-        assert.deepEqual(await mail.SendPasswordResetCode('patient@example.test',{code:'004200',ttlMinutes:14}),{process:true});
+        assert.deepEqual(await mail.SendPasswordResetCode('patient@example.test',{code:'004200',ttlMinutes:14}),{process:true,errorCode:null});
         assert.equal(input().Content.Template.TemplateName,'Exact-Reset-Template-QA');assert.deepEqual(data(),{code:'004200',ttlMinutes:14,html:{code:'004200',ttlMinutes:'14'}});
-        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true});assertSimpleOnly(input());assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
-        const count=commands.length;assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:false});assert.equal(commands.length,count,'Untyped generic mail must not be sent through SES');
+        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true,errorCode:null});assertSimpleOnly(input());assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
+        const count=commands.length;assert.equal((await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text')).process,false);assert.equal(commands.length,count,'Untyped generic mail must not be sent through SES');
         configure({EMAIL_PROVIDER:'smtp'});mail=require(mailPath);
-        assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:true});
+        assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:true,errorCode:null});
         assert.equal(smtpMessages[0].subject,'Generic subject');assert.equal(smtpMessages[0].html,'<p>Generic body</p>');assert.equal(smtpMessages[0].text,'Generic text');assert.equal(clients.length,0);assertNoSecretLogs();
     });
     await check('disabled provider remains test-only success, production-disabled failure and unsupported providers stay controlled',async()=>{

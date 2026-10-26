@@ -55,7 +55,7 @@ const reset = (status='issued') => { state = { status, owner: 'qa-doctor', acces
     reset(); state.missing=true;
     assert.equal((await dao.prepareOutput(body)).status, 404); assert.equal(audits, 0);
     reset(); state.failAudit=true;
-    const failed=await dao.prepareOutput(body); assert.equal(failed.status, 500); assert.equal(failed.data, null); assert.equal(rollbacks, 1); assert.equal(commits, 0);
+    const failed=await dao.prepareOutput(body); assert.equal(failed.status, 500); assert.match(failed.data.reference, /^[0-9a-f-]{36}$/); assert.equal(failed.data.prescription, undefined); assert.equal(rollbacks, 1); assert.equal(commits, 0);
     reset('cancelled'); assert.equal((await dao.auditAction(body)).status, 400, 'Old audit endpoint also rejects non-issued copies');
     reset(); const legacy=await dao.auditAction(body); assert.equal(legacy.status, 200); assert.deepEqual(legacy.data, { id_prescription:'qa-rx', action:'printed' });
     reset(); assert.equal((await dao.prepareOutput({ ...body, action:'unknown' })).status, 400); assert.equal(calls.length, 0);

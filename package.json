@@ -13,7 +13,9 @@
     "qa:security-idor": "node scripts/qa/security-multitenant-idor-suite.js",
     "qa:security-headers": "node scripts/qa/security-headers-http-regression.js",
     "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js",
-    "migration:auth-password-change": "node scripts/migrations/apply-auth-password-change-tokens.js"
+    "migration:auth-password-change": "node scripts/migrations/apply-auth-password-change-tokens.js",
+    "qa:isolated": "node scripts/qa/run-isolated-regressions.js",
+    "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js"
   },
   "engines": {
     "node": ">=22.12 <23"

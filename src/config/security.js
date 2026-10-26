@@ -28,11 +28,14 @@ const PRODUCTION_ENVS = ['production', 'prod'];
 const LOCAL_CORS_HOSTS = ['localhost', '127.0.0.1', '::1'];
 
 function getRuntimeEnv() {
+  if ([process.env.APP_ENV, process.env.ENVIRONMENT, process.env.NODE_ENV]
+    .some(value => PRODUCTION_ENVS.includes(String(value || '').trim().toLowerCase()))) return 'production';
   return process.env.APP_ENV || process.env.ENVIRONMENT || process.env.NODE_ENV || 'development';
 }
 
 function isProductionLike() {
-  return PRODUCTION_ENVS.includes(String(getRuntimeEnv()).toLowerCase());
+  // A secondary environment label must never weaken production controls.
+  return PRODUCTION_ENVS.includes(String(getRuntimeEnv()).trim().toLowerCase());
 }
 
 function isActiveSessionRequired() {

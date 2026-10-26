@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const requireRole = require('../../middleware/requireRole.middleware');
 const Token = require('../../auth/authenticate');
 const requireTenantOperational = require('../../middleware/requireTenantOperational.middleware');
 const { requirePermission } = require('../../middleware/requirePermission.middleware');
@@ -18,7 +19,7 @@ const { protectedBodyParser } = require('../../middleware/requestBody.middleware
 
 const csrfProtected = csrfProtection();
 
-router.get('/buckets', Token.Auth, requireTenantOperational, requirePermission('admin.config'), awaitHandlerFactory(FilesController.listBuckets));
+router.get('/buckets', Token.Auth, requireRole('super_admin'), requireTenantOperational, requirePermission('admin.config'), awaitHandlerFactory(FilesController.listBuckets));
 
 router.get('/px/file/:px', Token.Auth, requireTenantOperational, patientFileAccess(), validatePayload(validateGetFiles), awaitHandlerFactory(FilesController.getfilesPhoto));
 

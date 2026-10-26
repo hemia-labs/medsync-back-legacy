@@ -1,3 +1,4 @@
+const { snapshotPatient, withPatientIdentity } = require('../../domain/prescriptions/patientIdentity');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { QueryTypes } = require('sequelize');
@@ -259,6 +260,7 @@ class PrescriptionDao {
                     p.issued_at,
                     p.cancelled_at,
                     p.id_person,
+                    p.template_snapshot,
                     TRIM(CONCAT(IFNULL(person.name, ''), ' ', IFNULL(person.surname, ''))) AS patient_name,
                     person.birthday AS patient_birthday,
                     person.age AS patient_age,
@@ -291,7 +293,7 @@ class PrescriptionDao {
                 { replacements, type: QueryTypes.SELECT }
             );
 
-            return responseData.success(paging ? pageData(result, pagination) : result, Messages.DATA_GET_SUCCESSFULLY);
+            return responseData.success(paging ? pageData(result.map(withPatientIdentity), pagination) : result.map(withPatientIdentity), Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             if (error.message === 'INVALID_LIST_PAGE') return responseData.bad_request('Pagina o tamano de pagina invalido.');
             return SequelizeException(error, Messages.DATA_GET_ERROR);
@@ -459,6 +461,15 @@ class PrescriptionDao {
         }
     }
 
+    async getPatientIdentity(idPerson, idBusiness, transaction) {
+        const rows = await sequelize.query(`SELECT TRIM(CONCAT(IFNULL(name,''),' ',IFNULL(surname,''))) AS patient_name,
+            DATE_FORMAT(birthday,'%Y-%m-%d') AS patient_birthday, age AS patient_age
+            FROM person WHERE id_person = :patient AND id_business = :business FOR SHARE`, {
+            replacements: { patient: idPerson, business: idBusiness }, type: QueryTypes.SELECT, transaction
+        });
+        return rows[0] || null;
+    }
+
     async issue(body) {
         const transaction = await sequelize.transaction();
         try {
@@ -533,6 +544,8 @@ class PrescriptionDao {
                 return responseData.bad_request(profileValidation.message);
             }
 
+            const patientIdentity = await this.getPatientIdentity(prescription.id_person, body.id_business, transaction);
+            if (!patientIdentity) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
             await sequelize.query(
                 `UPDATE prescription
                     SET status = 'issued',
@@ -578,6 +591,7 @@ class PrescriptionDao {
                         _background_image: config.background_image,
                         _footer_note: config.footer_note,
                         _template_snapshot: JSON.stringify({
+                            patient_identity: snapshotPatient(patientIdentity),
                             template_mode: config.template_mode || 'header',
                             background_opacity: config.background_opacity,
                             show_specialty: Boolean(config.show_specialty),
@@ -726,8 +740,12 @@ class PrescriptionDao {
         }
     }
 
-    async doctors(id_business) {
+    async doctors(id_business, idLogin) {
         try {
+            const access = await this.getViewAccess(idLogin);
+            if (!access.canViewOwn && !access.canViewAll && !await this.hasPermission(idLogin, PERMISSIONS.CREATE) && !await this.hasPermission(idLogin, PERMISSIONS.CONFIG)) {
+                return responseData.forbidden('No tienes permiso para consultar doctores de recetas.');
+            }
             const result = await sequelize.query(
                 `SELECT
                     l.id_login,
@@ -1089,8 +1107,8 @@ class PrescriptionDao {
             }
         );
 
-        if (current) return { ...result[0], ...current, doctor_name: current.doctor_name_snapshot || (result[0] && result[0].doctor_name) || null };
-        return result[0] || null;
+        if (current) return withPatientIdentity({ ...result[0], ...current, doctor_name: current.doctor_name_snapshot || (result[0] && result[0].doctor_name) || null });
+        return withPatientIdentity(result[0] || null);
     }
 
     async getItems(idPrescription, idBusiness, transaction = null, lock = false) {

@@ -1,7 +1,7 @@
 const responseData = require('../util/responsedata');
-const {ValidationError, DatabaseError} =  require('sequelize');
+const {ValidationError, UniqueConstraintError, ForeignKeyConstraintError} = require('sequelize');
+const { randomUUID } = require('node:crypto');
 const Messages = require('../util/common.messages.util');
-const {throwModelException} = require('../util/throw.model.exception');
 
 /**
  * codigo de excepciones emitidas por el manejador [https://mariadb.com/kb/en/mariadb-error-codes/]
@@ -50,15 +50,16 @@ const ArraySQlCodeException = [
  * @returns Response Data Errors
  */
     function SequelizeException(error, message = Messages.INTERNAL_ERROR)  {
-        let response = responseData.error(error.message);
-        if(error instanceof ValidationError) {
-            response =  responseData.bad_request(message, throwModelException(error.errors));;
-          }else if (error instanceof DatabaseError){
-            response =  responseData.bad_request(error.message);
-          }else {
-              response = responseData.error(error.message);
-          }
-        return response;
+        if (error instanceof UniqueConstraintError) return { status: 409, data: null, message: 'Ya existe un registro con esos datos.' };
+        if (error instanceof ForeignKeyConstraintError) return { status: 409, data: null, message: 'La operacion entra en conflicto con un registro relacionado.' };
+        if (error instanceof ValidationError) return responseData.bad_request(message);
+        const reference = randomUUID();
+        // Driver messages, SQL, parameters and stacks can contain patient data.
+        // Keep a correlation id and a bounded infrastructure code only.
+        const driverCode = error && (error.original || error.parent || error).code;
+        const allowed = ['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', 'ECONNREFUSED', 'ETIMEDOUT', 'ER_BAD_FIELD_ERROR', 'ER_NO_SUCH_TABLE'];
+        console.error('[DATABASE_OPERATION_FAILED]', { reference, code: allowed.includes(driverCode) ? driverCode : 'UNEXPECTED_ERROR' });
+        return { ...responseData.error(message), data: { reference } };
     }
 
      /**
@@ -73,9 +74,9 @@ const ArraySQlCodeException = [
         let Code = (data[0] && data[0].Code ? data[0].Code :  0);
 
         if(Code>0){
-          if( ArraySQlCodeException.includes(Code) ){
+          if( Number(Code) >= 1000 || ArraySQlCodeException.includes(Code) ){
               exception.hasError = true;
-              exception.message = data[0].Message;            
+              exception.message = Messages.INTERNAL_ERROR;
           }
         }
 

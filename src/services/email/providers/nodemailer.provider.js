@@ -52,6 +52,8 @@ class NodemailerProvider {
             host: this.config.host,
             port: this.config.port,
             secure: this.config.secure,
+            requireTLS: true,
+            tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
             auth: {
                 user: this.config.user,
                 pass: this.config.password

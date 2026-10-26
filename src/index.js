@@ -16,6 +16,11 @@ const { securityHeaders } = require('./middleware/securityHeaders.middleware');
 const { defaultBodyParser } = require('./middleware/requestBody.middleware');
 
 const app = express();
+const readiness = require('./services/readiness').createReadiness(Sequelize);
+app.get('/readyz', async (_req, res) => {
+  const ready = await readiness.check();
+  res.set('Cache-Control', 'no-store').status(ready ? 200 : 503).json({ ready, release: process.env.APP_RELEASE_ID || null });
+});
 
 app.disable('x-powered-by');
 
@@ -119,22 +124,27 @@ app.use(function(req, res, next) {
 // error handler
 app.use(function(err, req, res, next) {
   // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+  res.locals.message = 'No se pudo completar la solicitud.';
+  res.locals.error = {};
 
   // render the error page
   res.status(err.status || 500);
   res.render('error');
 });
 
-app.listen(app.get('port'), () => {
+const server = app.listen(app.get('port'), () => {
   console.log("server runing in: "+ app.get('port'));
-  Sequelize.sync({force: false}).then(() => {
+  readiness.initialize().then(() => {
     console.log("Autenticacion correcta a mysql");
     startSaasTrialLifecycleJob();
     startBusinessPulseJob();
     require('./services/pulse/runtime').startMetricsLogging();
-  }).catch(error => {console.log("Error a conectar mysql", error);});
+  }).catch(async () => {
+    console.error('[STARTUP_DATABASE_UNAVAILABLE]');
+    server.close();
+    await Sequelize.close();
+    process.exitCode = 1;
+  });
 });
 
 

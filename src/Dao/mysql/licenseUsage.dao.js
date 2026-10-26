@@ -8,7 +8,7 @@ const IGNORED_ROLE_CODES = ['super_admin'];
 const PROFESSIONAL_ROLE_SQL = PROFESSIONAL_ROLE_CODES.map((code) => `'${code}'`).join(', ');
 const IGNORED_ROLE_SQL = IGNORED_ROLE_CODES.map((code) => `'${code}'`).join(', ');
 
-async function getRoleById(idRole) {
+async function getRoleById(idRole, transaction = null) {
     if (!idRole) {
         return null;
     }
@@ -23,7 +23,7 @@ async function getRoleById(idRole) {
             replacements: {
                 _id_rol: idRole
             },
-            type: QueryTypes.SELECT
+            type: QueryTypes.SELECT, transaction
         }
     );
 
@@ -51,7 +51,7 @@ async function getBusinessPlan(idBusiness, transaction = null) {
     return rows[0] || null;
 }
 
-async function getBusinessLicenseUsage(idBusiness) {
+async function getBusinessLicenseUsage(idBusiness, transaction = null) {
     const rows = await sequelize.query(
         `SELECT
             COUNT(DISTINCT CASE
@@ -84,7 +84,7 @@ async function getBusinessLicenseUsage(idBusiness) {
             replacements: {
                 _id_business: idBusiness
             },
-            type: QueryTypes.SELECT
+            type: QueryTypes.SELECT, transaction
         }
     );
 
@@ -147,7 +147,7 @@ async function getBusinessLicenseOverride(idBusiness, options = {}) {
     return mapOverride(rows[0] || null);
 }
 
-async function hasActiveProfessionalProfile(idBusiness, idLogin) {
+async function hasActiveProfessionalProfile(idBusiness, idLogin, transaction = null) {
     if (!idBusiness || !idLogin) {
         return false;
     }
@@ -164,14 +164,14 @@ async function hasActiveProfessionalProfile(idBusiness, idLogin) {
                 _id_business: idBusiness,
                 _id_login: idLogin
             },
-            type: QueryTypes.SELECT
+            type: QueryTypes.SELECT, transaction
         }
     );
 
     return rows.length > 0;
 }
 
-async function getLicenseUserState(idBusiness, idLogin) {
+async function getLicenseUserState(idBusiness, idLogin, transaction = null) {
     if (!idLogin) {
         return null;
     }
@@ -202,7 +202,7 @@ async function getLicenseUserState(idBusiness, idLogin) {
                 _id_login: idLogin,
                 _id_business: idBusiness || null
             },
-            type: QueryTypes.SELECT
+            type: QueryTypes.SELECT, transaction
         }
     );
 

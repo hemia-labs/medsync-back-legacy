@@ -3,8 +3,16 @@ const { QueryTypes } = require('sequelize');
 const { mac } = require('./registrationSecurity');
 const { RegistrationError } = require('./errors');
 class RegistrationRateLimit {
-    constructor(db) { this.db = db; }
+    constructor(db) { this.db = db; this.nextCleanup = 0; }
+    async cleanupExpired() {
+        if (Date.now() < this.nextCleanup) return;
+        this.nextCleanup = Date.now() + 60000;
+        try {
+            await this.db.query('DELETE FROM registration_rate_bucket WHERE expires_at < NOW(3) ORDER BY expires_at LIMIT 1000');
+        } catch (_) { console.warn('[REGISTRATION_RATE_CLEANUP_FAILED]'); }
+    }
     async consume(limits) {
+        await this.cleanupExpired();
         const transaction = await this.db.transaction();
         try {
             // Stable order avoids deadlocks when IP, actor and destination overlap.
