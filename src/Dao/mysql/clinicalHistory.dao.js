@@ -1,4 +1,5 @@
 const effectivePermissions = require('../../util/effectivePermissions');
+const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -512,8 +513,7 @@ class ClinicalHistoryDao {
 
     async getLatestByPatient(body) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
-            if (!canView || !await this.hasPermission(body.id_login, PERMISSIONS.VIEW_SENSITIVE)) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission))) {
                 return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 
@@ -559,8 +559,7 @@ class ClinicalHistoryDao {
 
     async listVersionsByPatient(body) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
-            if (!canView || !await this.hasPermission(body.id_login, PERMISSIONS.VIEW_SENSITIVE)) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission))) {
                 return responseData.forbidden('No tienes permiso para consultar versiones de historia clinica.');
             }
 
@@ -635,8 +634,7 @@ class ClinicalHistoryDao {
 
     async getById(body, transaction = null) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW, transaction);
-            if (!canView || !await this.hasPermission(body.id_login, PERMISSIONS.VIEW_SENSITIVE, transaction)) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission, transaction))) {
                 return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 

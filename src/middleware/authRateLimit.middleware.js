@@ -1,4 +1,5 @@
 const { RATE_LIMIT_ERROR } = require('../util/authSecurityMessages');
+const { normalizePhone: normalizeIdentityPhone } = require('../services/registration/identity');
 
 const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_LOCK_MS = 15 * 60 * 1000;
@@ -90,7 +91,7 @@ function getBucket(key, currentTime, windowMs, maxKeys) {
         trimToMaxKeys(maxKeys);
     }
 
-    if (current && current.resetAt > currentTime) {
+    if (current && (current.resetAt > currentTime || current.lockedUntil > currentTime)) {
         return current;
     }
 
@@ -191,9 +192,14 @@ function authRateLimit(type) {
 
         const endpoint = config.endpoint;
         const ip = getClientIp(req);
-        const identity = req.authIdentity && (req.authIdentity.phone || req.authIdentity.loginId)
+        let identity = req.authIdentity && (req.authIdentity.phone || req.authIdentity.loginId)
             ? (req.authIdentity.phone || req.authIdentity.loginId)
             : null;
+        // S24 resolves local/+52 variants to one account. Share only the quota
+        // key; keep request bodies and existing recovery-code hashes unchanged.
+        if (req.authIdentity?.phone && process.env.REGISTRATION_IDENTITY_ENABLED === 'true') {
+            identity = normalizeIdentityPhone(req.authIdentity.phone) || identity;
+        }
         const ipKey = `auth:${endpoint}:ip:${ip}`;
         const identityKey = identity ? `auth:${endpoint}:identity:${identity}` : null;
 

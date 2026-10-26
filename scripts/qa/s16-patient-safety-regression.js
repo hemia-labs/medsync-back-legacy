@@ -120,6 +120,8 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
         assert.equal((await request('/api/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'CFCD20', key: 'qa' })).status, 403, 'Image management cannot access legacy signatures');
         assert.equal((await request('/api/file/delete', 'DELETE', { id_person: 'patient-a', code_cat_files: 'C4CA42', key: 'qa' })).status, 200);
         permissions = ['px.all', 'px.new', 'clinical_history.view', 'clinical_history.edit_draft'];
+        assert.equal((await request('/px/get/patient-a')).body.data.access.clinical, false, 'Clinical view alone cannot expose sensitive patient fields');
+        permissions.push('clinical_history.view_sensitive');
         assert.equal((await request('/px/get/patient-a')).body.data.access.clinical, true);
         assert.equal((await request('/px/allergies', 'PUT', {})).status, 200);
         assert.equal((await request('/px/force-delete', 'DELETE', { id_person: 'patient-a' })).status, 403);
