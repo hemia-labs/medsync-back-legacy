@@ -29,6 +29,7 @@ const db = {
 };
 require.cache[connectionPath] = { id: connectionPath, filename: connectionPath, loaded: true, exports: db };
 const dao = require('../../src/Dao/mysql/prescription.dao');
+dao.getPatientIdentity = async () => ({ patient_name: 'QA', patient_birthday: '2000-01-01', patient_age: 26 });
 dao.hasPermission = async () => hasPermission;
 dao.getPrescription = async () => { reads++; return { status, issuer_doctor_id: issuer, issued_by: issuedBy }; };
 dao.getBusiness = async () => ({ active: 1, status: 'active' });

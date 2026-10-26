@@ -1,6 +1,6 @@
 'use strict';
 
-const PRODUCTION_LIKE_ENVS = ['production', 'prod', 'staging', 'stage'];
+const { getRuntimeEnv, isProductionLike } = require('../config/runtimeEnvironment');
 
 const DEFAULT_CSP_DIRECTIVES = [
   "default-src 'self'",
@@ -43,12 +43,9 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
-function runtimeEnv() {
-  return String(process.env.APP_ENV || process.env.ENVIRONMENT || process.env.NODE_ENV || 'development').trim().toLowerCase();
-}
-
 function isProductionLikeRuntime() {
-  return PRODUCTION_LIKE_ENVS.indexOf(runtimeEnv()) >= 0;
+  // Preserve HSTS in staging as well as the shared production decision.
+  return isProductionLike() || ['staging', 'stage'].includes(getRuntimeEnv());
 }
 
 function isHttpsRequest(req) {

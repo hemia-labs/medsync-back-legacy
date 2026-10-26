@@ -1,6 +1,6 @@
 'use strict';
 
-const PRODUCTION_ENVS = ['production', 'prod'];
+const { getRuntimeEnv, isProductionLike } = require('./runtimeEnvironment');
 const DEFAULT_AUTH_COOKIE_MODE = 'legacy';
 const DEFAULT_BROWSER_AUTH_TRANSPORT = 'authorization';
 const DEFAULT_ACCESS_COOKIE_NAME = '__Host-medsync_at';
@@ -38,14 +38,6 @@ function normalizeText(value) {
 
 function lower(value) {
   return normalizeText(value).toLowerCase();
-}
-
-function getRuntimeEnv(env) {
-  return normalizeText(env.APP_ENV || env.ENVIRONMENT || env.NODE_ENV || 'development');
-}
-
-function isProductionLikeRuntime(runtimeEnv) {
-  return PRODUCTION_ENVS.includes(lower(runtimeEnv));
 }
 
 function parseBoolean(value, fallback) {
@@ -160,7 +152,7 @@ function hasD2EnvConfigured(env) {
 
 function getAuthCookieConfig(options = {}) {
   const env = options.env || process.env;
-  const runtimeEnv = options.runtimeEnv || getRuntimeEnv(env);
+  const runtimeEnv = getRuntimeEnv(env, options.runtimeEnv);
   const authCookieMode = lower(env.AUTH_COOKIE_MODE || DEFAULT_AUTH_COOKIE_MODE);
   const browserAuthTransport = lower(env.BROWSER_AUTH_TRANSPORT || DEFAULT_BROWSER_AUTH_TRANSPORT);
   const cookiePath = normalizeText(env.AUTH_COOKIE_PATH || DEFAULT_COOKIE_PATH);
@@ -178,7 +170,7 @@ function getAuthCookieConfig(options = {}) {
   const corsOrigins = splitOrigins(getCorsOriginsRaw(env));
   const accessMaxAgeMs = useTtlMaxAge ? parseDurationMs(env.JWT_EXPIRES_IN) : null;
   const refreshMaxAgeMs = useTtlMaxAge ? getRefreshTokenTtlMs(env) : null;
-  const productionLike = isProductionLikeRuntime(runtimeEnv);
+  const productionLike = isProductionLike(env, options.runtimeEnv);
   const isCookieAuthEnabled = authCookieMode === 'd2' && browserAuthTransport === 'cookie';
 
   return {

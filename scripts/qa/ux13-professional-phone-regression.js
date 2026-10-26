@@ -13,8 +13,9 @@ const original = {
     can_issue_prescriptions: 0, can_sign_documents: 0, is_active: 1
 };
 let profile = { ...original }, permitted = false, queries = 0, writes = [];
-stub('../../src/db/Sequelize.connection', { async query(sql, options) {
+stub('../../src/db/Sequelize.connection', { async transaction() { return { async commit() { this.finished = 'commit'; }, async rollback() { this.finished = 'rollback'; } }; }, async query(sql, options) {
     queries++;
+    if (sql.includes('SELECT id_business FROM business')) return [{ id_business: 'qa-tenant' }];
     if(sql.includes('FROM login l')) {
         assert.equal(options.replacements._id_business, 'qa-tenant');
         return [{ id_login: options.replacements._id_login, id_business: 'qa-tenant', rol: 'doctor' }];

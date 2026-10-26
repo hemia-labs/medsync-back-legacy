@@ -2774,6 +2774,10 @@ class SuperAdminDao {
     }
 
     async closeSession(idSession, actor = {}, payload = {}) {
+        // Fail closed until a server-issued step-up proof is implemented.
+        if (require('../../config/security').isSuperAdminSessionReauthRequired()) {
+            return responseData.forbidden('Se requiere reautenticacion para cerrar sesiones. Esta operacion no esta disponible con la politica actual.', { code: 'SESSION_REAUTH_REQUIRED' });
+        }
         const transaction = await sequelize.transaction();
         try {
             if (!idSession) {

@@ -133,7 +133,7 @@ class PrescriptionController extends httpResponseHelper {
     doctors = async (req, res, next) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
-            response = await PrescriptionDao.doctors(getBusinessIdFromToken(req.tokenDecode));
+            response = await PrescriptionDao.doctors(getBusinessIdFromToken(req.tokenDecode), req.tokenDecode.id_login);
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }

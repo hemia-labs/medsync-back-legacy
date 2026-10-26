@@ -1,3 +1,4 @@
+const { compensateUpload, queueUploadCleanup } = require('../../services/aws/compensateUpload');
 
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -29,6 +30,26 @@ const FILE_COLLATION = 'utf8mb4_unicode_ci';
  */
 class FilesDao{
 
+async recoverUploaded(body, bucket, object, profile = false) {
+    let rows;
+    try {
+        const table = profile ? 'profile_px' : 'files';
+        rows = await sequelize.query(`SELECT f.* FROM ${table} f
+            INNER JOIN person p ON p.id_person = f.id_person
+            WHERE f.id_person = :patient AND p.id_business = :business AND f.url = :url`, {
+            replacements: { patient: body.id_person, business: body.id_business, url: object.Location }, type: QueryTypes.SELECT
+        });
+    } catch (_) {
+        // The procedure may have committed before the connection failed.
+        // Never delete an object while its persistence outcome is unknown.
+        await queueUploadCleanup(bucket, object, 'persistence_unknown_verify_before_delete');
+        return null;
+    }
+    if (rows.length) return responseData.success(rows, Messages.DATA_SAVE_SUCCESSFULLY);
+    await compensateUpload(bucket, object);
+    return null;
+}
+
 async ownsPatient(body) {
     if (!body.id_person || !body.id_business) return false;
     const rows = await sequelize.query('SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business AND active = 1 LIMIT 1', {
@@ -58,6 +79,7 @@ async getBuckets() {
  * @returns 
  */
 async uploadFile(body) {
+    let uploaded = null, uploadBucket = null;
     let response;    
     try {
 
@@ -66,7 +88,8 @@ async uploadFile(body) {
         let bucket = getBucketbyCode(body.code_cat_files)
         if(!bucket) throw new Error("No se indico un repositorio valido para la imagen")
 
-        let resultFile = await uploadImage(bucket, body.file);
+        uploadBucket = bucket;
+        const resultFile = uploaded = await uploadImage(bucket, body.file);
 
         let result = await sequelize.query(SequelizeSP.SP_FILE_SAVE, {
             replacements: {
@@ -79,7 +102,7 @@ async uploadFile(body) {
             plain: true 
         });
 
-        if(result){/*Validamos si existe un registro de salida */
+        if(result && (!Array.isArray(result) || result.length)){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
             response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
@@ -88,6 +111,10 @@ async uploadFile(body) {
         }
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    }
+    if (uploaded && response.status !== 200) {
+        try { response = await this.recoverUploaded(body, uploadBucket, uploaded) || response; }
+        catch (_) { console.error('[STORAGE_CLEANUP_JOURNAL_FAILED]'); }
     }
     return response;
 }
@@ -98,13 +125,15 @@ async uploadFile(body) {
  * @returns 
  */
 async uploaProfilePhoto(body) {
+    let uploaded = null, uploadBucket = null;
     let response;    
     try {
 
         if (!await this.ownsPatient(body)) return responseData.notSuccess('Paciente no disponible para este consultorio.');
 
 
-        let resultFile = await uploadImage(config.BUCKETS.PROFILE, body.file);
+        uploadBucket = config.BUCKETS.PROFILE;
+        const resultFile = uploaded = await uploadImage(uploadBucket, body.file);
 
         let result = await sequelize.query(SequelizeSP.SP_PROFILE_PX, {
             replacements: {
@@ -118,7 +147,7 @@ async uploaProfilePhoto(body) {
             plain: true 
         });
 
-        if(result){/*Validamos si existe un registro de salida */
+        if(result && (!Array.isArray(result) || result.length)){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
             response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
@@ -128,6 +157,10 @@ async uploaProfilePhoto(body) {
 
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
+    }
+    if (uploaded && response.status !== 200) {
+        try { response = await this.recoverUploaded(body, uploadBucket, uploaded, true) || response; }
+        catch (_) { console.error('[STORAGE_CLEANUP_JOURNAL_FAILED]'); }
     }
     return response;
 }

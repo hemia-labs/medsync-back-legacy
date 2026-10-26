@@ -723,21 +723,33 @@ class DocumentSignatureRequestDao {
                 );
             }
 
-            await this.addEvent(
-                emailContext,
-                body.id_login,
-                DOCUMENT_SIGNATURE_EVENTS.LINK_SEND_EMAIL_SUCCESS,
-                safeEventNotes('Correo de firma remota enviado.', {
-                    signature_request_id: createdRequest.id_document_signature_request,
-                    channel: SIGNATURE_REQUEST_CHANNELS.EMAIL,
-                    signature_role: createdRequest.signature_role,
-                    expires_at: createdRequest.expires_at,
-                    token_fingerprint: createdRequest.token_fingerprint || null,
-                    recipient_email_masked: maskEmail(recipientEmail),
-                    provider: emailResult.provider || emailProviderName(),
-                    message_id: emailResult.messageId || null
-                })
-            );
+            try {
+                await this.addEvent(
+                    emailContext,
+                    body.id_login,
+                    DOCUMENT_SIGNATURE_EVENTS.LINK_SEND_EMAIL_SUCCESS,
+                    safeEventNotes('Correo de firma remota enviado.', {
+                        signature_request_id: createdRequest.id_document_signature_request,
+                        channel: SIGNATURE_REQUEST_CHANNELS.EMAIL,
+                        signature_role: createdRequest.signature_role,
+                        expires_at: createdRequest.expires_at,
+                        token_fingerprint: createdRequest.token_fingerprint || null,
+                        recipient_email_masked: maskEmail(recipientEmail),
+                        provider: emailResult.provider || emailProviderName(),
+                        message_id: emailResult.messageId || null
+                    })
+                );
+            } catch (_) {
+                // Delivery was accepted. An audit outage must not invalidate its token.
+                try {
+                    await require('../../services/recoveryJournal').recordSignatureEmailAudit({
+                        requestId: createdRequest.id_document_signature_request,
+                        businessId: body.id_business, actorId: body.id_login,
+                        provider: emailResult.provider || emailProviderName(), messageId: emailResult.messageId || null
+                    });
+                } catch (_) { console.error('[SIGNATURE_EMAIL_AUDIT_JOURNAL_FAILED]'); }
+                console.error("[SIGNATURE_EMAIL_AUDIT_PENDING]", { request_id: createdRequest.id_document_signature_request });
+            }
 
             return success({
                 id_document_signature_request: createdRequest.id_document_signature_request,
