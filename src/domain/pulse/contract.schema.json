@@ -291,6 +291,14 @@
               "minimum": 0
             }
           }
+        },
+        "rescueCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Attention pendings that become priority within the next 24 hours."
         }
       }
     },
@@ -713,6 +721,34 @@
                   "$ref": "#/definitions/window"
                 }
               }
+            },
+            "yesterday": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "required": [
+                "counts",
+                "window"
+              ],
+              "properties": {
+                "counts": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0
+                  }
+                },
+                "window": {
+                  "$ref": "#/definitions/window"
+                }
+              }
             }
           }
         },
@@ -996,7 +1032,10 @@
                 "$ref": "#/definitions/nullableUtc"
               },
               "oldestAgeDays": {
-                "type": "integer",
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "minimum": 0
               },
               "action": {
@@ -1026,6 +1065,49 @@
                   "null"
                 ],
                 "maxLength": 1001
+              },
+              "startTime": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d{2}:\\d{2}$"
+              },
+              "doctorLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 255
+              },
+              "kind": {
+                "enum": [
+                  "pending",
+                  "invalid"
+                ]
+              },
+              "invalidReason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  null,
+                  "patient_missing",
+                  "due_date",
+                  "appointment_link",
+                  "record_missing",
+                  "requirements",
+                  "dates",
+                  "status",
+                  "time_range",
+                  "timezone",
+                  "unknown"
+                ]
+              },
+              "rescue": {
+                "type": "boolean",
+                "description": "Attention pending that becomes priority within the next 24 hours."
               }
             },
             "allOf": [
@@ -1099,6 +1181,9 @@
         },
         "consistency": {
           "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
         }
       }
     },

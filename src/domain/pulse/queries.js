@@ -108,20 +108,33 @@ function signaturePopulation(doctorOnly = false) { return `WITH request_groups A
 )`; }
 const signatures = signaturePopulation();
 const populations = { 'PUL-OP01': followUps, 'PUL-OP02': signatures, 'PUL-OP03': appointmentPopulation() };
+// Attention pendings that cross the priority threshold within the next 24 hours.
+const rescue = id => id === 'PUL-OP01' ? 'ageDays>=13' : 'DATE_ADD(dueAt,INTERVAL 7 DAY)<=DATE_ADD(:asOf,INTERVAL 24 HOUR)';
 function aggregate(id) {
     const temporal = id === 'PUL-OP01' ? ':midnight' : `LEAST(COALESCE(MIN(CASE WHEN eligible=1 AND dueAt>:asOf THEN dueAt END),'9999-12-31'),
       COALESCE(MIN(CASE WHEN pending=1 AND DATE_ADD(dueAt,INTERVAL 7 DAY)>:asOf THEN DATE_ADD(dueAt,INTERVAL 7 DAY) END),'9999-12-31')
       ${id === 'PUL-OP03' ? ",COALESCE(MIN(CASE WHEN invalid=0 AND patientActive=1 AND status IN('confirmed','pending_confirmation') AND dueAt>:asOf THEN dueAt END),'9999-12-31'),COALESCE(MIN(CASE WHEN invalid=0 AND patientActive=1 AND status='pending_confirmation' AND startUtc>:asOf THEN startUtc END),'9999-12-31'),COALESCE(MIN(CASE WHEN invalid=0 AND patientActive=1 AND status='pending_confirmation' AND DATE_SUB(startUtc,INTERVAL 24 HOUR)>:asOf THEN DATE_SUB(startUtc,INTERVAL 24 HOUR) END),'9999-12-31')" : ''})`;
     const w = id === 'PUL-OP03' ? '*weight' : '';
     return `${id === 'PUL-OP03' ? appointmentPopulation(true) : populations[id]} SELECT COALESCE(SUM(eligible${w}),0) AS denominator,COALESCE(SUM(pending${w}),0) AS numerator,
-    COALESCE(SUM(pending*priority${w}),0) AS priorityCount,MAX(CASE WHEN pending=1 THEN ageDays END) AS oldestAgeDays,
+    COALESCE(SUM(pending*priority${w}),0) AS priorityCount,MAX(CASE WHEN pending=1 THEN ageDays END) AS oldestAgeDays,MAX(CASE WHEN pending=1 AND priority=0 THEN ageDays END) AS oldestAttentionAgeDays,COALESCE(SUM((pending=1 AND priority=0 AND ${rescue(id)})${w}),0) AS rescueCount,
     COALESCE(SUM(invalid${w}),0) AS invalidRecords,${id === 'PUL-OP02' ? '0' : `COALESCE(SUM((patientActive=0 AND dueAt${id === 'PUL-OP01' ? '<:today' : '<=:asOf'})${w}),0)`} AS excludedArchived,${temporal} AS nextTransitionAt
     ${id === 'PUL-OP03' ? ",COALESCE(SUM((invalid=0 AND patientActive=1 AND status='pending_confirmation' AND startUtc>:asOf AND startUtc<=DATE_ADD(:asOf,INTERVAL 24 HOUR))*weight),0) AS upcoming,COALESCE(SUM((invalid=0 AND patientActive=1 AND status IN('confirmed','pending_confirmation') AND startUtc<=:asOf AND dueAt>:asOf)*weight),0) AS inProgress" : ''}
     FROM obligations`;
 }
-function page(id, hasCursor) {
-    return `${populations[id]} SELECT recordId,patientId,NULLIF(TRIM(CONCAT_WS(' ',displayPatient.name,displayPatient.surname)),'') AS patientLabel,priority,DATE_FORMAT(dueAt,'%Y-%m-%d %H:%i:%s.000') AS dueAt,ageDays,${id === 'PUL-OP02' ? 'id_patient_document' : 'NULL'} AS documentId,${id === 'PUL-OP03' ? "DATE_FORMAT(appointment_date,'%Y-%m-%d')" : 'NULL'} AS appointmentDate,${id === 'PUL-OP03' ? 'doctorProfileId' : 'NULL'} AS doctorProfileId FROM obligations LEFT JOIN person displayPatient ON displayPatient.id_person=patientId AND displayPatient.id_business=:business WHERE pending=1
-    ${hasCursor ? 'AND (priority<:priority OR (priority=:priority AND (dueAt>:due OR (dueAt=:due AND recordId>:lastId))))' : ''}
-    ORDER BY priority DESC,dueAt,recordId LIMIT :limit`;
+// Stable reason codes for records that cannot be evaluated; never free text from the record.
+const invalidReasons = {
+    'PUL-OP01': "CASE WHEN patientExists IS NULL OR patientActive IS NULL THEN 'patient_missing' WHEN dueAt IS NULL OR dueAt<'1000-01-01' THEN 'due_date' ELSE 'appointment_link' END",
+    'PUL-OP02': "CASE WHEN documentExists IS NULL OR patientExists IS NULL THEN 'record_missing' WHEN flagsValid=0 THEN 'requirements' ELSE 'dates' END",
+    'PUL-OP03': "CASE WHEN patientExists IS NULL OR patientActive IS NULL THEN 'patient_missing' WHEN status NOT IN('confirmed','pending_confirmation','completed','cancelled','rescheduled','no_show') THEN 'status' WHEN appointment_date<'1000-01-01' OR start_time<'00:00:00' OR end_time>='24:00:00' OR end_time<=start_time THEN 'time_range' ELSE 'timezone' END"
+};
+function page(id, hasCursor, kind = 'pending') {
+    const invalid = kind === 'invalid', agenda = id === 'PUL-OP03';
+    return `${populations[id]} SELECT recordId,patientId,NULLIF(TRIM(CONCAT_WS(' ',displayPatient.name,displayPatient.surname)),'') AS patientLabel,priority,DATE_FORMAT(dueAt,'%Y-%m-%d %H:%i:%s.000') AS dueAt,ageDays,${id === 'PUL-OP02' ? 'id_patient_document' : 'NULL'} AS documentId,${agenda ? "DATE_FORMAT(appointment_date,'%Y-%m-%d')" : 'NULL'} AS appointmentDate,${agenda ? 'doctorProfileId' : 'NULL'} AS doctorProfileId,
+    ${agenda ? "TIME_FORMAT(start_time,'%H:%i')" : 'NULL'} AS startTime,${agenda ? 'NULLIF(TRIM(displayDoctor.professional_name),\'\')' : 'NULL'} AS doctorLabel,${invalid ? invalidReasons[id] : 'NULL'} AS invalidReason,${invalid ? '0' : `CASE WHEN pending=1 AND priority=0 AND ${rescue(id)} THEN 1 ELSE 0 END`} AS rescue
+    FROM obligations LEFT JOIN person displayPatient ON displayPatient.id_person=patientId AND displayPatient.id_business=:business
+    ${agenda ? 'LEFT JOIN doctor_professional_profile displayDoctor ON displayDoctor.id_doctor_professional_profile=doctorProfileId AND displayDoctor.id_business=:business' : ''}
+    WHERE ${invalid ? '(invalid=1 AND (patientActive=1 OR patientExists IS NULL))' : 'pending=1'}
+    ${hasCursor && !invalid ? 'AND (priority<:priority OR (priority=:priority AND (dueAt>:due OR (dueAt=:due AND recordId>:lastId))))' : ''}
+    ORDER BY ${invalid ? 'recordId' : 'priority DESC,dueAt,recordId'} LIMIT :limit`;
 }
 module.exports = { populations, aggregate, page, signaturePopulation };
