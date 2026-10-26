@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 : "${VPS_APP_DIR:?}" "${RELEASE_ID:?}" "${APP_PORT:?}"
 [[ "$VPS_APP_DIR" == /* && "$VPS_APP_DIR" != / && "$RELEASE_ID" =~ ^[0-9]+-[0-9]+$ ]] || exit 1
 root="$(realpath "$VPS_APP_DIR")"
@@ -32,13 +32,21 @@ activate_link() {
   ln -s "$1" "$root/current.$RELEASE_ID.tmp"
   mv -Tf "$root/current.$RELEASE_ID.tmp" "$root/current"
 }
+start_release() {
+  cd "$1"
+  export APP_RELEASE_ID="$(basename "$1")"
+  # Reload keeps PM2's old absolute script/cwd. Recreate only this app so
+  # both activation and rollback resolve paths from the selected ecosystem.
+  if pm2 describe medsync-back-legacy >/dev/null 2>&1; then
+    pm2 delete medsync-back-legacy
+  fi
+  pm2 start ecosystem.config.cjs --update-env
+}
 rollback() {
   trap - ERR
   if [[ -f "$previous/ecosystem.config.cjs" ]]; then
     activate_link "$previous"
-    cd "$previous"
-    export APP_RELEASE_ID="$(basename "$previous")"
-    pm2 startOrReload ecosystem.config.cjs --update-env
+    start_release "$previous"
     pm2 save
     echo 'Previous release restored; verify its availability before retrying.'
   else
@@ -49,7 +57,7 @@ rollback() {
 trap rollback ERR
 activate_link "$release"
 export APP_RELEASE_ID="$RELEASE_ID"
-pm2 startOrReload ecosystem.config.cjs --update-env
+start_release "$release"
 for attempt in {1..15}; do
   if curl --max-time 4 -fsS "http://127.0.0.1:$APP_PORT/readyz" | node -e 'let s="";process.stdin.on("data",b=>s+=b).on("end",()=>{try{const r=JSON.parse(s);process.exit(r.ready===true&&r.release===process.env.APP_RELEASE_ID?0:1)}catch(_){process.exit(1)}})'; then
     pm2 save

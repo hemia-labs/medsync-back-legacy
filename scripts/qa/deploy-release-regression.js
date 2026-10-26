@@ -22,7 +22,7 @@ try {
         write(path.join(candidate, 'src/index.js'), 'candidate');
         write(path.join(root, 'nvm/nvm.sh'), 'nvm() { return 0; }\n');
         write(path.join(bin, 'npm'), '#!/usr/bin/env bash\n[[ "$QA_PHASE" != install-failure ]]\n');
-        write(path.join(bin, 'pm2'), '#!/usr/bin/env bash\nprintf "%s:%s\\n" "$PWD" "$*" >> "$QA_RECORD"\n[[ "$QA_PHASE" != start-failure || "$APP_RELEASE_ID" != 100-1 ]]\n');
+        write(path.join(bin, 'pm2'), '#!/usr/bin/env bash\nprintf "%s:%s\\n" "$PWD" "$*" >> "$QA_RECORD"\n[[ "$1" != start || "$QA_PHASE" != start-failure || "$APP_RELEASE_ID" != 100-1 ]]\n');
         write(path.join(bin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
         write(path.join(bin, 'curl'), '#!/usr/bin/env bash\n[[ "$QA_PHASE" != readiness-failure ]] || exit 22\nprintf \'{"ready":true,"release":"%s"}\' "$APP_RELEASE_ID"\n');
         if (process.platform === 'win32') {
@@ -46,6 +46,16 @@ try {
             assert.equal(fs.existsSync(path.join(root, 'current')), false);
             assert.equal(fs.existsSync(path.join(root, 'pm2-record')), false, 'Installation failure cannot restart the active app');
         } else {
+            const commands = fs.readFileSync(path.join(root, 'pm2-record'), 'utf8').trim().split('\n');
+            const starts = commands.filter(line => line.endsWith(':start ecosystem.config.cjs --update-env'));
+            assert.equal(starts[0], shellPath(candidate) + ':start ecosystem.config.cjs --update-env');
+            assert.equal(starts.length, phase === 'success' ? 1 : 2);
+            if (phase !== 'success') assert.equal(starts[1], shellPath(root) + ':start ecosystem.config.cjs --update-env');
+            for (const start of starts) {
+                const index = commands.indexOf(start);
+                assert.equal(commands[index - 1], start.split(':start ')[0] + ':delete medsync-back-legacy');
+            }
+            assert.ok(commands.every(line => !line.includes('startOrReload')), 'Never reuse stale PM2 script/cwd');
             assert.ok(fs.existsSync(path.join(root, 'current')), result.stdout + result.stderr);
             assert.equal(fs.realpathSync(path.join(root, 'current')), fs.realpathSync(phase === 'success' ? candidate : root));
             assert.equal(fs.readFileSync(path.join(root, 'shared/logs/kept'), 'utf8'), 'persistent-logs');
