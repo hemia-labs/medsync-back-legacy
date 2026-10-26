@@ -22,6 +22,7 @@ const db = {
 stub('../../src/db/Sequelize.connection', db);
 
 (async () => {
+    await require('./runtime-environment-regression').run();
     const users = require('../../src/Dao/mysql/user.dao');
     const body = { id_business: 'tenant', id_login: 'actor', id_rol: 'reserved', phone: '5550000000', email: 'qa@example.invalid' };
     for (role of ['super_admin', 'unknown-platform-role']) {

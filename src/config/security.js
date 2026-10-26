@@ -1,6 +1,7 @@
 'use strict';
 
 const AuthCookieConfig = require('./authCookie.config');
+const { getRuntimeEnv, isProductionLike } = require('./runtimeEnvironment');
 
 const DEFAULT_JWT_EXPIRES_IN = 60000;
 const DEFAULT_JWT_SECRET = '__DEFAULT_INSECURE_JWT_SECRET_CHANGE_ME__';
@@ -24,19 +25,7 @@ const DEFAULT_CORS_ALLOWED_HEADERS = [
 const DEFAULT_CORS_ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 const REFRESH_TOKEN_REUSE_SCOPES = ['session', 'family', 'user'];
 const PASSWORD_RESET_CODE_ALPHABETS = ['numeric', 'alphanumeric'];
-const PRODUCTION_ENVS = ['production', 'prod'];
 const LOCAL_CORS_HOSTS = ['localhost', '127.0.0.1', '::1'];
-
-function getRuntimeEnv() {
-  if ([process.env.APP_ENV, process.env.ENVIRONMENT, process.env.NODE_ENV]
-    .some(value => PRODUCTION_ENVS.includes(String(value || '').trim().toLowerCase()))) return 'production';
-  return process.env.APP_ENV || process.env.ENVIRONMENT || process.env.NODE_ENV || 'development';
-}
-
-function isProductionLike() {
-  // A secondary environment label must never weaken production controls.
-  return PRODUCTION_ENVS.includes(String(getRuntimeEnv()).trim().toLowerCase());
-}
 
 function isActiveSessionRequired() {
   return process.env.REQUIRE_ACTIVE_SESSION === 'true';
