@@ -5,6 +5,17 @@ const AppointmentDao = require('../../Dao/mysql/appointment.Dao');
 const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
 
 class AppointmentController extends httpResponseHelper{
+  linkPatient = async(req, res) => {
+    if (Object.keys(req.body || {}).some(key => !['patientId', 'revision', 'request_id', 'confirm_completed'].includes(key))) {
+      return res.status(400).send({ status: 400, data: { code: 'LINK_FIELDS_ONLY' }, message: 'Vincular solo admite paciente, revision y confirmacion.' });
+    }
+    const response = await require('../../domain/appointments/linkPatient').linkPatient(applyTenantToBody(req, { ...req.body, id_appointment: req.params.appointmentId }));
+    res.status(response.status).send(response);
+  }
+  followUps = async(req, res) => {
+    const response = await require('../../domain/appointments/continuity').followUps({ id_business: getBusinessIdFromToken(req.tokenDecode) }, req.params.patientId);
+    res.status(response.status).send(response);
+  }
 
   doctors = async(req, res) => {
     const result = await AppointmentDao.doctors({ id_business: getBusinessIdFromToken(req.tokenDecode) });
@@ -77,6 +88,11 @@ class AppointmentController extends httpResponseHelper{
 
   reschedule = async(req, res) => {
     const response = await AppointmentDao.reschedule(applyTenantToBody(req, req.body));
+    res.status(response.status).send(response);
+  }
+  cancellationImpact = async(req, res) => {
+    const response = await AppointmentDao.cancellationImpact({ id_business: getBusinessIdFromToken(req.tokenDecode),
+        id_login: req.tokenDecode.id_login, id_appointment: req.params.appointmentId, revision: req.query.revision });
     res.status(response.status).send(response);
   }
   configImpact = async(req, res) => {

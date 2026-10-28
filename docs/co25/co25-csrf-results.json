@@ -1,0 +1,28 @@
+{
+  "checkedAt": "2026-10-28T22:11:45.708Z",
+  "runtime": "v22.22.0",
+  "browser": "156.0.4314.50",
+  "checks": [
+    "two real tabs: first-issuance race recovers once, identical body, exactly two effects",
+    "eight simultaneous mutations share a single CSRF GET",
+    "missing cookie renews and retries only the rejected request",
+    "actual server expiry with a stale browser clock recovers exactly once",
+    "expired rejection uses the same bounded recovery contract",
+    "FormData upload survives recovery without duplicate parts or writes",
+    "permission, origin, signature, binding and missing-header failures never retry",
+    "second rejection stops recovery and preserves the form with an actionable error",
+    "failed renewal does not replay a mutation",
+    "network error never triggers CSRF replay",
+    "lost response after a confirmed write never replays an unknown outcome",
+    "permission revision change during recovery cancels the old mutation",
+    "server session change blocks replay even if the old tab store has not updated",
+    "cleanup invalidates a real in-flight renewal response",
+    "expired access refresh obtains preauth CSRF then clears it before session mutations",
+    "separate registration transport recovers and preserves Idempotency-Key",
+    "registration reports session-change errors without requiring HTTP headers on local errors",
+    "logout clears the CSRF cache and browser session cookies",
+    "login uses preauth CSRF and clears it before the first authenticated write"
+  ],
+  "scope": "Real Axios clients, real cookies in two Edge tabs, HTTP CSRF controller/middleware/OptionalAuth. Synthetic auth state and persistence; no DB or external services.",
+  "pageErrors": []
+}

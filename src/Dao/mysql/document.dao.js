@@ -224,7 +224,7 @@ class DocumentDao {
         try {
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW) || await this.hasPermission(body.id_login, PERMISSIONS.CONFIG);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar plantillas de documentos.');
+                return responseData.forbidden('No tienes permiso para consultar plantillas de documentos.');
             }
 
             const rows = await sequelize.query(
@@ -413,7 +413,7 @@ class DocumentDao {
             const paging = documentPageRequest(body);
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para consultar documentos.');
+                return responseData.forbidden('No tienes permiso para consultar documentos.');
             }
 
             const patient = await this.getPatient(body.id_person, body.id_business);

@@ -193,6 +193,10 @@ const validation = require('../../src/domain/tracing/tracingValidation');
     const origin = { ...appointment, id: uuid(), business: body.id_business, revision: 1, status: 'confirmed' };
     appointments.push(origin);
     result = await agenda.reschedule({ ...body, request_id: uuid(), appointment: { ...origin, date: '2026-10-28', title: 'Motivo actualizado desde agenda' } });
+    assert.equal(result.status, 409); assert.equal(result.data.code, 'FOLLOW_UP_APPOINTMENT_AMBIGUOUS');
+    // The preceding history fixtures intentionally contain multiple open bookings.
+    for (const a of appointments) if (a.id !== origin.id && a.business === body.id_business && a.patientId === origin.patientId && a.followUpId === origin.followUpId && ['pending_confirmation','confirmed'].includes(a.status)) a.status = 'cancelled';
+    result = await agenda.reschedule({ ...body, request_id: uuid(), appointment: { ...origin, date: '2026-10-28', title: 'Motivo actualizado desde agenda' } });
     assert.equal(result.status, 200, result.message);
     const moved = result.data[0];
     assert.equal(moved.followUpId, origin.followUpId, 'Reprogramming preserves exact follow-up link despite changed date and reason');

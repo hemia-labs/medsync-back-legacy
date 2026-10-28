@@ -233,20 +233,24 @@ function buildD2SessionResponseData(data) {
 
 class AuthController extends httpResponseHelper{
   csrf = async(req, res, next) =>{
+    res.setHeader('Cache-Control', 'no-store');
     try {
-        const issued = CsrfTokenService.issueToken(req);
+        const issued = CsrfTokenService.getOrIssueToken(req);
         const cookieName = CsrfTokenService.csrfCookieName();
 
-        res.cookie(cookieName, issued.token, CsrfTokenService.csrfCookieOptions());
+        if (!issued.reused) {
+            res.cookie(cookieName, issued.token, CsrfTokenService.csrfCookieOptions());
+        }
 
         const response = responseData.success({
             csrfToken: issued.token,
             headerName: SecurityConfig.getCsrfHeaderName(),
             expiresAt: issued.expiresAt,
-            contextType: issued.contextType
+            contextType: issued.contextType,
+            contextId: issued.contextId
         }, MESSAGES.DATA_GET_SUCCESSFULLY);
 
-        securityLogger.record('auth.csrf.issued', req, {
+        securityLogger.record(issued.reused ? 'auth.csrf.reused' : 'auth.csrf.issued', req, {
             context_type: issued.contextType,
             expires_at: issued.expiresAt
         });

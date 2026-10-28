@@ -255,17 +255,7 @@ class TracingDao {
         try {
             const context = await this.context(body, 'px.tab.monitoring', null, false);
             if (context.error) return context.error;
-            const result = await sequelize.query(`SELECT t.id_tracing, t.treatment_now, t.quote_date_after, t.treatment_after,
-                p.id_person, CONCAT_WS(' ', p.name, p.surname) AS name, p.code, p.telephone
-                FROM tracing t INNER JOIN person p ON ${eq('p.id_person', 't.id_person')} AND ${eq('p.id_business', 't.id_business')}
-                WHERE ${eq('t.id_business', ':business')} AND t.status = 'active'
-                  AND t.quote_date_after >= CURRENT_DATE()
-                  AND t.quote_date_after <= DATE_ADD((SELECT MIN(t2.quote_date_after) FROM tracing t2
-                      WHERE ${eq('t2.id_business', ':business')} AND t2.status = 'active' AND t2.quote_date_after >= CURRENT_DATE()), INTERVAL 20 DAY)
-                ORDER BY t.quote_date_after`, {
-                replacements: { business: body.id_business }, type: QueryTypes.SELECT
-            });
-            return responseData.success(result, 'Proximos seguimientos.');
+            return await require('../../domain/appointments/continuity').followUps(body);
         } catch (error) { return responseData.error('No se pudieron consultar los proximos seguimientos.'); }
     }
 }

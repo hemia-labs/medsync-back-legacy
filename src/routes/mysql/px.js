@@ -20,6 +20,7 @@ const {
 const { protectedBodyParser } = require('../../middleware/requestBody.middleware');
 
 const csrfProtected = csrfProtection();
+router.get('/create-minimal/:requestId', Token.Auth, requireTenantOperational, requirePermission('px.new', { resource: 'px.create_minimal.result' }), awaitHandlerFactory(PxController.minimalResult));
 
 router.put('/allergies', Token.Auth, csrfProtected, requireTenantOperational, requirePermission('clinical_history.edit_draft', { resource: 'px.allergies' }), awaitHandlerFactory(PxController.updateAllergies));
 

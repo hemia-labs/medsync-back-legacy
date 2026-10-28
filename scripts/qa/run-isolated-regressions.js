@@ -13,7 +13,8 @@ const tests = [
     's16-history-integrity-regression', 's19-history-finalize-authorization-regression',
     'allergy-status-regression', 'clinical-history-usability-regression',
     'clinical-template-permission-status-regression', 'ux13-professional-phone-regression',
-    'document-html-security-regression', 'co11-professional-domain-regression'
+    'document-html-security-regression', 'co11-professional-domain-regression',
+    'co25-csrf-regression', 'co25-csrf-http-regression', 'co25-a2-policy-regression'
 ];
 for (const test of tests) {
     console.log(`TEST ${test}`);

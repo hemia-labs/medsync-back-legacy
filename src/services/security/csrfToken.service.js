@@ -114,7 +114,8 @@ function issueToken(req, options = {}) {
         token: `${encodedPayload}.${signature}`,
         payload,
         expiresAt: new Date(payload.exp * 1000).toISOString(),
-        contextType: payload.ctx
+        contextType: payload.ctx,
+        contextId: hmac(`csrf-context:${payload.ctx}:${payload.binding}`)
     };
 }
 
@@ -173,9 +174,25 @@ function validateToken(rawToken, req, options = {}) {
         ok: true,
         payload: {
             contextType: payload.ctx,
-            expiresAt: new Date(payload.exp * 1000).toISOString()
+            expiresAt: new Date(payload.exp * 1000).toISOString(),
+            contextId: hmac(`csrf-context:${payload.ctx}:${payload.binding}`)
         }
     };
+}
+
+function getOrIssueToken(req, options = {}) {
+    const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+    const ttlSeconds = SecurityConfig.getCsrfTokenTtlSeconds();
+    // Scale down for short configured lifetimes instead of rotating every GET.
+    // exp is stored in whole seconds, so account for that rounding at TTL=1.
+    const renewalWindowMs = Math.min(120000, Math.max(0, ttlSeconds - 1) * 1000 / 4);
+    const token = req && req.cookies ? req.cookies[csrfCookieName()] : null;
+    const validated = validateToken(token, req, { nowSeconds: Math.floor(nowMs / 1000) });
+    if (validated.ok && validated.payload.contextType === getContextType(req)
+        && Date.parse(validated.payload.expiresAt) - nowMs > renewalWindowMs) {
+        return { token, ...validated.payload, reused: true };
+    }
+    return { ...issueToken(req, { nowMs, ttlSeconds }), reused: false };
 }
 
 function csrfCookieName() {
@@ -260,6 +277,7 @@ function safeTokenSummary(rawToken) {
 module.exports = {
     csrfCookieName,
     csrfCookieOptions,
+    getOrIssueToken,
     issueToken,
     safeMethod,
     safeTokenSummary,
