@@ -167,15 +167,15 @@ function buildLimitUsage(used, limit) {
     };
 }
 
-async function getBusinessEffectiveLicense(idBusiness) {
-    const business = await LicenseUsageDao.getBusinessPlan(idBusiness);
+async function getBusinessEffectiveLicense(idBusiness, transaction = null) {
+    const business = await LicenseUsageDao.getBusinessPlan(idBusiness, transaction);
     if (!business) {
         return null;
     }
 
     const plan = getSaasPlan(business.plan) || getUnknownSaasPlan(business.plan);
-    const usage = await LicenseUsageDao.getBusinessLicenseUsage(idBusiness);
-    const overrides = await LicenseUsageDao.getBusinessLicenseOverride(idBusiness);
+    const usage = await LicenseUsageDao.getBusinessLicenseUsage(idBusiness, transaction);
+    const overrides = await LicenseUsageDao.getBusinessLicenseOverride(idBusiness, { transaction });
     const planLimits = buildPlanLimits(plan);
     const effectiveLimits = buildEffectiveLimits(plan, overrides);
 
@@ -251,7 +251,8 @@ async function auditBlocked({
     action,
     previousResource,
     nextResource,
-    reason
+    reason,
+    transaction = null
 }) {
     await AdminAuditDao.record(LICENSE_LIMIT_BLOCKED, {
         actor_login_id: actorLoginId || null,
@@ -276,11 +277,11 @@ async function auditBlocked({
             next_resource: nextResource || null,
             reason: reason || null
         }
-    });
+    }, { transaction });
 }
 
-async function validateResourceLimit({ idBusiness, resource, actorLoginId, roleCode }) {
-    const license = await getBusinessEffectiveLicense(idBusiness);
+async function validateResourceLimit({ idBusiness, resource, actorLoginId, roleCode, transaction = null }) {
+    const license = await getBusinessEffectiveLicense(idBusiness, transaction);
     if (!license) {
         return responseData.bad_request('Negocio invalido para validar licencia.');
     }
@@ -301,6 +302,7 @@ async function validateResourceLimit({ idBusiness, resource, actorLoginId, roleC
 
     const recommendedPlan = getRecommendedPlan(plan.code, resource);
     await auditBlocked({
+        transaction,
         idBusiness,
         actorLoginId,
         roleCode,
@@ -325,7 +327,8 @@ async function validateLicenseTransition({
     nextResource,
     actorLoginId = null,
     roleCode = null,
-    action = 'update_user'
+    action = 'update_user',
+    transaction = null
 }) {
     if (currentResource === 'super_admin' || nextResource === 'super_admin' || nextResource === 'none') {
         return { allowed: true };
@@ -344,7 +347,7 @@ async function validateLicenseTransition({
     }
 
     const internalResource = toInternalResource(nextResource);
-    const license = await getBusinessEffectiveLicense(idBusiness);
+    const license = await getBusinessEffectiveLicense(idBusiness, transaction);
     if (!license) {
         return responseData.bad_request('Negocio invalido para validar licencia.');
     }
@@ -366,6 +369,7 @@ async function validateLicenseTransition({
 
     const recommendedPlan = getRecommendedPlan(license.plan.code, internalResource);
     await auditBlocked({
+        transaction,
         idBusiness,
         actorLoginId,
         targetLoginId,
@@ -387,10 +391,10 @@ async function validateLicenseTransition({
     };
 }
 
-async function validateLicenseForNewUser(idBusiness, roleOrPayload = {}, actorLoginId = null) {
+async function validateLicenseForNewUser(idBusiness, roleOrPayload = {}, actorLoginId = null, transaction = null) {
     const role = roleOrPayload.code
         ? roleOrPayload
-        : await LicenseUsageDao.getRoleById(roleOrPayload.id_rol || roleOrPayload.idRole);
+        : await LicenseUsageDao.getRoleById(roleOrPayload.id_rol || roleOrPayload.idRole, transaction);
 
     if (!role) {
         return responseData.bad_request('Rol invalido para validar licencia.');
@@ -412,6 +416,7 @@ async function validateLicenseForNewUser(idBusiness, roleOrPayload = {}, actorLo
 
     const resource = category === 'professional' ? 'professionals' : 'auxiliaryUsers';
     return validateResourceLimit({
+        transaction,
         idBusiness,
         resource,
         actorLoginId,
@@ -419,8 +424,8 @@ async function validateLicenseForNewUser(idBusiness, roleOrPayload = {}, actorLo
     });
 }
 
-async function validateLicenseForProfessionalProfile(idBusiness, idLogin, actorLoginId = null) {
-    const currentState = await LicenseUsageDao.getLicenseUserState(idBusiness, idLogin);
+async function validateLicenseForProfessionalProfile(idBusiness, idLogin, actorLoginId = null, transaction = null) {
+    const currentState = await LicenseUsageDao.getLicenseUserState(idBusiness, idLogin, transaction);
     if (!currentState) {
         return responseData.bad_request('Usuario invalido para validar licencia.');
     }
@@ -432,6 +437,7 @@ async function validateLicenseForProfessionalProfile(idBusiness, idLogin, actorL
     });
 
     return validateLicenseTransition({
+        transaction,
         idBusiness,
         targetLoginId: idLogin,
         currentResource,

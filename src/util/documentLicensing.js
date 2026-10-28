@@ -195,11 +195,7 @@ function resolveDocumentLicenseMetadata(templateOrType) {
     const rule = getRuleForLicenseCategory(category);
     const knownTypeCategory = TEMPLATE_TYPE_TO_DOCUMENT_CATEGORY[type];
     const protectsKnownType = Boolean(knownTypeCategory && type !== 'CUSTOM');
-    const explicitMinimumPlan = normalizeMetadataCode(template.minimum_plan || template.minimumPlan);
-    const explicitBlockMode = normalizeMetadataCode(template.block_mode || template.blockMode);
-    const explicitClinicalLegalSafe = normalizeBoolean(readMetadataValue(template, 'clinical_legal_safe', 'clinicalLegalSafe'));
     const explicitIsPremium = normalizeBoolean(readMetadataValue(template, 'is_premium', 'isPremium'));
-    const premium = protectsKnownType ? false : isTemplatePremium(template);
     const metadataComplete = subtype !== 'unknown'
         || Boolean(template.license_category || template.licenseCategory)
         || explicitIsPremium === true;
@@ -208,10 +204,10 @@ function resolveDocumentLicenseMetadata(templateOrType) {
         templateType: type || null,
         templateSubtype: subtype,
         licenseCategory: category,
-        minimumPlan: protectsKnownType || !explicitMinimumPlan ? rule.minimumPlan : explicitMinimumPlan,
-        blockMode: protectsKnownType || !explicitBlockMode ? rule.blockMode : explicitBlockMode,
-        clinicalLegalSafe: protectsKnownType || explicitClinicalLegalSafe === null ? rule.clinicalLegalSafe : explicitClinicalLegalSafe,
-        isPremium: premium,
+        minimumPlan: rule.minimumPlan,
+        blockMode: rule.blockMode,
+        clinicalLegalSafe: rule.clinicalLegalSafe,
+        isPremium: category === 'premium_document_template' || category === 'premium_consent_template',
         metadataComplete,
         knownTemplateType: Boolean(knownTypeCategory),
         requiresMetadataBeforeEnforcement: type === 'CUSTOM' && !metadataComplete,

@@ -1,4 +1,5 @@
 const effectivePermissions = require('../../util/effectivePermissions');
+const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -391,19 +392,15 @@ class ClinicalHistoryDao {
     }
 
     async resolveTemplateSnapshot(businessId, transaction = null) {
-        try {
-            const current = await ClinicalHistoryTemplateDao.getCurrentTemplateForBusiness(businessId, transaction);
-            if (!current || !current.template) {
-                return { templateVersionId: null, templateSnapshotJson: null };
-            }
-
-            return {
-                templateVersionId: current.template.id_clinical_history_template_version || null,
-                templateSnapshotJson: JSON.stringify(current.template.schema_json || {})
-            };
-        } catch (error) {
+        const current = await ClinicalHistoryTemplateDao.getCurrentTemplateForBusiness(businessId, transaction);
+        if (!current || !current.template) {
             return { templateVersionId: null, templateSnapshotJson: null };
         }
+
+        return {
+            templateVersionId: current.template.id_clinical_history_template_version || null,
+            templateSnapshotJson: JSON.stringify(current.template.schema_json || {})
+        };
     }
 
     isEmptyClinicalValue(value, fieldType = 'text') {
@@ -516,8 +513,7 @@ class ClinicalHistoryDao {
 
     async getLatestByPatient(body) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
-            if (!canView) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission))) {
                 return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 
@@ -563,8 +559,7 @@ class ClinicalHistoryDao {
 
     async listVersionsByPatient(body) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
-            if (!canView) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission))) {
                 return responseData.forbidden('No tienes permiso para consultar versiones de historia clinica.');
             }
 
@@ -639,8 +634,7 @@ class ClinicalHistoryDao {
 
     async getById(body, transaction = null) {
         try {
-            const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW, transaction);
-            if (!canView) {
+            if (!await canReadClinicalHistory(permission => this.hasPermission(body.id_login, permission, transaction))) {
                 return responseData.forbidden('No tienes permiso para consultar historias clinicas.');
             }
 

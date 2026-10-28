@@ -12,7 +12,10 @@
     "qa:authz-fase0": "node scripts/qa/authz-fase0-regression.js",
     "qa:security-idor": "node scripts/qa/security-multitenant-idor-suite.js",
     "qa:security-headers": "node scripts/qa/security-headers-http-regression.js",
-    "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js"
+    "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js",
+    "migration:auth-password-change": "node scripts/migrations/apply-auth-password-change-tokens.js",
+    "qa:isolated": "node scripts/qa/run-isolated-regressions.js",
+    "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js"
   },
   "engines": {
     "node": ">=22.12 <23"
@@ -40,7 +43,7 @@
     "morgan": "1.12.1",
     "mysql2": "3.24.6",
     "node-localstorage": "^2.1.6",
-    "nodemailer": "10.1.1",
+    "nodemailer": "10.2.1",
     "sanitize-html": "2.18.1",
     "sequelize": "6.37.8",
     "uuid": "11.1.1"

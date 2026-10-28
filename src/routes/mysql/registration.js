@@ -88,16 +88,17 @@ function createRouter(options={}) {
         if(req.tokenDecode||req.authTokenPresent||req.authTokenInvalid) return sendError(res,new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409));
         next();
     };
-    async function ready() {
+    async function ready(checkPasswords=true) {
         requireConfiguration();
         if(process.env.REGISTRATION_ENABLED!=='true'||!delivery.ready('email')) throw new RegistrationError('REGISTRATION_UNAVAILABLE',503);
-        await Passwords.configuredBlocklist();
+        if(checkPasswords) await Passwords.configuredBlocklist();
     }
     router.get('/registration/context',clean,optional,run(async(req,res)=>{
         let enabled=true;
-        try { await ready(); } catch(_) {enabled=false;}
+        try { await ready(false); } catch(_) {enabled=false;}
         if(!enabled) return res.json({enabled:false,planId:'professional',verificationChannels:['email'],legalDocuments:[],registrationAttemptExpiresAt:new Date().toISOString()});
         await limiter.consume([['context-ip',req.ip,60,900]]);
+        await Passwords.configuredBlocklist();
         const documents=[];
         for(const key of ['terms_conditions','privacy_notice']) {
             const result=await legal.publicDocument(key),v=result.data?.document?.current_version;

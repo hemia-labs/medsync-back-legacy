@@ -54,23 +54,26 @@ class PulseRepository {
             if (input.preparation && (!prepared || !signing)) { input.preparation.quality.classification = 'partial'; input.preparation.quality.explanation = 'Hay requisitos conocidos; no se pudo verificar toda la preparacion.'; if (!input.preparation.items.some(i => i.class === 'necessary')) input.preparation.state = 'unknown'; }
             const startToday = time.wall(today, '00:00:00', zone.name), startDay = new Date(Date.parse(today + 'T00:00:00Z') - 7 * time.DAY).toISOString().slice(0, 10), start = time.wall(startDay, '00:00:00', zone.name);
             input.activity = await block('activity', async () => {
-                const [counts] = await query(`SELECT
+                const count = async (from, to) => { const [counts] = await query(`SELECT
                  (SELECT COUNT(*) FROM appointment a JOIN person p ON p.id_person=a.id_person AND p.id_business=a.id_business AND p.active=1 WHERE a.id_business=:business AND a.active=1 AND a.created_at>=:start AND a.created_at<:end) AS appointmentsCreated,
                  (SELECT COUNT(*) FROM prescription pr JOIN person p ON p.id_person=pr.id_person COLLATE utf8mb4_unicode_ci AND p.id_business=pr.id_business COLLATE utf8mb4_unicode_ci AND p.active=1 WHERE pr.id_business=:business AND pr.active=1 AND pr.status='issued' AND COALESCE(pr.issued_at,pr.created_at)>=:start AND COALESCE(pr.issued_at,pr.created_at)<:end) AS prescriptionsIssued,
-                 (SELECT COUNT(*) FROM clinical_histories ch JOIN person p ON p.id_person=ch.patient_id AND p.id_business=ch.business_id AND p.active=1 WHERE ch.business_id=:business AND ch.status='FINALIZED' AND ch.deleted_at IS NULL AND ch.finalized_at>=:start AND ch.finalized_at<:end) AS clinicalHistoriesFinalized`, { business, start: time.sqlTime(start), end: time.sqlTime(startToday) });
-                return { available: true, counts: Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, Number(v)])), window: { from: new Date(start).toISOString(), to: new Date(startToday).toISOString() } };
+                 (SELECT COUNT(*) FROM clinical_histories ch JOIN person p ON p.id_person=ch.patient_id AND p.id_business=ch.business_id AND p.active=1 WHERE ch.business_id=:business AND ch.status='FINALIZED' AND ch.deleted_at IS NULL AND ch.finalized_at>=:start AND ch.finalized_at<:end) AS clinicalHistoriesFinalized`, { business, start: time.sqlTime(from), end: time.sqlTime(to) }); return Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, Number(v)])); };
+                // Yesterday is reported on its own so the reader can acknowledge recent work; it is context, not a goal.
+                const startYesterday = time.wall(new Date(Date.parse(today + 'T00:00:00Z') - time.DAY).toISOString().slice(0, 10), '00:00:00', zone.name);
+                const yesterday = startYesterday && startYesterday < startToday ? { counts: await count(startYesterday, startToday), window: { from: new Date(startYesterday).toISOString(), to: new Date(startToday).toISOString() } } : null;
+                return { available: true, counts: await count(start, startToday), window: { from: new Date(start).toISOString(), to: new Date(startToday).toISOString() }, yesterday };
             });
             return { input, zone, failures };
         }, { metrics });
         return { ...result, metrics };
     }
-    async incidents(business, indicator, asOf, cursor, limit) {
+    async incidents(business, indicator, asOf, cursor, limit, kind = 'pending') {
         return consistentRead(this.db, async query => {
             const configs = await query('SELECT timezone FROM appointment_config WHERE id_business=:business AND active=1 AND doctor_profile_id IS NULL ORDER BY created_at DESC,id_appointment_config LIMIT 1', { business });
             const zone = time.timeZone(configs[0]?.timezone);
             const values = { business, asOf: time.sqlTime(asOf), zone: zone.name, today: time.date(asOf, zone.name), limit: limit + 1, ...(cursor ? { priority: cursor.priority, due: cursor.dueAt, lastId: cursor.recordId } : {}) };
             const [totals] = await query(aggregate(indicator), { ...values, midnight: time.sqlTime(time.nextMidnight(asOf, zone.name)) });
-            const rows = await query(page(indicator, Boolean(cursor)), values);
+            const rows = await query(page(indicator, Boolean(cursor) && kind === 'pending', kind), values);
             return { rows, totalKnown: Number(totals.invalidRecords) ? null : Number(totals.numerator), zone: zone.name };
         });
     }

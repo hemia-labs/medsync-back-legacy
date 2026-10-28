@@ -9,6 +9,7 @@ const {SequelizeException, SQLException} = require('../../util/sequelizeExceptio
 
 const config = require('../../config/config');
 const { uploadImage } = require('../../services/aws/s3');
+const { nextPatientCode } = require('../../util/patientCode');
 const PatientAllergyDao = require('./patientAllergy.dao');
 const { hydrateAllergy, validateReview } = require('../../domain/clinicalHistory/allergyStatus');
 
@@ -129,11 +130,7 @@ async pxCreateMinimal(body) {
             return responseData.notSuccess('Ya se encuentra un paciente con los datos proporcionados.');
         }
 
-        const countRows = await sequelize.query('SELECT COUNT(*) AS total FROM person', {
-            type: QueryTypes.SELECT,
-            transaction
-        });
-        const code = String(((countRows && countRows[0] ? countRows[0].total : 0) + 1)).padStart(6, '0');
+        const code = await nextPatientCode(sequelize, transaction);
 
         await sequelize.query(
             `INSERT INTO person (
@@ -307,11 +304,7 @@ async pxSave(body) {
             const idAddress = uuidv4();
             const idQuery = uuidv4();
             const idAllergy = uuidv4();
-            const countRows = await sequelize.query('SELECT COUNT(*) AS total FROM person', {
-                type: QueryTypes.SELECT,
-                transaction
-            });
-            const code = String(((countRows && countRows[0] ? countRows[0].total : 0) + 1)).padStart(6, '0');
+            const code = await nextPatientCode(sequelize, transaction);
 
             await sequelize.query(
                 `INSERT INTO person (

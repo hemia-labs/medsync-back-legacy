@@ -9,7 +9,9 @@ function stub(modulePath, exports) {
 }
 const originalProvider = process.env.EMAIL_PROVIDER;
 const sent = [], events = [], statuses = new Map();
-let createCount = 0, allowed = true, contextAvailable = true;
+const recovery = [];
+stub('../../src/services/recoveryJournal', { async recordSignatureEmailAudit(record) { recovery.push(record); } });
+let createCount = 0, allowed = true, contextAvailable = true, auditFails = false;
 let delivery = { success: true, provider: 'ses', messageId: 'qa-message-id' };
 stub('../../src/config/env', {});
 stub('../../src/db/Sequelize.connection', { async query(sql, options) {
@@ -20,6 +22,7 @@ stub('../../src/db/Sequelize.connection', { async query(sql, options) {
         return [1];
     }
     if(sql.includes('INSERT INTO patient_document_events')) {
+        if (auditFails && data._event_type === 'SIGNATURE_LINK_SEND_EMAIL_SUCCESS') throw Error('Synthetic post-delivery audit outage');
         events.push({ event: data._event_type, ...JSON.parse(data._notes) });
         return [];
     }
@@ -77,6 +80,15 @@ const body = { id_business: 'qa-tenant', id_login: 'qa-actor', id_patient_docume
     const source = fs.readFileSync(require.resolve('../../src/Dao/mysql/documentSignatureRequest.dao'), 'utf8');
     assert.doesNotMatch(source, /documentSignatureEmailTemplate/, 'Rendering belongs only to the email service');
 
+    auditFails = true;
+    const accepted = await dao.sendEmail(body);
+    assert.equal(accepted.success, true);
+    assert.equal(accepted.data.email_sent, true);
+    assert.equal(statuses.get(accepted.data.id_document_signature_request), 'pending', 'Accepted delivery survives a failed success audit');
+    assert.equal(recovery[0].requestId, accepted.data.id_document_signature_request);
+    assert.equal(recovery[0].messageId, 'qa-message-id');
+    assert.doesNotMatch(JSON.stringify(recovery), /\/sign\/d\/|qa-recipient|qa-disposable-link/);
+    auditFails = false;
     delivery = { success: false, provider: 'ses', code: 'EMAIL_SES_REJECTED', message: 'Sensitive provider detail' };
     response = await dao.sendEmail(body);
     const failedRequest = 'qa-request-' + createCount;

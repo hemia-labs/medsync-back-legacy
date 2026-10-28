@@ -31,7 +31,7 @@ stub('../../src/db/Sequelize.connection', {
             return [{ Code: sqlCode }];
         }
         if (sql.includes('SELECT key_signature FROM signature_consent')) return owns ? [{ key_signature: 'previous' }] : [];
-        if (sql.includes('SELECT COUNT(*) AS total FROM person')) return [{ total: 1 }];
+        if (sql.includes('SELECT next_value FROM patient_code_counter')) return [{ next_value: 2 }];
         if (sql.includes('SELECT id_person FROM person')) return owns ? [{ id_person: 'patient' }] : [];
         return [];
     }
