@@ -10,6 +10,7 @@ const {SequelizeException, SQLException} = require('../../util/sequelizeExceptio
 const config = require('../../config/config');
 const { uploadImage } = require('../../services/aws/s3');
 const { nextPatientCode } = require('../../util/patientCode');
+const minimalRequest = require('../../domain/appointments/minimalPatientRequest');
 const PatientAllergyDao = require('./patientAllergy.dao');
 const { hydrateAllergy, validateReview } = require('../../domain/clinicalHistory/allergyStatus');
 
@@ -95,11 +96,17 @@ async setArchived(id_person, id_login, id_business, archived) {
 }
 
 async pxCreateMinimal(body) {
+    if (body.request_id != null && !minimalRequest.validKey(body.request_id)) return responseData.bad_request('Clave de alta invalida.');
     const transaction = await sequelize.transaction();
     try {
         const person = body.person || {};
         const address = body.address || {};
-        const idPerson = uuidv4();
+        const idPerson = body.request_id ? minimalRequest.patientIdFor(body) : uuidv4();
+        await sequelize.query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE', { replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction });
+        if (body.request_id) {
+            const rows = await sequelize.query('SELECT id_person FROM person WHERE id_person=:id AND id_business=:business FOR UPDATE', { replacements: { id: idPerson, business: body.id_business }, type: QueryTypes.SELECT, transaction });
+            if (rows.length) { await transaction.rollback(); return { status: 409, data: { code: 'PATIENT_CREATE_ALREADY_RECORDED' }, message: 'Esta operacion ya creo un paciente. Consulta su resultado; no se creo otro.' }; }
+        }
         const idAddress = uuidv4();
         const idQuery = uuidv4();
         const idAllergy = uuidv4();

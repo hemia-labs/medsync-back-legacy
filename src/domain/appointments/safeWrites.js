@@ -3,6 +3,9 @@ const { QueryTypes } = require('sequelize');
 const db = require('../../db/Sequelize.connection');
 const { resolveProfessional } = require('../../util/professionalContext');
 const { validateAppointment } = require('./agendaRules');
+const policy = require('./writePolicy');
+const cancellationImpact = require('./cancellationImpact');
+const { hasPermission } = require('../../util/effectivePermissions');
 
 const blocking = status => ['pending_confirmation', 'confirmed', 'completed'].includes(status);
 const closing = status => ['cancelled', 'no_show'].includes(status);
@@ -46,18 +49,19 @@ function revisionConflict(expected, current, key = 'appointment') {
     return Number(expected) !== Number(current.revision)
         ? fail(409, 'REVISION_CONFLICT', 'Otra persona modifico estos datos. Revisa la version vigente antes de continuar.', { [key]: current }) : null;
 }
-async function audit(before, after, body, operation, transaction) {
+async function audit(before, after, body, operation, transaction, cancellationCode) {
     // Store scheduling changes and changed field names, never clinical text or contact details.
     const changes = {};
     for (const k of Object.keys(fields)) if (!before || !same(before, after, [k])) {
         changes[k] = ['status', 'doctorProfileId', 'date', 'startTime', 'endTime', 'rescheduledFromAppointmentId', 'rescheduledToAppointmentId'].includes(k)
             ? { from: before ? before[k] || null : null, to: after[k] || null } : { changed: true };
     }
+    if (cancellationCode) changes.cancellationReasonCode = { to: cancellationCode };
     await query(`INSERT INTO appointment_audit(id_business,appointment_id,actor_id,operation,revision,changes)
         VALUES(:business,:id,:actor,:operation,:revision,:changes)`, { business: body.id_business, id: after.id,
         actor: body.id_login, operation, revision: after.revision, changes: JSON.stringify(changes) }, transaction, QueryTypes.INSERT);
 }
-async function persist(a, current, body, operation, transaction) {
+async function persist(a, current, body, operation, transaction, cancellationCode) {
     const values = Object.fromEntries(Object.keys(fields).map(k => [k, a[k] || null]));
     Object.assign(values, { business: body.id_business, actor: body.id_login, id: current ? current.id : randomUUID(),
         blocks: Number(blocking(a.status)) });
@@ -70,7 +74,7 @@ async function persist(a, current, body, operation, transaction) {
             VALUES(:id,:business,${Object.keys(fields).map(k => ':' + k).join(',')},:blocks,:actor)`, values, transaction, QueryTypes.INSERT);
     }
     const saved = await get(values.id, body.id_business, transaction);
-    await audit(current, saved, body, operation, transaction);
+    await audit(current, saved, body, operation, transaction, cancellationCode);
     return saved;
 }
 async function write(dao, body, operation = 'save') {
@@ -81,6 +85,8 @@ async function write(dao, body, operation = 'save') {
         if (requestId && (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId))) return fail(400, 'INVALID_REQUEST_ID', 'Identificador de operacion invalido.');
         if ((!incoming.id || operation === 'reschedule') && !requestId) return fail(428, 'REQUEST_ID_REQUIRED', 'Actualiza la aplicacion antes de agendar.');
         const dto = Object.fromEntries(['id', 'revision', ...Object.keys(fields)].map(k => [k, incoming[k] || null]));
+        // Preserve the exact legacy hash when the new field is absent.
+        if (Object.prototype.hasOwnProperty.call(incoming, 'cancellationReasonCode')) dto.cancellationReasonCode = incoming.cancellationReasonCode;
         const hash = createHash('sha256').update(JSON.stringify({ dto, sync: body.sync_follow_up === true, explicitNew: body.explicit_new_follow_up === true })).digest('hex');
         transaction = await db.transaction();
         // One tenant lock serializes booking, configuration and retries, including distinct sessions.
@@ -112,11 +118,14 @@ async function write(dao, body, operation = 'save') {
         if (operation === 'reschedule') {
             a = { ...a, id: null, status: 'pending_confirmation', rescheduledFromAppointmentId: current.id, rescheduledToAppointmentId: null, cancellationReason: null };
         }
-        const closeOnly = current && operation === 'save' && closing(a.status);
+        const now = Date.now();
+        const closeOnly = current && operation === 'save' && closing(a.status)
+            && (current.status !== a.status || same(a, current, scheduleKeys));
         if (closeOnly) {
             if (!same(a, current, scheduleKeys)) return reject(fail(400, 'CLOSE_ONLY', 'Para cerrar una cita conserva su doctor, fecha y horario.'));
             // Closing an old booking does not reactivate or modify an archived patient/doctor.
-            a = { ...current, status: a.status, cancellationReason: a.cancellationReason || null };
+            a = { ...current, status: a.status, title: a.title, description: a.description, cancellationReason: a.cancellationReason || null,
+                ...(Object.prototype.hasOwnProperty.call(a, 'cancellationReasonCode') ? { cancellationReasonCode: a.cancellationReasonCode } : {}) };
         } else {
             const resolved = await resolveProfessional(body, a.doctorProfileId, transaction);
             if (resolved.error) return reject(resolved.error);
@@ -129,10 +138,35 @@ async function write(dao, body, operation = 'save') {
         const invalidShape = validateAppointment({ ...a, status: 'cancelled' }, null);
         if (invalidShape) return reject(fail(400, 'INVALID_APPOINTMENT', invalidShape));
         if (!['pending_confirmation', 'confirmed', 'completed', 'cancelled', 'no_show'].includes(a.status)) return reject(fail(400, 'INVALID_STATUS', 'Estado de cita invalido.'));
-        if (body.sync_follow_up === true) {
+        if (String(a.title || '').length > 500 || String(a.description || '').length > 5000) return reject(fail(400, 'INVALID_LENGTH', 'Revisa la longitud de los datos de la cita.'));
+        // Association rules apply even when a caller omits sync_follow_up.
+        const reopensHistory = current && current.status !== a.status
+            && !['pending_confirmation', 'confirmed'].includes(current.status) && blocking(a.status);
+        const newAssociation = a.followUpId && (!current || operation === 'reschedule' || reopensHistory);
+        if (newAssociation && current && operation === 'save') return reject(fail(409, 'FOLLOW_UP_APPOINTMENT_TERMINAL', 'Conserva la cita historica y agenda una nueva atencion de forma explicita.'));
+        if (newAssociation) {
+            if (!current && !await hasPermission(body.id_login, 'px.tab.monitoring', { transaction })) return reject(fail(403, 'FOLLOW_UP_PERMISSION_REQUIRED', 'No tienes permiso para asociar seguimientos.'));
+            const response = await dao.validateFollowUpSync({ ...a, id: null }, { ...body, explicit_new_follow_up: operation === 'reschedule' || body.explicit_new_follow_up === true }, transaction, { excludeId: current && current.id, associationOnly: body.sync_follow_up !== true });
+            if (response && response.status === 200 && requestId) {
+                await query(`INSERT INTO appointment_write_request(id_business,request_id,actor_id,operation,payload_hash,appointment_id)
+                    VALUES(:business,:requestId,:actor,:operation,:hash,:id)`, { business: body.id_business, requestId, actor: body.id_login, operation, hash, id: response.data[0].id }, transaction, QueryTypes.INSERT);
+                await transaction.commit(); return response;
+            }
+            if (response) return reject(response);
+        }
+        // Existing closing/status-only operations must not inherit clinical synchronization.
+        if (!newAssociation && body.sync_follow_up === true && !closing(a.status)) {
             const response = await dao.validateFollowUpSync(a, body, transaction);
             if (response) return reject(response);
         }
+        if (policy.needsClock(a, operation === 'reschedule' ? null : current)) {
+            const general = await dao.readConfig(body.id_business, null, transaction);
+            const invalidTime = policy.temporal(a, operation === 'reschedule' ? null : current, general && general.timezone, now);
+            if (invalidTime) return reject(invalidTime);
+        }
+        const cancellation = policy.cancellation(a, current);
+        if (cancellation.error) return reject(cancellation.error);
+        a = cancellation.appointment;
         // Existing bookings remain manageable after schedule closure; moving/reopening needs availability.
         const retainsBooking = current && blocking(current.status) && same(a, current, scheduleKeys) && operation === 'save';
         if (!closeOnly && !retainsBooking) {
@@ -146,12 +180,16 @@ async function write(dao, body, operation = 'save') {
         if (operation === 'reschedule') await query("UPDATE appointment SET status='rescheduled',blocks_availability=0 WHERE id_appointment=:id AND id_business=:business", { id: current.id, business: body.id_business }, transaction, QueryTypes.UPDATE);
         const conflict = await dao.validateAvailabilityConflict(a, body.id_business, transaction);
         if (conflict) return reject(conflict);
-        const saved = await persist(a, operation === 'reschedule' ? null : current, body, operation, transaction);
+        const impact = current && current.status !== 'cancelled' && a.status === 'cancelled'
+            ? await cancellationImpact.evaluate(dao, current, body, transaction, now) : null;
+        const saved = await persist(a, operation === 'reschedule' ? null : current, body, operation, transaction, cancellation.code);
         if (operation === 'reschedule') await persist({ ...current, status: 'rescheduled', rescheduledToAppointmentId: saved.id }, current, body, operation, transaction);
         if (requestId) await query(`INSERT INTO appointment_write_request(id_business,request_id,actor_id,operation,payload_hash,appointment_id)
             VALUES(:business,:requestId,:actor,:operation,:hash,:id)`, { business: body.id_business, requestId, actor: body.id_login, operation, hash, id: saved.id }, transaction, QueryTypes.INSERT);
         await transaction.commit();
-        return { status: 200, data: [saved], message: 'Cita guardada.' };
+        return { status: 200, data: [saved], message: 'Cita guardada.', ...(impact ? { cancellationImpact: {
+            ...impact, changedSincePreview: Boolean(incoming.cancellationImpactToken && incoming.cancellationImpactToken !== impact.token)
+        } } : {}) };
     } catch (error) {
         if (transaction && !transaction.finished) await transaction.rollback();
         return fail(500, 'APPOINTMENT_WRITE_UNCONFIRMED', 'No se pudo confirmar el guardado. Conserva la captura y reintenta la misma operacion.');

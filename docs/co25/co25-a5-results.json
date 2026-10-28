@@ -1,0 +1,26 @@
+{
+  "checkedAt": "2026-10-28T22:32:18.591Z",
+  "syntheticOnly": true,
+  "fullApplication": true,
+  "realAuthentication": true,
+  "checks": [
+    "AC09/AC13 reception: real minimal creation, lost committed response, GET recovery, explicit link and preserved draft",
+    "AC09 reception: full patient record masks clinical sections and returns the unsaved appointment",
+    "AC08/AC13 agenda-only: own bookings manageable, patient/clinical/registration routes denied and UI actions absent",
+    "AC12/AC14 clinician: full clinical Seguimientos component hands off to agenda and saves one reservation",
+    "AC12/AC13 clinical-read-only: can inspect follow-up, cannot create/view agenda reservation controls or bypass API permissions",
+    "AC09 slow initialization: date/navigation wait for clinic context before allowing a selection",
+    "AC12 admin/clinician concurrency: one reservation; reception-level agenda can reschedule and close after follow-up annulment",
+    "AC10/AC13 foreign tenant: authenticated identities cannot read, link or select another clinic records",
+    "AC10/AC11 actual concurrent actors link once, replay one receipt, and require confirmation for completed history",
+    "AC04/AC07/AC15 real sessions enforce temporal/cancellation rules and exact write receipts",
+    "AC01/AC02/AC03 real secure cookies: two tabs share stable CSRF; mutation without CSRF is rejected",
+    "AC02 actual expired access token: real refresh preserves capture; explicit retry applies exactly one update",
+    "Real tenant operational middleware rejects mutations from a suspended authenticated clinic",
+    "AC09/AC11 mobile real login: shared MX phone requires selection, lost link retries once, international phone and draft survive",
+    "AC13 live role revocation refreshes real session permissions and discards private return/draft",
+    "AC02/AC03 logout invalidates actual cookies/session; protected endpoints no longer authenticate"
+  ],
+  "errors": [],
+  "failures": []
+}

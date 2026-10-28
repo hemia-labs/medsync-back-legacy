@@ -8,6 +8,11 @@ const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access'
 const { applyTenantToBody, getBusinessIdFromToken } = require('../../util/tenant');
 
 class PxController extends httpResponseHelper{
+minimalResult = async(req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const response = await require('../../domain/appointments/minimalPatientRequest').result(applyTenantToBody(req, { request_id: req.params.requestId }));
+    res.status(response.status).send(response);
+}
 
 updateAdministrative = async(req, res) => {
     const response = await PxDao.updateAdministrative(applyTenantToBody(req, { ...req.body }));

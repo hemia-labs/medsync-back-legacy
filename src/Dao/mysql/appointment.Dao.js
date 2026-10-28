@@ -204,7 +204,27 @@ class AppointmentDao{
         // Preserve history. The legacy delete route now performs a versioned cancellation.
         const current = await safeWrites.get(body.id_appointment, body.id_business);
         if (!current) return responseData.forbidden('Cita no disponible para este consultorio.');
-        return this.save({ ...body, appointment: { ...current, revision: body.revision, status: 'cancelled', cancellationReason: body.cancellationReason } });
+        return this.save({ ...body, appointment: { ...current, revision: body.revision, status: 'cancelled', cancellationReason: body.cancellationReason,
+            ...(Object.prototype.hasOwnProperty.call(body, 'cancellationReasonCode') ? { cancellationReasonCode: body.cancellationReasonCode } : {}),
+            cancellationImpactToken: body.cancellationImpactToken } });
+    }
+
+    async cancellationImpact(body) {
+        let transaction;
+        try {
+            transaction = await sequelize.transaction();
+            await safeWrites.query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE', { business: body.id_business }, transaction);
+            const current = await safeWrites.get(body.id_appointment, body.id_business, transaction);
+            if (!current) { await transaction.rollback(); return responseData.forbidden('Cita no disponible para este consultorio.'); }
+            const conflict = safeWrites.revisionConflict(body.revision, current);
+            if (conflict) { await transaction.rollback(); return conflict; }
+            const impact = await require('../../domain/appointments/cancellationImpact').evaluate(this, current, body, transaction, Date.now());
+            await transaction.commit();
+            return responseData.success(impact, 'Impacto de cancelación consultado.');
+        } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
+            return responseData.error('No se pudo consultar el impacto de cancelación.');
+        }
     }
 
     async get(body) {
@@ -365,7 +385,7 @@ class AppointmentDao{
         return response;
     }
 
-    async validateFollowUpSync(appointment, body, transaction) {
+    async validateFollowUpSync(appointment, body, transaction, options = {}) {
         if (![appointment.followUpId, appointment.patientId].every(value => typeof value === 'string' && value.trim() && value.length <= 50)) {
             return responseData.bad_request('La cita de seguimiento necesita el paciente y el seguimiento guardado.');
         }
@@ -375,7 +395,7 @@ class AppointmentDao{
             replacements: { id: appointment.followUpId, business: body.id_business, patient: appointment.patientId }, type: QueryTypes.SELECT, transaction
         });
         if (!followUp.length || followUp[0].status !== 'active') return responseData.bad_request('Solo se puede agendar desde un seguimiento vigente.');
-        const linked = await sequelize.query(`SELECT a.id_appointment AS id, a.revision, a.id_person AS patientId,
+        let linked = await sequelize.query(`SELECT a.id_appointment AS id, a.revision, a.id_person AS patientId,
                 a.id_tracing AS followUpId, a.doctor_profile_id AS doctorProfileId, a.doctor_name_snapshot AS doctorName,
                 a.patient_name AS patientName, a.contact_phone AS contactPhone,
                 DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS date,
@@ -386,6 +406,7 @@ class AppointmentDao{
               AND a.active = 1 ORDER BY a.created_at DESC FOR UPDATE`, {
             replacements: { business: body.id_business, patient: appointment.patientId, tracing: appointment.followUpId }, type: QueryTypes.SELECT, transaction
         });
+        if (options.excludeId) linked = linked.filter(row => row.id !== options.excludeId);
         if (appointment.id) {
             const current = linked.find(row => row.id === appointment.id);
             if (!current) return responseData.forbidden('La cita no corresponde a este seguimiento.');
@@ -402,7 +423,7 @@ class AppointmentDao{
             const current = open[0];
             const sameRequest = ['patientId', 'followUpId', 'doctorProfileId', 'date', 'startTime', 'endTime', 'title', 'description']
                 .every(key => String(current[key] || '') === String(appointment[key] || ''));
-            if (!sameRequest) return { ...followUpConflict('FOLLOW_UP_APPOINTMENT_ALREADY_EXISTS',
+            if (!sameRequest || options.associationOnly) return { ...followUpConflict('FOLLOW_UP_APPOINTMENT_ALREADY_EXISTS',
                 'Ya existe una cita vigente con otros datos para este seguimiento. Consulta esa cita en la agenda para modificarla; no se creo otra.'),
                 data: { code: 'FOLLOW_UP_APPOINTMENT_ALREADY_EXISTS', appointment: this.normalizeAppointmentRow(current) } };
             return responseData.success(this.normalizeAppointmentRows(open), 'La cita de este seguimiento ya estaba guardada. No se creo otra cita.');
@@ -487,7 +508,7 @@ class AppointmentDao{
                   WHERE ${collateEq('p.id_person', ':_id_person')}
                     AND ${collateEq('p.id_business', ':_id_business')}
                     AND p.active = 1
-                  LIMIT 1`,
+                  LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
                 {
                     replacements: {
                         _id_person: patientId,
