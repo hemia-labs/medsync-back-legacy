@@ -23,7 +23,8 @@ const validateTreatment = body => {
     }
     if (body.estimated_start_date && body.estimated_end_date && body.estimated_end_date < body.estimated_start_date) errors.estimated_end_date = 'El fin no puede ser anterior al inicio.';
     if (body.status && !STATUSES.includes(body.status)) errors.status = 'Selecciona un estado válido.';
-    if (body.teeth !== undefined && (!Array.isArray(body.teeth) || body.teeth.some(tooth => !/^[1-4][1-8]$/.test(String(tooth))))) errors.teeth = 'Selecciona dientes válidos.';
+    if (body.teeth !== undefined && (!Array.isArray(body.teeth) || body.teeth.length > 52 || body.teeth.some(tooth => !/^(?:[1-4][1-8]|[5-8][1-5])$/.test(String(tooth))))) errors.teeth = 'Selecciona hasta 52 dientes permanentes o temporales válidos.';
+    if (body.tooth_details !== undefined && (!Array.isArray(body.tooth_details) || body.tooth_details.length > 52 || Buffer.byteLength(JSON.stringify(body.tooth_details), 'utf8') > 131072)) errors.tooth_details = 'Detalles dentales inválidos o demasiado grandes.';
     return errors;
 };
 const validatePlan = body => {

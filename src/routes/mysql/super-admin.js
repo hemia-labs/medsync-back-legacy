@@ -6,6 +6,7 @@ const { csrfProtection } = require('../../middleware/csrf.middleware');
 const SuperAdminController = require('../../controller/mysql/superAdmin.controller');
 
 const csrfProtected = csrfProtection();
+router.use('/odontogram-aliases', require('./odontogramGlobalAliases'));
 
 router.get('/audit', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.audit));
 router.get('/dashboard/summary', Token.Auth, requireRole('super_admin'), awaitHandlerFactory(SuperAdminController.dashboardSummary));

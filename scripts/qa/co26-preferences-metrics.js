@@ -1,0 +1,20 @@
+'use strict';
+const assert=require('node:assert/strict');
+const db=require.resolve('../../src/db/Sequelize.connection');require.cache[db]={id:db,filename:db,loaded:true,exports:{}};
+const config=require.resolve('../../src/config/config');require.cache[config]={id:config,filename:config,loaded:true,exports:{}};
+const preferences=require('../../src/services/odontogramPreferences.service');
+const metrics=require('../../src/services/odontogramMetrics.service');
+(async()=>{
+ const defaults=preferences.defaults();assert.equal(defaults.mixed.length,52);
+ const reversed=Object.fromEntries(Object.entries(defaults).map(([mode,teeth])=>[mode,[...teeth].reverse()]));assert.deepEqual(preferences.validate(reversed),reversed);
+ assert.throws(()=>preferences.validate({...defaults,mixed:[...defaults.mixed.slice(1),defaults.mixed[1]]}));
+ assert.throws(()=>preferences.validate({...defaults,primary:defaults.permanent}));
+ const data={modality:'touch',dentition:'mixed',operations:2,corrections:1,errors:0,active_seconds:10,paused_seconds:5};
+ assert.deepEqual(metrics.validate(data),data);assert.throws(()=>metrics.validate({...data,patient:'secret'}));assert.throws(()=>metrics.validate({...data,operations:-1}));
+ let calls=0;assert.deepEqual(await metrics.send(data,()=>{calls++;},{}),{enabled:false,accepted:false});assert.equal(calls,0);
+ const settings={CO26_METRICS_ENABLED:true,CO26_UMAMI_URL:'https://metrics.example/api/send',CO26_UMAMI_WEBSITE_ID:'11111111-2222-4333-8444-555555555555',CO26_UMAMI_HOSTNAME:'app.example'};
+ const result=await metrics.send(data,async(url,options)=>{calls++;assert.equal(url,settings.CO26_UMAMI_URL);const payload=JSON.parse(options.body);assert.deepEqual(payload.payload.data,data);assert.equal(payload.payload.url,'/clinical/odontogram');assert.equal(payload.payload.referrer,'');assert.equal(Object.keys(options.headers).length,2);return{ok:true};},settings);
+ assert.equal(result.accepted,true);assert.equal(calls,1);assert.equal(metrics.enabled({...settings,CO26_UMAMI_URL:'https://user:pass@metrics.example/send'}),false);
+ assert.equal((await metrics.send(data,async()=>{throw Error('offline');},settings)).accepted,false);
+ console.log('PASS traversal exact permutations and aggregate metrics allowlist, disabled mode, fixed payload and soft network failure. No real connection.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

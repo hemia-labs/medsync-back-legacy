@@ -20,6 +20,10 @@ module.exports = {
     PASSWORDMYSQL : process.env.DB_PASSWORD || '',
     DATABASEMYSQL : process.env.DB_NAME || '',
     PORTMYSQL : Number(process.env.DB_PORT || 3306),
+    CO26_METRICS_ENABLED: process.env.CO26_METRICS_ENABLED === 'true',
+    CO26_UMAMI_URL: process.env.CO26_UMAMI_URL || '',
+    CO26_UMAMI_WEBSITE_ID: process.env.CO26_UMAMI_WEBSITE_ID || '',
+    CO26_UMAMI_HOSTNAME: process.env.CO26_UMAMI_HOSTNAME || 'medsync',
 
     SESSIONSECRET : process.env.SESSION_SECRET || '',
 

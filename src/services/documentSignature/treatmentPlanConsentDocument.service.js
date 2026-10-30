@@ -10,12 +10,14 @@ const date = value => !value ? null : value instanceof Date ? value.toISOString(
 const isLinked = document => document && document.origin === 'TREATMENT_PLAN' && document.treatment_plan_id;
 const missingTable = error => (error.original || error).code === 'ER_NO_SUCH_TABLE';
 const keys = document => ({ business: document.id_business, patient: document.id_person, plan: document.treatment_plan_id, document: document.id_patient_document });
+const { contentProjection } = require('../../domain/odontogram/planDental');
+const dental = require('../odontogramPlanDental.service');
 
 function fingerprint(plan) {
     const data = { title: plan.title || '', diagnosis: plan.diagnosis || '', notes: plan.notes || '', started_at: date(plan.started_at),
         treatments: (plan.treatments || []).map(item => ({ id: item.id_patient_treatment, name: item.name || '', description: item.description || '', category: item.category || '',
             status: item.status, cost: item.cost === null || item.cost === undefined || item.cost === '' ? null : String(Number(item.cost)),
-            start: date(item.estimated_start_date), end: date(item.estimated_end_date), notes: item.notes || '', teeth: [...(item.teeth || [])].map(String).sort() })).sort((a, b) => a.id.localeCompare(b.id)) };
+            start: date(item.estimated_start_date), end: date(item.estimated_end_date), notes: item.notes || '', teeth: [...(item.teeth || [])].map(String).sort(), ...contentProjection(item) })).sort((a, b) => a.id.localeCompare(b.id)) };
     return createHash('sha256').update(JSON.stringify(data)).digest('hex');
 }
 async function binding(document, transaction) {
@@ -42,7 +44,8 @@ async function currentPlan(document, transaction) {
     const teeth = await query(`SELECT ptt.id_patient_treatment, ptt.tooth_number FROM patient_treatment_tooth ptt
         INNER JOIN patient_treatment pt ON pt.id_patient_treatment = ptt.id_patient_treatment AND pt.id_business = ptt.id_business
         WHERE ${eq('pt.id_business', ':business')} AND ${eq('pt.id_person', ':patient')} AND ${eq('pt.id_treatment_plan', ':plan')} AND pt.active = 1`, values, transaction);
-    return { ...plans[0], treatments: items.map(item => ({ ...item, teeth: teeth.filter(tooth => tooth.id_patient_treatment === item.id_patient_treatment).map(tooth => String(tooth.tooth_number)).sort() })) };
+    const enriched = await dental.attach({ id_business: document.id_business }, items.map(item => ({ ...item, teeth: teeth.filter(tooth => tooth.id_patient_treatment === item.id_patient_treatment).map(tooth => String(tooth.tooth_number)).sort() })), transaction);
+    return { ...plans[0], treatments: enriched };
 }
 async function assertCurrent(document, transaction) {
     if (!isLinked(document)) return true;

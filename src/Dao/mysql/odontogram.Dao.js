@@ -19,6 +19,23 @@ const rejectOdontogram = (message, status = 400) => {
  */
 class OdontogramDao {
 
+    async assertLegacyMode(business, transaction) {
+        try {
+            const mode = await require('./odontogramV2.dao').mode(business, transaction, true);
+            if (mode !== 'v1') rejectOdontogram('Recarga para usar el odontograma CO26.', 409);
+        } catch (error) {
+            if (!['ER_BAD_FIELD_ERROR', 'ER_NO_SUCH_TABLE'].includes(error.code || error.original && error.original.code)) throw error;
+        }
+    }
+    async legacyProcedure(body, sql, options) {
+        return sequelize.transaction(async transaction => {
+            const rows = await this.queryV1(`SELECT id_business FROM login WHERE ${eq('id_login', ':actor')} AND active=1 LIMIT 1`, { actor: body.id_login }, transaction);
+            if (!rows.length) rejectOdontogram('Usuario no disponible.', 403);
+            await this.assertLegacyMode(rows[0].id_business, transaction);
+            return sequelize.query(sql, { ...options, transaction });
+        });
+    }
+
     /**
      * Permite obtener la configuración de un diente
      * @param {String} id_person id del px
@@ -71,7 +88,7 @@ class OdontogramDao {
             if (!Array.isArray(body.config)) throw new Error("Parameter config is not a Array!");
 
             const _json = JSON.stringify(body.config);
-            let result = await sequelize.query(SequelizeSP.SP_ODONTOGRAM_SAVE, {
+            let result = await this.legacyProcedure(body, SequelizeSP.SP_ODONTOGRAM_SAVE, {
                 replacements: {
                     _id_person: body.id_person,
                     _id_tooth: body.id_tooth,
@@ -109,7 +126,7 @@ class OdontogramDao {
             if (!Array.isArray(body.config)) throw new Error("Parameter config is not a Array!");
 
             const _json = JSON.stringify(body.config);
-            let result = await sequelize.query(SequelizeSP.SP_ODONTOGRAM_UPDATE, {
+            let result = await this.legacyProcedure(body, SequelizeSP.SP_ODONTOGRAM_UPDATE, {
                 replacements: {
                     _id_odontogram: body.id_odontogram,
                     _id_person: body.id_person,
@@ -186,6 +203,7 @@ class OdontogramDao {
                   AND ${eq('p.id_business', '(SELECT l.id_business FROM login l WHERE ' + eq('l.id_login', ':actor') + ' AND l.active = 1 LIMIT 1)')}
                 FOR UPDATE`, { patient, actor: body.id_login }, transaction);
             if (!patients[0]) rejectOdontogram('El paciente no esta disponible en este consultorio.', 403);
+            await this.assertLegacyMode(patients[0].id_business, transaction);
             const result = await operation({ patient, business: patients[0].id_business, actor: body.id_login, transaction });
             await transaction.commit();
             return responseData.success(result, Messages.DATA_GET_SUCCESSFULLY);
@@ -257,6 +275,9 @@ class OdontogramDao {
             }
             const active = (await this.activeV1(patient, transaction))[0];
             if (!active) rejectOdontogram('No se cuenta con un odontograma activo.', 409);
+            if (body.id_odontogramv1 !== undefined && body.id_odontogramv1 !== active.id_odontogramv1) {
+                rejectOdontogram('El odontograma activo cambió. Recarga antes de guardar.', 409);
+            }
             const teeth = await this.queryV1(`SELECT ct.id_tooth FROM cat_tooth ct
                 INNER JOIN cat_type_tooth type ON ${eq('type.id_cat_type_tooth', 'ct.id_cat_type_tooth')}
                 WHERE ${eq('ct.id_tooth', ':tooth')} AND ${eq('type.code', ':type')} LIMIT 1`, { tooth: body.id_tooth, type: active.type }, transaction);
@@ -264,7 +285,7 @@ class OdontogramDao {
             let detail;
             if (body.id_odontogram_detailv1) {
                 if (!validId(body.id_odontogram_detailv1)) rejectOdontogram('Detalle de odontograma invalido.');
-                detail = (await this.queryV1(`SELECT id_odontogram_detailv1 FROM odontogramDetailv1
+                detail = (await this.queryV1(`SELECT id_odontogram_detailv1,treatment FROM odontogramDetailv1
                     WHERE ${eq('id_odontogram_detailv1', ':detail')} AND ${eq('id_odontogramv1', ':chart')}
                       AND ${eq('id_tooth', ':tooth')} AND active=1 AND is_active=1 LIMIT 1 FOR UPDATE`,
                 { detail: body.id_odontogram_detailv1, chart: active.id_odontogramv1, tooth: body.id_tooth }, transaction))[0];
@@ -272,10 +293,19 @@ class OdontogramDao {
             } else {
                 // Retry without the returned detail id updates the same tooth;
                 // the patient lock prevents two inserts racing each other.
-                detail = (await this.queryV1(`SELECT id_odontogram_detailv1 FROM odontogramDetailv1
+                detail = (await this.queryV1(`SELECT id_odontogram_detailv1,treatment FROM odontogramDetailv1
                     WHERE ${eq('id_odontogramv1', ':chart')} AND ${eq('id_tooth', ':tooth')}
                       AND active=1 AND is_active=1 ORDER BY created_at, id_odontogram_detailv1 LIMIT 1 FOR UPDATE`,
                 { chart: active.id_odontogramv1, tooth: body.id_tooth }, transaction))[0];
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'expected_treatment')) {
+                const expected = body.expected_treatment;
+                if (expected !== null && (typeof expected !== 'string' || expected.length > 1000)) {
+                    rejectOdontogram('Diagnóstico de referencia inválido.');
+                }
+                if ((detail && detail.treatment || null) !== (expected || null)) {
+                    rejectOdontogram('El diagnóstico cambió en otra sesión. Recarga antes de guardar.', 409);
+                }
             }
             const id = detail ? detail.id_odontogram_detailv1 : uuid();
             if (detail) {

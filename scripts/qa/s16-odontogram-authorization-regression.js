@@ -5,6 +5,10 @@ let permitted = true, queries = 0, controllerCalls = 0;
 const people = { own: 'tenant', colleague: 'tenant', archived: 'tenant', foreign: 'other-tenant' };
 const references = { tooth: { id_person: 'own', id_tooth: '12' }, otherTooth: { id_person: 'foreign', id_tooth: '12' }, plan: { id_person: 'own' }, otherPlan: { id_person: 'foreign' }, detail: { id_person: 'own', id_tooth: '12' }, otherDetail: { id_person: 'foreign', id_tooth: '12' } };
 stub('../../src/db/Sequelize.connection', { async query(sql, options) {
+    if (/SELECT odontogram_mode/.test(sql)) {
+        assert.equal(options.replacements.business, 'tenant');
+        return [{ odontogram_mode: 'v1' }];
+    }
     queries++;
     assert.match(sql, /id_business.*:business/, 'Every authorization query must constrain business');
     const values = options.replacements;
@@ -15,6 +19,7 @@ stub('../../src/db/Sequelize.connection', { async query(sql, options) {
     return people[values.patient] === values.business && !(values.patient === 'archived' && /active = 1/.test(sql)) ? [{ id_person: values.patient }] : [];
 } });
 stub('../../src/Dao/mysql/user.dao', { hasPermission: async (id, permission) => { assert.equal(permission, 'px.tab.odontogram'); return permitted; } });
+stub('../../src/util/effectivePermissions', { hasPermission: async (id, permission, options) => { assert.equal(permission, 'px.tab.odontogram'); assert.equal(options.enabledCatalog, true); return permitted; } });
 stub('../../src/services/security/securityLogger.service', { record() {} });
 stub('../../src/auth/authenticate', { Auth(req, res, next) { req.tokenDecode = { id_login: 'user', id_business: 'tenant' }; next(); } });
 stub('../../src/middleware/requireTenantOperational.middleware', (req, res, next) => next());

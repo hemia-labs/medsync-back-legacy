@@ -19,7 +19,15 @@ const {
 } = require('../../validators/odontogram.validator');
 
 const csrfProtected = csrfProtection();
-const requireClinicalPermission = requirePermission('px.tab.odontogram');
+const requireClinicalPermission = requirePermission('px.tab.odontogram', { enabledCatalog: true });
+
+router.use('/v2', require('./odontogramV2'));
+const legacyWriteGate = require('express').Router();
+legacyWriteGate.use(Token.Auth, csrfProtected, requireTenantOperational, requireClinicalPermission, require('../../middleware/odontogramLegacyMode.middleware'));
+router.use((req, res, next) => {
+    if (['GET', 'HEAD'].includes(req.method)) return next();
+    return legacyWriteGate(req, res, next);
+});
 
 router.post('/save', Token.Auth, csrfProtected, requireTenantOperational, requireClinicalPermission, validatePayload(validateSaveTooth), requireOdontogramScope, awaitHandlerFactory(OdontogramController.SaveTooth));
 

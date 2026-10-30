@@ -68,7 +68,10 @@ function requireAnyPermission(permissions, options = {}) {
             }
 
             for (const permission of required) {
-                if (await UserDao.hasPermission(req.tokenDecode.id_login, permission)) {
+                const allowed = options.enabledCatalog
+                    ? await require('../util/effectivePermissions').hasPermission(req.tokenDecode.id_login, permission, { enabledCatalog: true })
+                    : await UserDao.hasPermission(req.tokenDecode.id_login, permission);
+                if (allowed) {
                     next();
                     return;
                 }

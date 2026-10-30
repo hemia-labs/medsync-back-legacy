@@ -14,16 +14,19 @@ const eq = (column, param) => `${column} COLLATE utf8mb4_unicode_ci = ${param} C
 const FLAGS = { view: 'view', create: 'create', edit: 'edit', complete: 'complete', cancel: 'cancel', closePlan: 'close_plan', consentView: 'consent.view', consentSign: 'consent.sign', costView: 'cost_view', costEdit: 'cost_edit' };
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 const missingTable = error => (error.original || error).code === 'ER_NO_SUCH_TABLE';
+const dental = require('../../services/odontogramPlanDental.service');
+const { contentProjection } = require('../../domain/odontogram/planDental');
+const { surfaceLabel } = require('../../domain/odontogram/dentalContract');
 
 class TreatmentPlanDao {
     reviewToken(plan) {
         const value = { title: plan.title, diagnosis: plan.diagnosis, notes: plan.notes, started_at: plan.started_at,
             treatments: (plan.treatments || []).map(item => ({ id: item.id_patient_treatment, name: item.name, description: item.description, category: item.category,
-                status: item.status, cost: item.cost, start: item.estimated_start_date, end: item.estimated_end_date, notes: item.notes, teeth: item.teeth })).sort((a, b) => a.id.localeCompare(b.id)) };
+                status: item.status, cost: item.cost, start: item.estimated_start_date, end: item.estimated_end_date, notes: item.notes, teeth: item.teeth, ...contentProjection(item) })).sort((a, b) => a.id.localeCompare(b.id)) };
         return createHmac('sha256', reviewKey).update(JSON.stringify(value)).digest('hex');
     }
     async query(sql, replacements, transaction = null, type = QueryTypes.SELECT) {
-        return sequelize.query(sql, { replacements, transaction, type });
+        return sequelize.query(sql, { replacements, transaction, type, logging: false });
     }
     keys(body) {
         return { business: body.id_business, patient: body.id_person, actor: body.id_login, plan: body.id_treatment_plan || null, item: body.id_patient_treatment || null };
@@ -34,6 +37,7 @@ class TreatmentPlanDao {
         const permissions = Object.fromEntries(Object.entries(FLAGS).map(([flag, code]) => [flag, codes.has(`treatments.${code}`)]));
         permissions.remoteRequest = codes.has('documents.signature.request') && (permissions.consentView || permissions.consentSign);
         permissions.consentPrepare = permissions.consentSign || permissions.remoteRequest;
+        permissions.odontogramRead = codes.has('px.tab.odontogram');
         return permissions;
     }
     async context(body, flag) {
@@ -65,7 +69,7 @@ class TreatmentPlanDao {
             ORDER BY tp.created_at DESC, tp.id_treatment_plan DESC${window ? ' LIMIT :limit OFFSET :offset' : ''}${lock ? ' FOR UPDATE' : ''}`,
             { ...this.keys(body), ...(window ? { limit: activeOnly ? 1 : window.pageSize, offset: activeOnly ? 0 : window.offset } : {}) }, transaction);
     }
-    async items(body, transaction = null, planIds = null) {
+    async items(body, transaction = null, planIds = null, includeSources = false) {
         if (planIds && !planIds.length) return [];
         const selected = planIds ? ' AND pt.id_treatment_plan IN (:planIds)' : '';
         const values = { ...this.keys(body), ...(planIds ? { planIds } : {}) };
@@ -76,7 +80,7 @@ class TreatmentPlanDao {
             WHERE ${eq('pt.id_business', ':business')} AND ${eq('pt.id_person', ':patient')} AND pt.active = 1${selected}`, values, transaction);
         const byItem = {};
         for (const tooth of teeth) (byItem[tooth.id_patient_treatment] ||= []).push(String(tooth.tooth_number));
-        return rows.map(row => ({ ...row, teeth: (byItem[row.id_patient_treatment] || []).sort() }));
+        return dental.attach(body, rows.map(row => ({ ...row, teeth: (byItem[row.id_patient_treatment] || []).sort() })), transaction, includeSources);
     }
     visibleConsent(consent, permissions) {
         if (!consent) return null;
@@ -108,7 +112,7 @@ class TreatmentPlanDao {
             const planIds = paging ? plans.map(plan => plan.id_treatment_plan) : null;
             const selected = paging ? ' AND id_treatment_plan IN (:planIds)' : '';
             const values = { ...this.keys(body), ...(paging ? { planIds: planIds.length ? planIds : [''] } : {}) };
-            const items = await this.items(body, null, planIds);
+            const items = await this.items(body, null, planIds, permissions.odontogramRead);
             const prepared = permissions.consentView || permissions.consentSign ? await consentDocuments.documentsForPatient(body, null, permissions.consentView, planIds) : { available: true, documents: [] };
             if (!permissions.costView) for (const document of prepared.documents.filter(document => document.includes_costs)) { delete document.content_html_snapshot; delete document.signed_content_html_snapshot; delete document.pdf_url; }
             let consents = [], versions = [], versioningAvailable = true;
@@ -138,7 +142,7 @@ class TreatmentPlanDao {
                 consent_document: prepared.documents.find(document => document.treatment_plan_id === plan.id_treatment_plan && document.status !== 'CANCELADO') || null };
             });
             const historyPagination = pagination ? (({ offset, ...rest }) => rest)(pagination) : undefined;
-            return response.success({ patient, permissions, config: { ...config, consentVersioningAvailable: versioningAvailable, consentDocumentAvailable: prepared.available }, activePlan: enriched.find(plan => plan.status === 'active') || null, history: enriched.filter(plan => plan.status !== 'active'), ...(paging ? { historyPagination } : {}) }, 'Plan de tratamiento consultado.');
+            return response.success({ patient, permissions, config: { ...config, dentalSchemaAvailable: await dental.schemaReady(), consentVersioningAvailable: versioningAvailable, consentDocumentAvailable: prepared.available }, activePlan: enriched.find(plan => plan.status === 'active') || null, history: enriched.filter(plan => plan.status !== 'active'), ...(paging ? { historyPagination } : {}) }, 'Plan de tratamiento consultado.');
         } catch (error) {
             if (error.message === 'INVALID_LIST_PAGE') return response.bad_request('Pagina o tamano de pagina invalido.');
             return SequelizeException(error, 'No se pudo consultar el plan de tratamiento.');
@@ -183,6 +187,7 @@ class TreatmentPlanDao {
         } catch (error) {
             if (error.message === 'INVALID_LIST_PAGE') return response.bad_request('Pagina o tamano de pagina invalido.');
             if (transaction) await transaction.rollback();
+            if (error.status >= 400 && error.status <= 599) return { status: error.status, message: error.message, data: null, code: error.code };
             if (missingTable(error)) return response.bad_request('Falta habilitar el historial de versiones. No se guardaron ni reemplazaron datos.');
             return SequelizeException(error, 'No se pudieron guardar los cambios del plan.');
         }
@@ -235,6 +240,7 @@ class TreatmentPlanDao {
     savePlanTreatment(body) {
         const errors = validateTreatment(body);
         if (Object.keys(errors).length) return Promise.resolve(response.bad_request(Object.values(errors)[0], { errors }));
+        if (!body.id_patient_treatment && !/^[a-zA-Z0-9-]{1,50}$/.test(body.request_id || '')) return Promise.resolve(response.bad_request('Envía un identificador estable de creación; actualiza el formulario antes de guardar.'));
         return this.mutation(body, body.id_patient_treatment ? 'edit' : 'create', async (transaction, context) => {
             if (!await this.active(body, transaction)) return response.bad_request('Solo se pueden guardar tratamientos en un plan activo.');
             const isUpdate = Boolean(body.id_patient_treatment);
@@ -242,11 +248,18 @@ class TreatmentPlanDao {
             const existing = await this.query(`SELECT * FROM patient_treatment WHERE ${eq('id_patient_treatment', ':id')} AND ${eq('id_business', ':business')}
                 AND ${eq('id_person', ':patient')} AND ${eq('id_treatment_plan', ':plan')} AND active = 1 FOR UPDATE`, { ...this.keys(body), id }, transaction);
             if (isUpdate && !existing[0]) return response.bad_request('El tratamiento ya no está disponible en este plan.');
-            if (!isUpdate && existing[0]) return; // Retry of a committed create.
+            if (!isUpdate && existing[0]) { await dental.assertCreateRetry(body, id, transaction); return; }
+            const formState = await dental.formState(body, id, transaction, isUpdate);
             if (body.cost !== undefined && !context.permissions.costEdit && Number(body.cost || 0) !== Number(existing[0] && existing[0].cost || 0)) return response.forbidden('No tienes permiso para modificar costos.');
             const values = { ...this.keys(body), id, name: body.name.trim(), description: body.description || null, category: body.category || null,
                 status: isUpdate ? body.status || existing[0].status : 'pending', start: body.estimated_start_date || null, end: body.estimated_end_date || null,
                 cost: context.permissions.costEdit && body.cost !== undefined ? (body.cost === '' || body.cost === null ? null : body.cost) : (existing[0] ? existing[0].cost : null), notes: body.notes || null };
+            let previousTeeth = null, preparedDental = null;
+            if (body.teeth !== undefined || body.tooth_details !== undefined) {
+                previousTeeth = await this.query(`SELECT id_patient_treatment_tooth,tooth_number FROM patient_treatment_tooth
+                    WHERE ${eq('id_business', ':business')} AND ${eq('id_patient_treatment', ':id')} FOR UPDATE`, values, transaction);
+                preparedDental = await dental.prepare(body, id, previousTeeth.map(row => String(row.tooth_number)), transaction, Boolean(context.permissions.odontogramRead));
+            }
             if (isUpdate) {
                 await this.query(`UPDATE patient_treatment SET name=:name, description=:description, category=:category, status=:status, estimated_start_date=:start,
                     estimated_end_date=:end, cost=:cost, notes=:notes, updated_at=NOW(), updated_by=:actor WHERE ${eq('id_patient_treatment', ':id')} AND ${eq('id_business', ':business')}
@@ -255,9 +268,20 @@ class TreatmentPlanDao {
                 await this.query(`INSERT INTO patient_treatment (id_patient_treatment, id_business, id_person, id_treatment_plan, name, description, category, status, estimated_start_date, estimated_end_date, cost, notes, source, active, created_at, created_by)
                     VALUES (:id, :business, :patient, :plan, :name, :description, :category, :status, :start, :end, :cost, :notes, 'manual', 1, NOW(), :actor)`, values, transaction, QueryTypes.INSERT);
             }
-            await this.query(`DELETE FROM patient_treatment_tooth WHERE ${eq('id_business', ':business')} AND ${eq('id_patient_treatment', ':id')}`, values, transaction, QueryTypes.DELETE);
-            for (const tooth of [...new Set((body.teeth || []).map(String))]) await this.query(`INSERT INTO patient_treatment_tooth (id_patient_treatment_tooth, id_business, id_patient_treatment, tooth_number, created_at)
-                VALUES (:toothId, :business, :id, :tooth, NOW())`, { ...values, toothId: uuidv4(), tooth }, transaction, QueryTypes.INSERT);
+            // Omission preserves associations. An explicit list changes the set,
+            // retaining the identities of all teeth that remain selected.
+            if (preparedDental) {
+                const previous = previousTeeth;
+                const selected = new Set(preparedDental.next.map(detail => detail.tooth_number));
+                const retained = new Set(previous.map(row => String(row.tooth_number)));
+                for (const tooth of previous.filter(row => !selected.has(String(row.tooth_number)))) await this.query(`DELETE FROM patient_treatment_tooth
+                    WHERE ${eq('id_business', ':business')} AND ${eq('id_patient_treatment', ':id')} AND id_patient_treatment_tooth=:toothId`,
+                { ...values, toothId: tooth.id_patient_treatment_tooth }, transaction, QueryTypes.DELETE);
+                for (const tooth of selected) if (!retained.has(tooth)) await this.query(`INSERT INTO patient_treatment_tooth (id_patient_treatment_tooth, id_business, id_patient_treatment, tooth_number, created_at)
+                    VALUES (:toothId, :business, :id, :tooth, NOW())`, { ...values, toothId: uuidv4(), tooth }, transaction, QueryTypes.INSERT);
+                await dental.persist(body, id, preparedDental, transaction);
+            }
+            await dental.recordForm(body, id, formState, existing[0], values, transaction, isUpdate);
         });
     }
     async itemMutation(body, deleting = false) {
@@ -265,13 +289,15 @@ class TreatmentPlanDao {
         const permissions = await this.permissions(body.id_login);
         const flag = deleting || !['completed', 'cancelled'].includes(body.status) ? 'edit' : (permissions.edit ? 'edit' : body.status === 'completed' ? 'complete' : 'cancel');
         return this.mutation(body, flag, async transaction => {
-            const rows = await this.query(`SELECT pt.id_treatment_plan FROM patient_treatment pt
+            const rows = await this.query(`SELECT pt.* FROM patient_treatment pt
                 INNER JOIN treatment_plan tp ON tp.id_treatment_plan = pt.id_treatment_plan AND tp.id_business = pt.id_business AND tp.id_person = pt.id_person
                 WHERE ${eq('pt.id_business', ':business')} AND ${eq('pt.id_person', ':patient')} AND ${eq('pt.id_patient_treatment', ':item')}
                 AND pt.active = 1 AND tp.active = 1 AND tp.status = 'active' FOR UPDATE`, this.keys(body), transaction);
             if (!rows[0]) return response.bad_request('Solo se pueden modificar tratamientos del plan activo.');
+            const state = await dental.formState(body, body.id_patient_treatment, transaction, true);
             await this.query(`UPDATE patient_treatment SET ${deleting ? 'active = 0' : 'status = :status'}, updated_at = NOW(), updated_by = :actor
                 WHERE ${eq('id_patient_treatment', ':item')} AND ${eq('id_business', ':business')} AND ${eq('id_person', ':patient')}`, { ...this.keys(body), status: body.status || null }, transaction, QueryTypes.UPDATE);
+            await dental.recordForm(body, body.id_patient_treatment, state, rows[0], { ...rows[0], ...(deleting ? { active: 0 } : { status: body.status }) }, transaction, true);
         });
     }
     updatePlanTreatmentStatus(body) { return this.itemMutation(body); }
@@ -313,7 +339,10 @@ class TreatmentPlanDao {
             if (!requirements.requires_patient_signature && !requirements.requires_tutor_signature) return response.bad_request('El formato del plan debe solicitar firma del paciente o tutor. Revisa su configuración.');
             if (requirements.requires_doctor_signature && !doctor.signature_image) return response.bad_request('Este formato requiere la firma profesional del doctor. Complétala en su perfil antes de preparar el documento.');
             const labels = { pending: 'Pendiente', in_progress: 'En progreso', paused: 'Pausado', completed: 'Completado', cancelled: 'Cancelado' };
-            const rows = snapshot.treatments.map(item => `<li><strong>${escape(item.name)}</strong>${item.description ? `<p>${escape(item.description)}</p>` : ''}<p>Estado: ${escape(labels[item.status] || item.status)}${includesCosts && item.cost !== null && item.cost !== undefined ? ` · Costo estimado: $${Number(item.cost).toFixed(2)}` : ''}${item.teeth.length ? ` · Dientes: ${escape(item.teeth.join(', '))}` : ''}</p></li>`).join('');
+            const rows = snapshot.treatments.map(item => {
+                const teeth = item.teeth.map(tooth => { const detail = (item.tooth_details || []).find(detail => String(detail.tooth_number) === String(tooth)); return String(tooth) + (detail && detail.surfaces ? ' (' + [...detail.surfaces].map(face=>surfaceLabel(face,Number(tooth))).join('') + ')' : ''); });
+                return `<li><strong>${escape(item.name)}</strong>${item.description ? `<p>${escape(item.description)}</p>` : ''}<p>Estado: ${escape(labels[item.status] || item.status)}${includesCosts && item.cost !== null && item.cost !== undefined ? ` · Costo estimado: $${Number(item.cost).toFixed(2)}` : ''}${teeth.length ? ` · Dientes: ${escape(teeth.join(', '))}` : ''}</p></li>`;
+            }).join('');
             const html = sanitizeDocumentHtml(`<h2>Consentimiento del plan de tratamiento</h2><p>Paciente: ${escape(patientName)}</p><p>Doctor: ${escape(doctor.professional_name)} · Cédula: ${escape(doctor.professional_license)}</p>${declare}${text ? `<section>${text}</section>` : ''}<h3>${escape(plan.title)}</h3>${plan.diagnosis ? `<p>Diagnóstico: ${escape(plan.diagnosis)}</p>` : ''}<ul>${rows || '<li>Sin tratamientos registrados.</li>'}</ul>`);
             const id = uuidv4();
             const values = { ...this.keys(body), id, title: String(`Consentimiento: ${plan.title}`).slice(0, 255), html, doctorId: doctor.id_login, profileId: doctor.id_doctor_professional_profile,
