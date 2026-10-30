@@ -1,0 +1,131 @@
+name: Deploy medsync-back-legacy to Contabo dev
+
+on:
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+# DEV_* secrets are separate from prod. NODE_ENV=production is intentional.
+env:
+  VPS_HOST: 185.187.235.117
+  NODE_VERSION: 22
+  APP_NAME: medsync-back-legacy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-deploy
+  cancel-in-progress: false
+
+jobs:
+  isolated-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:isolated
+
+  build-and-deploy:
+    needs: isolated-regressions
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      # No hay paso de "build": el proyecto es JavaScript plano (CommonJS).
+      # El artefacto de despliegue es src/ + package.json + package-lock.json
+      # + ecosystem.config.cjs + .env. Las dependencias se instalan en el VPS.
+
+      - name: Validate deployment configuration
+        env:
+          VPS_HOST: ${{ env.VPS_HOST }}
+          VPS_USER: ${{ secrets.DEV_VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+          VPS_APP_DIR: ${{ secrets.DEV_VPS_APP_DIR }}
+        run: |
+          node <<'NODE'
+          const requiredKeys = ['VPS_HOST', 'VPS_USER', 'VPS_SSH_KEY', 'VPS_KNOWN_HOSTS', 'VPS_APP_DIR'];
+          const missingKeys = requiredKeys.filter((key) => !process.env[key]);
+
+          if (missingKeys.length > 0) {
+            console.error(`Missing GitHub secrets: ${missingKeys.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Create development server environment file
+        env:
+          # Guarda el .env de PRODUCCIÓN completo en un único secret (ENV_FILE).
+          # Debe ser una versión "production" del .env.local:
+          #   - NODE_ENV=production (y APP_ENV/ENVIRONMENT=production)
+          #   - REQUIRE_ACTIVE_SESSION=true
+          #   - JWT_SECRET / REFRESH_TOKEN_SECRET / PASSWORD_RESET_CODE_SECRET
+          #     / SIGNATURE_LINK_TOKEN_SECRET / CSRF_TOKEN_SECRET FUERTES (>=32 chars)
+          #   - CORS_ALLOWED_ORIGINS / CORS_ORIGIN con orígenes HTTPS explícitos
+          #     (sin http://localhost, sin wildcard) o validateStartupConfig aborta
+          #   - AUTH_COOKIE_SECURE=true y nombres de cookie de producción
+          ENV_FILE: ${{ secrets.DEV_ENV_FILE }}
+        run: |
+          if [ -z "$ENV_FILE" ]; then
+            echo "Missing GitHub secret: ENV_FILE"
+            exit 1
+          fi
+
+          printf '%s\n' "$ENV_FILE" > .env
+          chmod 600 .env
+
+          # Validación mínima: claves que validateStartupConfig exige en producción.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const content = fs.readFileSync('.env', 'utf8');
+          const has = (k) => new RegExp(`^${k}=.+`, 'm').test(content);
+
+          const required = [
+            'NODE_ENV',
+            'PORT',
+            'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
+            'JWT_SECRET',
+            'REFRESH_TOKEN_SECRET',
+            'PASSWORD_RESET_CODE_SECRET',
+            'CORS_ALLOWED_ORIGINS',
+          ];
+          const missing = required.filter((k) => !has(k));
+          if (missing.length > 0) {
+            console.error(`ENV_FILE is missing required keys: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+
+          if (!/^NODE_ENV=production\s*$/m.test(content)) {
+            console.error('ENV_FILE must set NODE_ENV=production');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Transfer and activate with verified OpenSSH
+        env:
+          VPS_HOST: ${{ env.VPS_HOST }}
+          VPS_USER: ${{ secrets.DEV_VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+          VPS_PORT: ${{ secrets.DEV_VPS_PORT || '22' }}
+          VPS_APP_DIR: ${{ secrets.DEV_VPS_APP_DIR }}
+          RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          APP_PORT: ${{ secrets.DEV_APP_PORT || '3009' }}
+        run: bash scripts/ops/upload-release.sh
