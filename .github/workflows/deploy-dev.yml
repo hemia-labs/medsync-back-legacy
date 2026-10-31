@@ -40,7 +40,7 @@ jobs:
     needs: isolated-regressions
     if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    environment: dev
+    # DEV_* repository secrets; no GitHub Environment required.
 
     steps:
       - name: Checkout repository
