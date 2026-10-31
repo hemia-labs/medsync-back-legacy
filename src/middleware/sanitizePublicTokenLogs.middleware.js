@@ -6,7 +6,7 @@ const PUBLIC_SIGNATURE_TOKEN_PATTERNS = [
 function sanitizePublicSignatureToken(value) {
     return PUBLIC_SIGNATURE_TOKEN_PATTERNS.reduce(
         (current, pattern) => current.replace(pattern, '$1[redacted]'),
-        String(value || '')
+        String(value || '').replace(/(\/api\/platform-auth\/callback)\?[^\s]*/g, '$1?[redacted]')
     );
 }
 
