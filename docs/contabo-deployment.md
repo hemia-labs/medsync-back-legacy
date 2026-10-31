@@ -5,13 +5,13 @@ Both repositories use these destinations:
 | Branch | GitHub environment | Workflow | VPS |
 | --- | --- | --- | --- |
 | main | prod | deploy.yml | 195.26.247.210 |
-| develop | none (repository secrets) | deploy-dev.yml | 185.187.235.117 |
+| develop | dev | deploy-dev.yml | 185.187.235.117 |
 
 Pushes to the matching branch deploy automatically after required checks. Manual runs are allowed only on that same branch. Pull requests never deploy. Merge the workflow changes separately into main and develop; publishing only on main does not install the workflow on develop. The dev workflow also exists on the default branch so GitHub can expose its manual trigger.
 
 ## GitHub setup
 
-For dev, use Settings > Secrets and variables > Actions > Repository secrets and create the DEV_* secrets below. The dev workflow intentionally has no environment field, so it works without GitHub Environments. Branch/event guards remain in the workflow; repository secrets do not provide environment-level branch restrictions or approval gates. Users able to change workflows must be trusted accordingly. Production retains its existing prod environment and secret names; configure that separately before migrating production.
+The dev job declares environment: dev. Store DEV_* connection secrets in Settings > Environments > dev; DEV_ENV_FILE and other DEV_* values may also be repository secrets. GitHub makes repository secrets available to the job and environment secrets override same-named repository secrets. Restrict the dev environment to the develop branch. Production retains its prod environment and secret names; configure it separately before migration.
 
 The destination IP is explicit in each workflow. The old VPS_HOST secret is no longer read. Existing production secret names are retained; verify their values for the new VPS. Dev reads only DEV_* secrets, with no fallback to production names. Never copy the production database credentials, signing keys, external service credentials or API URL into dev.
 
@@ -31,7 +31,7 @@ VPS_KNOWN_HOSTS/DEV_VPS_KNOWN_HOSTS must contain the new server public host keys
 
 ## Activation and verification
 
-1. Populate DEV_* repository secrets for dev, or the prod environment secrets for production, and verify the SSH trust data.
+1. Populate DEV_* secrets in the dev environment and/or repository for dev, or the prod environment secrets for production, and verify the SSH trust data.
 2. Finish VPS, database, HTTPS/reverse proxy and DNS setup separately.
 3. Merge the develop-targeted PR first when dev is ready; this triggers a dev deployment. Validate the application using its development URLs.
 4. Merge the main-targeted PR only when the production migration is ready; this triggers a production deployment. DNS/database migration is a separate operation.
