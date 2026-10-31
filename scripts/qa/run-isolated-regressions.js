@@ -4,6 +4,7 @@ const path = require('node:path');
 
 // Reviewed allowlist only. Never discover fixtures/live MySQL scripts by glob.
 const tests = [
+    'platform-sso.test', 's18-session-revocation-http-regression',
     'po18-security-regression', 'request-body-security-regression',
     'issues-hardening-regression', 'issues-upload-regression', 'deploy-release-regression',
     'prescription-issue-regression', 'prescription-output-regression',
