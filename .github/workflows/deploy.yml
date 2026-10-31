@@ -1,4 +1,4 @@
-name: Deploy medsync-back-legacy to VPS
+name: Deploy medsync-back-legacy to Contabo prod
 
 on:
   pull_request:
@@ -10,6 +10,7 @@ on:
   workflow_dispatch:
 
 env:
+  VPS_HOST: 195.26.247.210
   NODE_VERSION: 22
   APP_NAME: medsync-back-legacy
 
@@ -36,7 +37,7 @@ jobs:
 
   build-and-deploy:
     needs: isolated-regressions
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: prod
 
@@ -52,7 +53,7 @@ jobs:
 
       - name: Validate deployment configuration
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_HOST: ${{ env.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
@@ -118,7 +119,7 @@ jobs:
 
       - name: Transfer and activate with verified OpenSSH
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_HOST: ${{ env.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
