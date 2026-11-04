@@ -397,7 +397,11 @@ class AuthController extends httpResponseHelper{
             });
             response = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code: 'AUTH_SESSION_INVALID' });
         } else {
-            response = responseData.success(buildD2SessionResponseData(response.data), MESSAGES.DATA_GET_SUCCESSFULLY);
+            const sessionData = buildD2SessionResponseData(response.data);
+            if (req.tokenDecode.auth_method === 'hemia_sso') {
+                sessionData.accessExpiresAt = new Date(req.tokenDecode.exp * 1000).toISOString();
+            }
+            response = responseData.success(sessionData, MESSAGES.DATA_GET_SUCCESSFULLY);
             securityLogger.record('auth.session.success', req, {
                 id_login: req.tokenDecode.id_login,
                 id_session_present: true
