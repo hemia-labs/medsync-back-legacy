@@ -4,6 +4,7 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
+    "qa:platform-sso": "node --test scripts/qa/platform-sso.test.js",
     "dev": "npm run dev:d2",
     "dev:d2": "node scripts/dev-auth-mode.js d2",
     "dev:legacy": "node scripts/dev-auth-mode.js legacy",
@@ -40,6 +41,7 @@
     "express-validator": "^6.9.2",
     "fs-extra": "^9.1.0",
     "http-errors": "~1.6.3",
+    "jose": "6.2.14",
     "jsonwebtoken": "^9.0.3",
     "jwt-decode": "^3.1.2",
     "method-override": "^3.0.0",
