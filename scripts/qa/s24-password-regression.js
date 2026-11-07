@@ -17,8 +17,10 @@ const {validateAuthPayload}=require('../../src/middleware/authPayloadValidation.
     assert.equal(await passwords.verify(passphrase,hash.replace('131072','1048576')),false);
     assert.equal(await passwords.verify(passphrase,hash+'suffix'),false);
     await assert.rejects(passwords.hash('a common password for tests',blocklist),e=>e.code==='PASSWORD_COMPROMISED');
-    await assert.rejects(passwords.hash('too short',blocklist),e=>e.code==='PASSWORD_INVALID');
+    await assert.rejects(passwords.hash('short7',blocklist),e=>e.code==='PASSWORD_INVALID');
     await assert.rejects(passwords.hash(passphrase,async()=>new Set()),e=>e.code==='PASSWORD_POLICY_UNAVAILABLE');
+    const minimum=await passwords.hash('abcdefgh',blocklist);
+    assert.ok(await passwords.verify('abcdefgh',minimum));
     const legacy=await bcrypt.hash('Legacy123',4);
     assert.ok(await compare(' Legacy123 ',legacy));assert.equal(await compare('Wrong123',legacy),false);
     let reached=false;

@@ -58,7 +58,7 @@ function clone(value) {
 function getEffectiveDashboardCapabilities(planCode) {
     const normalizedPlan = normalizePlanCode(planCode);
     const plan = getSaasPlan(normalizedPlan);
-    const effectivePlanCode = DASHBOARD_CAPABILITIES_BY_PLAN[normalizedPlan] ? normalizedPlan : 'basic';
+    const effectivePlanCode = plan && DASHBOARD_CAPABILITIES_BY_PLAN[plan.code] ? plan.code : 'basic';
     const effectivePlan = getSaasPlan(effectivePlanCode);
     const config = DASHBOARD_CAPABILITIES_BY_PLAN[effectivePlanCode];
 
@@ -66,7 +66,7 @@ function getEffectiveDashboardCapabilities(planCode) {
         level: config.level,
         planLabel: effectivePlan ? effectivePlan.name : 'Individual',
         sourcePlan: plan ? normalizedPlan : null,
-        fallbackApplied: !plan || effectivePlanCode !== normalizedPlan,
+        fallbackApplied: !plan || effectivePlanCode !== plan.code,
         capabilities: clone(config.widgets)
     };
 }

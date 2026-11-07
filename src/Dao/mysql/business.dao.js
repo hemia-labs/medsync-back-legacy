@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -45,9 +46,16 @@ class BusinessDao {
             const currentResponse = await this.get(idBusiness);
             if(!currentResponse || currentResponse.status !== 200 || !currentResponse.data) return responseData.error('No se pudo consultar el consultorio antes de guardar. Tus cambios no se guardaron; reintenta.');
             const current = currentResponse.data;
-            const validation = validateBusinessProfile(pickBusinessProfileUpdates(body, current));
+            const candidate = pickBusinessProfileUpdates(body, current);
+            // A saved private key is retained internally; clients never submit bearer URLs.
+            if (privateImages.isPrivateKey(current.logoUrl)) {
+                if (Object.hasOwn(body, 'logoUrl') || Object.hasOwn(body, 'logo_url')) return responseData.bad_request('Usa la carga de logo para modificar esta imagen.');
+                candidate.logoUrl = '';
+            }
+            const validation = validateBusinessProfile(candidate);
             if(!validation.isValid) return responseData.bad_request(validation.message, { fieldErrors: validation.fieldErrors });
             const updates = validation.data;
+            if (privateImages.isPrivateKey(current.logoUrl)) updates.logoUrl = current.logoUrl;
 
             await sequelize.query(
                 `UPDATE business
@@ -56,7 +64,7 @@ class BusinessDao {
                         email = :_email,
                         phone = :_phone,
                         address = :_address,
-                        logo_url = :_logo_url,
+                        ${Object.hasOwn(body, 'logoUrl') || Object.hasOwn(body, 'logo_url') ? 'logo_url = :_logo_url,' : ''}
                         updated_at = NOW(),
                         updated_by = :_updated_by
                   WHERE id_business = :_id_business`,
@@ -77,6 +85,35 @@ class BusinessDao {
             return this.get(idBusiness);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        }
+    }
+
+    async updateLogo(idBusiness, body, remove = false) {
+        let transaction, uploaded, previous, committed = false, commitAttempted = false;
+        try {
+            transaction = await sequelize.transaction();
+            const rows = await sequelize.query('SELECT logo_url FROM business WHERE id_business = :business AND active = 1 FOR UPDATE', {
+                replacements: { business: idBusiness }, type: QueryTypes.SELECT, transaction
+            });
+            if (!rows[0]) return responseData.notSuccess('Consultorio no disponible.');
+            previous = rows[0].logo_url;
+            if (!remove) uploaded = await privateImages.upload(body.image, idBusiness);
+            await sequelize.query('UPDATE business SET logo_url = :logo, updated_at = NOW(), updated_by = :actor WHERE id_business = :business', {
+                replacements: { business: idBusiness, actor: body.id_login, logo: uploaded ? uploaded.Key : null }, type: QueryTypes.UPDATE, transaction
+            });
+            commitAttempted = true;
+            await transaction.commit();
+            transaction = null; committed = true;
+            await privateImages.remove(previous, idBusiness);
+            return this.get(idBusiness);
+        } catch (error) {
+            return error.status === 400 ? responseData.bad_request(error.message) : SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        } finally {
+            if (transaction && !transaction.finished) await transaction.rollback();
+            if (uploaded && !committed) {
+                if (commitAttempted) await privateImages.pending(uploaded);
+                else await privateImages.remove(uploaded.Key, idBusiness);
+            }
         }
     }
 

@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const SecurityConfig = require('../../config/security');
+const { normalizeEmail } = require('../registration/identity');
 
 const NUMERIC_ALPHABET = '0123456789';
 const ALPHANUMERIC_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -25,16 +26,18 @@ function generateCode() {
     return code;
 }
 
-function normalizePhone(phone) {
-    return String(phone || '').replace(/\D/g, '');
+function normalizeIdentifier(value) {
+    return normalizeEmail(value) || '';
 }
 
 function normalizeCode(code) {
     return String(code || '').trim().toUpperCase();
 }
 
-function hashCode(phone, code) {
-    const message = `${PURPOSE}:${normalizePhone(phone)}:${normalizeCode(code)}`;
+function hashCode(identifier, code) {
+    const email = normalizeIdentifier(identifier);
+    if (!email) throw new Error('PASSWORD_RESET_IDENTIFIER_INVALID');
+    const message = `${PURPOSE}:${email}:${normalizeCode(code)}`;
 
     return crypto
         .createHmac('sha256', SecurityConfig.getPasswordResetCodeSecret())
@@ -97,8 +100,8 @@ function safeCompareHash(left, right) {
     return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function buildCodeRecord(phone, code = generateCode(), now = new Date()) {
-    const codeHash = hashCode(phone, code);
+function buildCodeRecord(identifier, code = generateCode(), now = new Date()) {
+    const codeHash = hashCode(identifier, code);
 
     return {
         code,
@@ -121,6 +124,6 @@ module.exports = {
     isExpired,
     maskEmail,
     normalizeCode,
-    normalizePhone,
+    normalizeIdentifier,
     safeCompareHash
 };

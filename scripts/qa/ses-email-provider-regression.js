@@ -18,10 +18,10 @@ const base = {
     AWS_ACCESS_KEY_ID:synthetic.accessKey,AWS_SECRET_ACCESS_KEY:synthetic.secret,
     EMAIL_FROM_NAME:'MedSync QA',EMAIL_FROM_AUTH:'auth@example.test',EMAIL_FROM_NOTIFICATIONS:'notifications@example.test',EMAIL_REPLY_TO:'support@example.test',
     EMAIL_CONFIGURATION_SET_AUTH:'qa-auth-set',EMAIL_CONFIGURATION_SET_TRANSACTIONAL:'qa-transactional-set',
-    EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
+    EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:'Exact-Change-Code-QA',EMAIL_PASSWORD_CHANGED_TEMPLATE:'Exact-Changed-Template-QA',EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
     SMTP_HOST:'relay.qa.invalid',SMTP_PORT:'2525',SMTP_SECURE:'false',SMTP_USER:'synthetic-smtp-user',SMTP_PASSWORD:'synthetic-smtp-password',EMAIL_FROM:'legacy@example.test'
 };
-const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','EMAIL_REGISTRATION_CODE_TEMPLATE'];
+const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','PUBLIC_APP_URL','EMAIL_REGISTRATION_CODE_TEMPLATE','EMAIL_REGISTRATION_WELCOME_TEMPLATE'];
 const originalEnv=new Map(envKeys.map(key=>[key,process.env[key]]));
 const originalLoad=Module._load;
 const originalConsole={log:console.log,warn:console.warn,error:console.error};
@@ -69,12 +69,6 @@ function assertTemplateOnly(request) {
     assert.equal(request.Destination.ToAddresses.length,1);assert.deepEqual(Object.keys(request.Destination),['ToAddresses']);
     assert.equal(request.Content.Template.TemplateArn,undefined);assert.equal(request.Content.Template.TemplateContent,undefined);
     assert.equal(request.Content.Simple,undefined);assert.equal(request.Content.Raw,undefined);
-}
-function assertSimpleOnly(request) {
-    assert.deepEqual(Object.keys(request.Content),['Simple'],'Locally rendered messages must send their subject, text and HTML through SES Simple content');
-    assert.equal(request.Content.Template,undefined);assert.equal(request.Content.Raw,undefined);
-    assert.deepEqual(Object.keys(request.Content.Simple),['Subject','Body']);
-    assert.deepEqual(Object.keys(request.Content.Simple.Body),['Text','Html']);
 }
 function decodeEscapedText(value) {
     return String(value).replace(/&(amp|lt|gt|quot|#0*39|#x0*27);/gi,(_match,key)=>({amp:'&',lt:'<',gt:'>',quot:'"'}[key.toLowerCase()] || "'"));
@@ -131,14 +125,38 @@ async function credentials(config) {return typeof config.credentials==='function
         }
         assertNoSecretLogs();
     });
-    await check('password-changed uses the branded local email and shares the configured auth channel',async()=>{
+    await check('password change code uses only the configured SES template with leading zeroes and capped TTL',async()=>{
+        const service=configure();const mail=require(mailPath);
+        assert.deepEqual(await mail.SendPasswordChangeCode('patient@example.test',{code:'059173',ttlMinutes:3}),{process:true,errorCode:null});
+        assertTemplateOnly(input());assert.equal(input().Content.Template.TemplateName,'Exact-Change-Code-QA');
+        assert.equal(input().ConfigurationSetName,'qa-auth-set');assert.match(input().FromEmailAddress,/auth@example\.test/);
+        assert.deepEqual(data(),{code:'059173',ttlMinutes:3,html:{code:'059173',ttlMinutes:'3'}});
+        for(const ttlMinutes of [0,-1,'bad',null,Infinity,30]){
+            assert.equal((await service.sendTransactionalEmail({type:'password-change-code',to:'patient@example.test',variables:{code:'059173',ttlMinutes}})).success,true);
+            assert.equal(data().ttlMinutes,10);assert.equal(data().html.ttlMinutes,'10');
+        }
+        const code='<>&"\'';
+        assert.equal((await service.sendTransactionalEmail({type:'password-change-code',to:'patient@example.test',variables:{code,ttlMinutes:5,password:'private-password',html:{code:'<script>'}}})).success,true);
+        assertEscapedExactlyOnce(data().html.code,code);
+        assert.deepEqual(Object.keys(data()).sort(),['code','html','ttlMinutes']);
+        for(const code of ['',null,123456,'123\n456']){
+            const count=commands.length;
+            assertSafeFailure(await service.sendTransactionalEmail({type:'password-change-code',to:'patient@example.test',variables:{code,ttlMinutes:10}}));
+            assert.equal(commands.length,count);
+        }
+        sdkReply=new Error('Synthetic SES outage');const count=commands.length;
+        assertSafeFailure(await mail.SendPasswordChangeCode('patient@example.test',{code:'059173',ttlMinutes:10}).then(r=>({success:r.process,provider:'ses',code:r.errorCode,message:'Delivery failed'})));
+        assert.equal(commands.length,count+1);assertTemplateOnly(input());assert.equal(transports.length,0);assertNoSecretLogs();
+    });
+    await check('password-changed uses the configured SES template, authoritative account and auth channel',async()=>{
         const service=configure();
-        assert.equal((await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{code:'004200',publicUrl:synthetic.privateLink,from:'attacker@example.test'}})).success,true);
-        assertSimpleOnly(input());assert.equal(input().ConfigurationSetName,'qa-auth-set');
-        assert.match(input().FromEmailAddress,/auth@example\.test/);assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
-        assert.match(input().Content.Simple.Body.Html.Data,/Tu contraseña fue actualizada/);
-        assert.match(input().Content.Simple.Body.Html.Data,/background:#f4f8f7/);
-        assert.doesNotMatch(input().Content.Simple.Body.Html.Data,/004200|offline-secret-token|attacker@example\.test/);assertNoSecretLogs();
+        assert.equal((await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{accountEmail:'attacker@example.test',supportEmail:'attacker@example.test',code:'004200',publicUrl:synthetic.privateLink,from:'attacker@example.test'}})).success,true);
+        assertTemplateOnly(input());assert.equal(input().ConfigurationSetName,'qa-auth-set');
+        assert.equal(input().Content.Template.TemplateName,'Exact-Changed-Template-QA');
+        assert.equal(data().accountEmail,'patient@example.test');
+        assert.equal(data().supportUrl,'mailto:support%40example.test');
+        assert.equal(data().changedAtLabel,'');assert.equal(data().changeOrigin,'');assert.equal(data().sessionNotice,'');
+        assert.doesNotMatch(JSON.stringify(data()),/004200|offline-secret-token|attacker@example\.test/);assertNoSecretLogs();
     });
     await check('document signature sends seven plain values plus seven escaped HTML copies, HTTPS links and the transactional channel',async()=>{
         const service=configure();
@@ -180,7 +198,7 @@ async function credentials(config) {return typeof config.credentials==='function
             {EMAIL_FROM_AUTH:'auth@example.test\r\n'},{EMAIL_FROM_NOTIFICATIONS:'\r\nnotifications@example.test'},
             {EMAIL_FROM_NAME:'MedSync\r\nInjectedHeader'},{EMAIL_FROM_NAME:'MedSync\r\n'},{EMAIL_REPLY_TO:'support@example.test\r\nInjectedHeader'},{EMAIL_REPLY_TO:'support@example.test\r\n'},
             {EMAIL_CONFIGURATION_SET_AUTH:undefined},{EMAIL_CONFIGURATION_SET_TRANSACTIONAL:undefined},
-            {EMAIL_CONFIGURATION_SET_AUTH:'auth\r\nInjectedHeader'},{EMAIL_PASSWORD_RESET_TEMPLATE:undefined},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:undefined},
+            {EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:undefined},{EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:'Change\r\nInjectedHeader'},{EMAIL_PASSWORD_CHANGED_TEMPLATE:undefined},{EMAIL_PASSWORD_CHANGED_TEMPLATE:'Changed\r\nInjectedHeader'},{EMAIL_CONFIGURATION_SET_AUTH:'auth\r\nInjectedHeader'},{EMAIL_PASSWORD_RESET_TEMPLATE:undefined},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:undefined},
             {EMAIL_PASSWORD_RESET_TEMPLATE:'Reset\r\nInjectedHeader'},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA\r\n'},{EMAIL_CONFIGURATION_SET_AUTH:'qa-auth-set\r\n'}
         ];
         for(const override of invalidConfigurations) {
@@ -208,11 +226,38 @@ async function credentials(config) {return typeof config.credentials==='function
         assert.equal((await noSenders.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}})).success,true);assert.equal(smtpMessages[0].from,'legacy@example.test');assert.equal(clients.length,0);
         assertNoSecretLogs();
     });
+    await check('password change details survive SMTP and SES with event time, session scope and safe HTML',async()=>{
+        for (const provider of ['smtp','ses']) {
+            configure({EMAIL_PROVIDER:provider});
+            const mail=require(mailPath);
+            for (const changeMethod of ['settings','recovery']) {
+                assert.equal((await mail.SendPasswordChanged('patient@example.test',{
+                    changedAt:'2026-10-29T16:30:00.000Z',changeMethod
+                })).process,true);
+                const body=provider==='ses' ? [
+                    'Cuenta: '+data().accountEmail, data().changedAtLabel, data().changeOrigin,
+                    data().sessionNotice, decodeURIComponent(data().supportUrl).replace('mailto:','Soporte: ')
+                ].join('\n') : smtpMessages.at(-1).text;
+                if(provider==='ses'){assertTemplateOnly(input());assert.equal(data().html.accountEmail,'patient@example.test');}
+                assert.match(body,/Cuenta: patient@example.test/);
+                assert.match(body,/10:30.*Ciudad de México/);
+                assert.match(body,changeMethod==='settings' ? /Configuración de tu cuenta/ : /Recuperación de contraseña/);
+                assert.match(body,changeMethod==='settings' ? /Tu sesión actual sigue abierta/ : /Todas las sesiones se cerraron/);
+                assert.match(body,/Soporte: support@example.test/);
+            }
+        }
+        const render=require(path.join(root,'src/services/email/transactionalEmail.renderer'));
+        const result=render('password-changed',{accountEmail:'<img src=x onerror=alert(1)>',changedAt:'invalid',changeMethod:'unknown',supportEmail:'x@example.test\r\nBcc: other@example.test'});
+        assert.ok(result.html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+        assert.doesNotMatch(result.html,/<img src=x|mailto:|Invalid Date/);
+        assert.doesNotMatch(result.text,/Fecha y hora:|Origen:|Sesiones:/);
+        assert.doesNotMatch(render('password-changed',{}).text,/Fecha y hora:|Origen:|Sesiones:/);
+    });
     await check('real mail wrappers preserve reset codes and changed variables while generic mail remains SMTP-only',async()=>{
         configure();let mail=require(mailPath);
         assert.deepEqual(await mail.SendPasswordResetCode('patient@example.test',{code:'004200',ttlMinutes:14}),{process:true,errorCode:null});
         assert.equal(input().Content.Template.TemplateName,'Exact-Reset-Template-QA');assert.deepEqual(data(),{code:'004200',ttlMinutes:14,html:{code:'004200',ttlMinutes:'14'}});
-        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true,errorCode:null});assertSimpleOnly(input());assert.equal(input().Content.Simple.Subject.Data,'Tu contraseña de MedSync fue actualizada');
+        assert.deepEqual(await mail.SendPasswordChanged('patient@example.test'),{process:true,errorCode:null});assertTemplateOnly(input());assert.equal(input().Content.Template.TemplateName,'Exact-Changed-Template-QA');
         const count=commands.length;assert.equal((await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text')).process,false);assert.equal(commands.length,count,'Untyped generic mail must not be sent through SES');
         configure({EMAIL_PROVIDER:'smtp'});mail=require(mailPath);
         assert.deepEqual(await mail.SendMail('patient@example.test','<p>Generic body</p>','Generic subject','Generic text'),{process:true,errorCode:null});
@@ -235,9 +280,55 @@ async function credentials(config) {return typeof config.credentials==='function
         service=configure({EMAIL_PROVIDER:'smtp'});
         assert.equal(service.initialize().success,true);
         assert.equal((await service.sendTransactionalEmail({type:'registration-contact-code',to:'patient@example.test',variables:{code:'004200',ttlMinutes:10}})).success,true);
-        assert.match(smtpMessages[0].subject,/Verifica tu correo/);assert.match(smtpMessages[0].text,/004200/);assert.doesNotMatch(smtpMessages[0].text,/recuperacion/);
+        assert.equal(smtpMessages[0].subject,'Confirma tu correo en MedSync');
+        for (const body of [smtpMessages[0].text,smtpMessages[0].html]) {
+            assert.match(body,/Tu consultorio, conectado/);
+            assert.match(body,/004200/);
+            assert.match(body,/Reenviar código/);
+            assert.doesNotMatch(body,/TU NUEVA CUENTA|recuperaci[oó]n/i);
+        }
         service=configure({EMAIL_PROVIDER:'smtp',SMTP_PASSWORD:undefined});assert.equal(service.initialize().success,false);
         assertNoSecretLogs();
+    });
+    await check('welcome uses its own template, escapes user text and requires a safe HTTPS login URL',async()=>{
+        const service=configure({EMAIL_REGISTRATION_WELCOME_TEMPLATE:'Exact-Welcome-Template-QA'});
+        const message={type:'registration-welcome',to:'patient@example.test',variables:{firstName:'Ana',clinicName:'Centro A & B',
+            trialDurationLabel:'21 días',trialEndsAtLabel:'26 de noviembre de 2026',loginUrl:'https://app.example.test/login'}};
+        assert.equal((await service.sendTransactionalEmail(message)).success,true);
+        assert.equal(input().Content.Template.TemplateName,'Exact-Welcome-Template-QA');
+        assert.equal(input().ConfigurationSetName,'qa-auth-set');
+        assert.equal(data().clinicName,'Centro A & B');
+        assert.equal(data().html.clinicName,'Centro A &amp; B');
+        for (const key of ['trialDurationLabel','trialEndsAtLabel']) {
+            assert.equal(data()[key],message.variables[key]);
+            assert.equal(data().html[key],message.variables[key]);
+            assertSafeFailure(await service.sendTransactionalEmail({...message,variables:{...message.variables,[key]:''}}));
+        }
+        assert.equal(data().html.loginUrl,message.variables.loginUrl);
+        message.variables.loginUrl='http://app.example.test/login';
+        assertSafeFailure(await service.sendTransactionalEmail(message));
+        assert.equal(commands.length,1);
+    });
+    await check('development sends welcome and signature through SES using the configured loopback app URL',async()=>{
+        const settings={APP_ENV:'development',NODE_ENV:'development',ENVIRONMENT:'development',
+            PUBLIC_APP_URL:'http://localhost:8080',EMAIL_REGISTRATION_WELCOME_TEMPLATE:'Exact-Welcome-Template-QA'};
+        const welcome={type:'registration-welcome',to:'patient@example.test',variables:{firstName:'Ana',clinicName:'Clínica QA',
+            trialDurationLabel:'15 días',trialEndsAtLabel:'20 de noviembre de 2026',loginUrl:'http://localhost:8080/login'}};
+        const signature={type:'document-signature',to:'patient@example.test',variables:{publicUrl:'http://localhost:8080/sign/d/qa'}};
+        let service=configure(settings);
+        for(const [message,template] of [[welcome,'Exact-Welcome-Template-QA'],[signature,'Exact-Signature-Template-QA']]) {
+            assert.equal((await service.sendTransactionalEmail(message)).success,true);
+            assertTemplateOnly(input());
+            assert.equal(input().Content.Template.TemplateName,template);
+        }
+        for(const publicUrl of ['http://localhost:8090/sign/d/qa','http://localhost.example.test:8080/sign/d/qa','http://user@localhost:8080/sign/d/qa']) {
+            assertSafeFailure(await service.sendTransactionalEmail({...signature,variables:{publicUrl}}));
+        }
+        assert.equal(commands.length,2);
+        service=configure({...settings,NODE_ENV:'production'});
+        assertSafeFailure(await service.sendTransactionalEmail(welcome));
+        assertSafeFailure(await service.sendTransactionalEmail(signature));
+        assert.equal(commands.length,0);
     });
     assert.ok(envLoads>0,'All real env module imports are intercepted rather than reading dotenv files');
     const failed=results.filter(result=>!result.ok);

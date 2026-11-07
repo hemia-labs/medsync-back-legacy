@@ -1,7 +1,7 @@
 'use strict';
 
 // Shared with s24IdentitySchema.js. Keep the SQL/JS parity suite when changing it.
-// Legacy writers accept 7-15 digits; public registration will require exactly 10.
+// Legacy writers accept 7-15 digits; public registration accepts an optional 10-digit phone.
 function normalizePhone(value) {
     if (typeof value !== 'string') return null;
     let phone = value.replace(/^ +| +$/g, '').replace(/[ ()\-.]/g, '');
@@ -23,6 +23,7 @@ function inventory(rows) {
     for (const row of rows) {
         if (!Number(row.active)) report.inactive++;
         for (const [kind, value] of [['phone', normalizePhone(row.telephone)], ['email', normalizeEmail(row.email)]]) {
+            if (kind === 'phone' && (row.telephone == null || (typeof row.telephone === 'string' && !row.telephone.trim()))) continue;
             if (!value) { report.invalid[kind]++; continue; }
             const key = `${kind}:${value}`;
             const previous = owners.get(key);

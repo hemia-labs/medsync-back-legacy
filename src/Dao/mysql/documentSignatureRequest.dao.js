@@ -690,7 +690,7 @@ class DocumentSignatureRequestDao {
                 variables: {
                     patientName: displayName(emailContext),
                     clinicName: emailContext.business_legal_name || emailContext.business_name || 'Tu consultorio',
-                    clinicLogoUrl: emailContext.business_logo_url,
+                    clinicLogoUrl: String(emailContext.business_logo_url || '').startsWith('consultorios/') ? null : emailContext.business_logo_url,
                     documentTitle: documentTitle(emailContext),
                     doctorName: emailContext.doctor_name_snapshot,
                     expiresAt: formatEmailDateTime(createdRequest.expires_at),

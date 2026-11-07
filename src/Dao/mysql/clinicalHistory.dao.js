@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access');
 const { QueryTypes } = require('sequelize');
@@ -173,6 +174,7 @@ class ClinicalHistoryDao {
             }
         );
 
+        if (rows[0]) rows[0].logoUrl = await privateImages.inlineImage(rows[0].logoUrl, businessId);
         return rows[0] || null;
     }
 

@@ -21,8 +21,10 @@ async function SendPasswordChangeCode(to, { code, ttlMinutes } = {}) {
     return normalizeEmailResult(await EmailService.sendTransactionalEmail({ type: 'password-change-code', to, variables: { code, ttlMinutes } }));
 }
 
-async function SendPasswordChanged(to) {
-    return normalizeEmailResult(await EmailService.sendTransactionalEmail({ type: 'password-changed', to, variables: {} }));
+async function SendPasswordChanged(to, { changedAt, changeMethod } = {}) {
+    return normalizeEmailResult(await EmailService.sendTransactionalEmail({
+        type: 'password-changed', to, variables: { accountEmail: to, changedAt, changeMethod, supportEmail: process.env.EMAIL_REPLY_TO }
+    }));
 }
 
 module.exports = { SendMail, SendPasswordChangeCode, SendPasswordChanged, SendPasswordResetCode };

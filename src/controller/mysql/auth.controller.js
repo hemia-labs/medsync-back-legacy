@@ -77,6 +77,8 @@ function buildD2AuthResponseData(data) {
             id_rol: decoded.id_rol || null,
             rol: decoded.rol || null,
             name: decoded.name || null,
+            first_name: decoded.first_name || null,
+            last_name: decoded.last_name || '',
             email: decoded.email || null,
             telephone: decoded.telephone || null
         },
@@ -193,6 +195,9 @@ function buildTenantOperationalSessionData(tenantOperational) {
 
 function buildBusinessSessionData(data, decoded) {
     const business = data && data.business ? data.business : {};
+    const now = new Date();
+    const trialEnd = business.trial_ends_at ? new Date(business.trial_ends_at) : null;
+    const validTrial = business.subscription_status === 'trial' && trialEnd && Number.isFinite(trialEnd.getTime());
 
     return {
         id_business: business.id_business || decoded.id_business || null,
@@ -202,6 +207,9 @@ function buildBusinessSessionData(data, decoded) {
         subscriptionStatus: business.subscription_status || decoded.business_subscription_status || null,
         registrationWelcomePending: business.registrationWelcomePending === true,
         registrationActivationConfirmed: business.registrationActivationConfirmed === true,
+        trialEndsAt: validTrial ? trialEnd.toISOString() : null,
+        trialDaysRemaining: validTrial ? Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / 86400000)) : null,
+        serverNow: now.toISOString(),
         plan: business.plan || decoded.business_plan || null
     };
 }
@@ -217,6 +225,8 @@ function buildD2SessionResponseData(data) {
         user: {
             id_login: decoded.id_login || null,
             name: decoded.name || null,
+            first_name: decoded.first_name || null,
+            last_name: decoded.last_name || '',
             email: decoded.email || null
         },
         role: {
@@ -541,10 +551,10 @@ class AuthController extends httpResponseHelper{
  * @author Humberto Trinidad Domínguez
  */
   sendOtpRecoverPassword = async(req, res, next) =>{
-    let phone = req.body.phone;
+    const email = req.body.email;
     let response = responseData.success({ sent: true }, GENERIC_RECOVERY_RESPONSE);
     try {
-        const daoResponse = await AuthDao.sendOtpRecoverPassword(phone, {
+        const daoResponse = await AuthDao.sendOtpRecoverPassword(email, {
             ip: req.ip,
             userAgent: req.get ? req.get('user-agent') : null
         });
@@ -638,6 +648,7 @@ class AuthController extends httpResponseHelper{
                 ip: req.ip,
                 userAgent: req.get ? req.get('user-agent') : null
             });
+            if (response.retryAfterSeconds) res.setHeader('Retry-After', String(response.retryAfterSeconds));
             const securityEvent = response ? response.securityEvent : null;
             if (response && response.securityEvent) delete response.securityEvent;
             recordSecurityEvent(req, securityEvent, 'auth.password_change.code_requested', {

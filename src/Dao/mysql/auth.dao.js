@@ -1,7 +1,9 @@
 const effectivePermissions = require('../../util/effectivePermissions');
 const { randomUUID } = require('crypto');
 const identityAuth = require('../../services/registration/identityAuth');
+const { normalizeEmail } = require('../../services/registration/identity');
 const registrationPasswords = require('../../services/security/registrationPassword.service');
+const { AccountActivationService, isActivationConfirmed } = require('../../services/registration/accountActivation.service');
 const Auth = require('../../models/mysql/auth.model');
 const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
@@ -47,6 +49,8 @@ const getLoginRole = async (idLogin) => {
                 l.id_rol,
                 l.id_business,
                 l.name AS login_name,
+                l.first_name AS login_first_name,
+                l.last_name AS login_last_name,
                 l.email AS login_email,
                 l.telephone AS login_telephone,
                 r.code,
@@ -124,28 +128,16 @@ const getLoginByPhone = async (phone) => {
     return result && result.length > 0 ? result[0] : null;
 };
 
-const getLoginRecoveryAccountByPhone = async (phone) => {
-    if (identityAuth.enabled()) return identityAuth.findOwner(sequelize, phone, { recovery: true });
-    if (!phone) {
-        return null;
-    }
-
-    const result = await sequelize.query(
-        `SELECT
-                id_login,
-                email,
-                telephone
-           FROM login
-          WHERE telephone COLLATE utf8mb4_unicode_ci = :_phone COLLATE utf8mb4_unicode_ci
-            AND active = 1
-          LIMIT 1`,
-        {
-            replacements: { _phone: phone },
-            type: QueryTypes.SELECT
-        }
+const getRecoveryAccount = async (identifier, transaction) => {
+    const email = normalizeEmail(identifier);
+    if (!email) return null;
+    if (identityAuth.enabled()) return identityAuth.findOwner(sequelize, email, { transaction, lock: true, allowExpired: true });
+    const rows = await sequelize.query(
+        `SELECT id_login,email,telephone,password FROM login
+         WHERE LOWER(TRIM(email))=:email AND active=1 LIMIT 2 FOR UPDATE`,
+        { replacements: { email }, type: QueryTypes.SELECT, transaction }
     );
-
-    return result && result.length > 0 ? result[0] : null;
+    return rows.length === 1 ? rows[0] : null;
 };
 
 const revokeActivePasswordResetTokens = async (idLogin, options = {}) => {
@@ -174,155 +166,44 @@ const revokeActivePasswordResetTokens = async (idLogin, options = {}) => {
     return affectedRows(result);
 };
 
-const createPasswordResetChallenge = async (account, phone, metadata = {}) => {
-    const tokenRecord = PasswordResetTokenService.buildCodeRecord(phone);
-    const emailFingerprint = PasswordResetTokenService.fingerprintEmail(account.email);
-
+const createPasswordResetChallenge = async (account, email, metadata, transaction) => {
+    const record = PasswordResetTokenService.buildCodeRecord(email);
     await sequelize.query(
         `INSERT INTO auth_password_reset_tokens (
-            id_login,
-            phone_normalized,
-            destination_email_fingerprint,
-            code_hash,
-            code_fingerprint,
-            purpose,
-            status,
-            attempts,
-            max_attempts,
-            issued_at,
-            expires_at,
-            requested_ip,
-            requested_user_agent,
-            created_at,
-            updated_at
-        ) VALUES (
-            :_id_login,
-            :_phone_normalized,
-            :_destination_email_fingerprint,
-            :_code_hash,
-            :_code_fingerprint,
-            :_purpose,
-            'pending',
-            0,
-            :_max_attempts,
-            NOW(),
-            DATE_ADD(NOW(), INTERVAL :_ttl_minutes MINUTE),
-            :_requested_ip,
-            :_requested_user_agent,
-            NOW(),
-            NOW()
-        )`,
-        {
-            replacements: {
-                _id_login: account.id_login,
-                _phone_normalized: phone,
-                _destination_email_fingerprint: emailFingerprint,
-                _code_hash: tokenRecord.code_hash,
-                _code_fingerprint: tokenRecord.code_fingerprint,
-                _purpose: PasswordResetTokenService.PURPOSE,
-                _max_attempts: tokenRecord.max_attempts,
-                _ttl_minutes: SecurityConfig.getPasswordResetCodeTtlMinutes(),
-                _requested_ip: normalizeClientIp(metadata.ip),
-                _requested_user_agent: normalizeUserAgent(metadata.userAgent)
-            },
-            type: QueryTypes.INSERT
-        }
+            id_login,identifier_normalized,destination_email_fingerprint,code_hash,code_fingerprint,
+            purpose,status,attempts,max_attempts,issued_at,expires_at,requested_ip,requested_user_agent,created_at,updated_at)
+         VALUES (:login,:email,:destination,:hash,:fingerprint,:purpose,'pending',0,:max,NOW(),
+            DATE_ADD(NOW(),INTERVAL :ttl MINUTE),:ip,:agent,NOW(),NOW())`,
+        { replacements: { login: account.id_login, email, destination: PasswordResetTokenService.fingerprintEmail(account.email),
+            hash: record.code_hash, fingerprint: record.code_fingerprint, purpose: PasswordResetTokenService.PURPOSE,
+            max: record.max_attempts, ttl: SecurityConfig.getPasswordResetCodeTtlMinutes(),
+            ip: normalizeClientIp(metadata.ip), agent: normalizeUserAgent(metadata.userAgent) }, type: QueryTypes.INSERT, transaction }
     );
-
-    return tokenRecord;
+    return record;
 };
 
-const getLatestPasswordResetChallenge = async (phone, statuses, transaction = null) => {
-    const result = await sequelize.query(
-        `SELECT
-                id,
-                id_login,
-                phone_normalized,
-                destination_email_fingerprint,
-                code_hash,
-                code_fingerprint,
-                purpose,
-                status,
-                attempts,
-                max_attempts,
-                expires_at
-           FROM auth_password_reset_tokens
-          WHERE phone_normalized = :_phone_normalized
-            AND purpose = :_purpose
-            AND status IN (:_statuses)
-          ORDER BY issued_at DESC, id DESC
-          LIMIT 1${transaction ? ' FOR UPDATE' : ''}`,
-        {
-            replacements: {
-                _phone_normalized: phone,
-                _purpose: PasswordResetTokenService.PURPOSE,
-                _statuses: statuses
-            },
-            type: QueryTypes.SELECT,
-            transaction
-        }
+const getLatestPasswordResetChallenge = async (email, account, transaction) => {
+    const rows = await sequelize.query(
+        `SELECT id,id_login,identifier_normalized,destination_email_fingerprint,code_hash,code_fingerprint,
+            purpose,status,attempts,max_attempts,expires_at
+         FROM auth_password_reset_tokens
+         WHERE identifier_normalized=:email AND id_login=:login AND purpose=:purpose
+         ORDER BY issued_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+        { replacements: { email, login: account.id_login, purpose: PasswordResetTokenService.PURPOSE }, type: QueryTypes.SELECT, transaction }
     );
-
-    return result && result.length > 0 ? result[0] : null;
+    return rows[0] || null;
 };
 
-const markPasswordResetChallenge = async (id, status, fields = {}, transaction = null) => {
-    const statusTimestamps = {
-        expired: 'expired_at',
-        locked: 'locked_at',
-        used: 'used_at',
-        revoked: 'revoked_at',
-        verified: 'verified_at'
-    };
-    const timestampColumn = statusTimestamps[status];
-    const setters = ['status = :_status', 'updated_at = NOW()'];
-    const replacements = {
-        _id: id,
-        _status: status
-    };
-
-    if (timestampColumn) {
-        setters.push(`${timestampColumn} = COALESCE(${timestampColumn}, NOW())`);
-    }
-
-    if (fields.attempts !== undefined) {
-        setters.push('attempts = :_attempts');
-        replacements._attempts = fields.attempts;
-    }
-
-    const result = await sequelize.query(
-        `UPDATE auth_password_reset_tokens
-            SET ${setters.join(', ')}
-          WHERE id = :_id`,
-        {
-            replacements,
-            type: QueryTypes.UPDATE,
-            transaction
-        }
+const markPasswordResetChallenge = async (id, status, previousStatus, transaction, attempts) => {
+    const timestamps = { expired: 'expired_at', locked: 'locked_at', used: 'used_at', revoked: 'revoked_at', verified: 'verified_at' };
+    const rows = await sequelize.query(
+        `UPDATE auth_password_reset_tokens SET status=:status,updated_at=NOW()
+            ${timestamps[status] ? `,${timestamps[status]}=COALESCE(${timestamps[status]},NOW())` : ''}
+            ${attempts !== undefined ? ',attempts=:attempts' : ''}
+         WHERE id=:id AND status=:previousStatus`,
+        { replacements: { id, status, previousStatus, ...(attempts !== undefined ? { attempts } : {}) }, type: QueryTypes.UPDATE, transaction }
     );
-
-    return affectedRows(result);
-};
-
-const getPasswordResetAccountById = async (idLogin, transaction = null) => {
-    const result = await sequelize.query(
-        `SELECT
-                id_login,
-                email,
-                telephone,
-                password
-           FROM login
-          WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
-            AND active = 1
-          LIMIT 1`,
-        {
-            replacements: { _id_login: idLogin },
-            type: QueryTypes.SELECT,
-            transaction
-        }
-    );
-
-    return result && result.length > 0 ? result[0] : null;
+    return affectedRows(rows);
 };
 
 const getLoginAuthRow = async (idLogin) => {
@@ -336,6 +217,8 @@ const getLoginAuthRow = async (idLogin) => {
                 l.email,
                 l.telephone,
                 l.name,
+                l.first_name,
+                l.last_name,
                 l.active,
                 l.id_business
            FROM login l
@@ -584,13 +467,16 @@ const buildAuthPayload = async (authRow, fallbackIdLogin) => {
             FROM registration_account a WHERE a.id_login=:login AND a.id_business=:business`,
         {replacements:{login:idLogin,business:role.id_business},type:QueryTypes.SELECT});
         registrationWelcomePending=Boolean(registration && !registration.setup_welcome_acknowledged_at);
-        registrationActivationConfirmed=Boolean(registration?.activation_completed_at && registration.email_verified
-            && role.subscription_status==='active' && role.business_plan==='professional' && role.business_status==='active' && role.business_active);
+        registrationActivationConfirmed=isActivationConfirmed({active:role.business_active,status:role.business_status,
+            subscription_status:role.subscription_status,trial_ends_at:role.trial_ends_at,plan:role.business_plan,
+            activation_completed_at:registration?.activation_completed_at,email_verified:registration?.email_verified});
     }
 
     return {
         tokenData: {
             email: authRow.email || authRow.login_email || (role && role.login_email ? role.login_email : null),
+            first_name: authRow.first_name || authRow.login_first_name || role?.login_first_name || null,
+            last_name: authRow.last_name || authRow.login_last_name || role?.login_last_name || '',
             name: authRow.name || authRow.login_name || (role && role.login_name ? role.login_name : null),
             telephone: authRow.telephone || authRow.login_telephone || (role && role.login_telephone ? role.login_telephone : null),
             id_login: idLogin,
@@ -945,6 +831,9 @@ class AuthDao{
         try {
             let result = identityAuth.enabled()
                 ? await identityAuth.findOwner(sequelize, body.param, {allowExpired:true}).then(row => row ? [row] : null)
+                : String(body.param || '').includes('@')
+                    ? await sequelize.query('SELECT id_login,password,email,telephone FROM login WHERE LOWER(TRIM(email))=:email AND active=1 LIMIT 2', {replacements:{email:require('../../services/registration/identity').normalizeEmail(body.param)},type:QueryTypes.SELECT})
+                        .then(rows => rows.length===1 ? rows : null)
                 : await sequelize.query(SequelizeSP.SP_LOGIN_BY_TELEPHONE, {
                 replacements: {
                     _param : body.param
@@ -1248,153 +1137,69 @@ class AuthDao{
         return response;
     }
 
-    async sendOtpRecoverPassword(phone, metadata = {}) {
+    async sendOtpRecoverPassword(identifier, metadata = {}) {
+        let transaction;
         try {
-            const account = await getLoginRecoveryAccountByPhone(phone);
-
-            if (!account || !account.email) {
-                return withSecurityEvent(
-                    responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY),
-                    {
-                        event: 'auth.password_reset.requested',
-                        account_found: Boolean(account),
-                        email_available: Boolean(account && account.email)
-                    }
-                );
+            const email = normalizeEmail(identifier);
+            if (!email) return responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY);
+            transaction = await sequelize.transaction();
+            // Every recovery operation locks the owner before any challenge row.
+            const account = await getRecoveryAccount(email, transaction);
+            if (!account) {
+                await transaction.rollback();
+                return responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY);
             }
-
-            if (SecurityConfig.shouldRevokePreviousPasswordResetCodes()) {
-                await revokeActivePasswordResetTokens(account.id_login);
-            }
-
-            const tokenRecord = await createPasswordResetChallenge(account, phone, metadata);
-            const sendMail = await mail.SendPasswordResetCode(account.email, {
-                code: tokenRecord.code,
-                ttlMinutes: SecurityConfig.getPasswordResetCodeTtlMinutes()
-            });
-
-            if (!sendMail || !sendMail.process) {
-                await sequelize.query(
-                    `UPDATE auth_password_reset_tokens
-                        SET status = 'revoked',
-                            revoked_at = COALESCE(revoked_at, NOW()),
-                            updated_at = NOW()
-                      WHERE code_hash = :_code_hash
-                        AND status = 'pending'`,
-                    {
-                        replacements: { _code_hash: tokenRecord.code_hash },
-                        type: QueryTypes.UPDATE
-                    }
-                );
-
-                return withSecurityEvent(
-                    responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY),
-                    {
-                        event: 'auth.password_reset.email_failed',
-                        account_found: true,
-                        email_fingerprint: PasswordResetTokenService.fingerprintEmail(account.email),
-                        code_fingerprint: tokenRecord.code_fingerprint
-                    }
-                );
-            }
-
-            return withSecurityEvent(
-                responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY),
-                {
-                    event: 'auth.password_reset.requested',
-                    account_found: true,
-                    email_fingerprint: PasswordResetTokenService.fingerprintEmail(account.email),
-                    email_masked: PasswordResetTokenService.maskEmail(account.email),
-                    code_fingerprint: tokenRecord.code_fingerprint,
-                    expires_at: tokenRecord.expires_at
-                }
+            await revokeActivePasswordResetTokens(account.id_login, { transaction });
+            const record = await createPasswordResetChallenge(account, email, metadata, transaction);
+            await transaction.commit();
+            const delivery = await mail.SendPasswordResetCode(account.email, { code: record.code, ttlMinutes: SecurityConfig.getPasswordResetCodeTtlMinutes() });
+            if (!delivery || !delivery.process) await sequelize.query(
+                `UPDATE auth_password_reset_tokens SET status='revoked',revoked_at=NOW(),updated_at=NOW()
+                 WHERE id_login=:login AND code_hash=:hash AND status='pending'`,
+                { replacements: { login: account.id_login, hash: record.code_hash }, type: QueryTypes.UPDATE }
             );
+            return withSecurityEvent(responseData.success({ sent: true }, Messages.DATA_SAVE_SUCCESSFULLY), {
+                event: delivery?.process ? 'auth.password_reset.requested' : 'auth.password_reset.email_failed',
+                email_fingerprint: PasswordResetTokenService.fingerprintEmail(email), code_fingerprint: record.code_fingerprint
+            });
         } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
-
     }
 
-
-
-/**
- * Permite validar la existencia de un otp
- * @returns Lista de paises
- */
-async validateOtp(body) {
-    try {
-        const phone = body.telephone || body.phone;
-        const code = body.code || body.otp;
-        const challenge = await getLatestPasswordResetChallenge(phone, ['pending']);
-
-        if (!challenge) {
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.code_failed',
-                    reason: 'not_found'
-                }
-            );
-        }
-
-        if (PasswordResetTokenService.isExpired(challenge.expires_at)) {
-            await markPasswordResetChallenge(challenge.id, 'expired');
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.code_expired',
-                    code_fingerprint: challenge.code_fingerprint
-                }
-            );
-        }
-
-        const candidateHash = PasswordResetTokenService.hashCode(phone, code);
-        const matches = PasswordResetTokenService.safeCompareHash(candidateHash, challenge.code_hash);
-
-        if (!matches) {
-            const attempts = Number(challenge.attempts || 0) + 1;
-            const maxAttempts = Number(challenge.max_attempts || SecurityConfig.getPasswordResetMaxAttempts());
-
-            if (attempts >= maxAttempts) {
-                await markPasswordResetChallenge(challenge.id, 'locked', { attempts });
-                return withSecurityEvent(
-                    responseData.notSuccess(Messages.DATA_GET_ERROR),
-                    {
-                        event: 'auth.password_reset.code_locked',
-                        code_fingerprint: challenge.code_fingerprint,
-                        attempts,
-                        max_attempts: maxAttempts
-                    }
-                );
+    async validateOtp(body) {
+        let transaction;
+        try {
+            const email = normalizeEmail(body.email || body.telephone || body.phone), code = body.code || body.otp;
+            if (!email) return responseData.notSuccess(Messages.DATA_GET_ERROR);
+            transaction = await sequelize.transaction();
+            const account = await getRecoveryAccount(email, transaction);
+            const challenge = account && await getLatestPasswordResetChallenge(email, account, transaction);
+            if (!challenge || challenge.status !== 'pending'
+                || challenge.destination_email_fingerprint !== PasswordResetTokenService.fingerprintEmail(account.email)) {
+                await transaction.rollback(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
             }
-
-            await markPasswordResetChallenge(challenge.id, 'pending', { attempts });
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.code_failed',
-                    code_fingerprint: challenge.code_fingerprint,
-                    attempts,
-                    max_attempts: maxAttempts
-                }
-            );
-        }
-
-        await markPasswordResetChallenge(challenge.id, 'verified');
-
-        return withSecurityEvent(
-            responseData.success({ verified: true }, Messages.DATA_GET_SUCCESSFULLY),
-            {
-                event: 'auth.password_reset.code_verified',
-                code_fingerprint: challenge.code_fingerprint
+            if (PasswordResetTokenService.isExpired(challenge.expires_at)) {
+                await markPasswordResetChallenge(challenge.id, 'expired', 'pending', transaction);
+                await transaction.commit(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
             }
-        );
-    } catch (error) {
+            const attempts = Number(challenge.attempts || 0), max = Number(challenge.max_attempts || SecurityConfig.getPasswordResetMaxAttempts());
+            if (attempts >= max) {
+                await markPasswordResetChallenge(challenge.id, 'locked', 'pending', transaction);
+                await transaction.commit(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
+            }
+            const valid = PasswordResetTokenService.safeCompareHash(PasswordResetTokenService.hashCode(email, code), challenge.code_hash);
+            const status = valid ? 'verified' : attempts + 1 >= max ? 'locked' : 'pending';
+            const changed = await markPasswordResetChallenge(challenge.id, status, 'pending', transaction, valid ? attempts : attempts + 1);
+            if (changed !== 1) { await transaction.rollback(); return responseData.notSuccess(Messages.DATA_GET_ERROR); }
+            await transaction.commit();
+            return valid ? responseData.success({ verified: true }, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
+        } catch (error) {
+            if (transaction && !transaction.finished) await transaction.rollback();
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        }
     }
-
-}
-
 
 /**
  * Valida la contraseña actual y envia un código para confirmar el cambio.
@@ -1447,7 +1252,19 @@ async requestPasswordChangeCode(idLogin, body, metadata = {}) {
             return responseData.bad_request('La nueva contrasena debe ser diferente de la actual.');
         }
 
-        const pendingPasswordHash = await encript(body.newPassword);
+        const [lastChallenge] = await sequelize.query(
+            `SELECT GREATEST(0,60-TIMESTAMPDIFF(SECOND,issued_at,UTC_TIMESTAMP())) AS retryAfterSeconds
+             FROM auth_password_change_tokens WHERE id_login=:_id_login
+             ORDER BY issued_at DESC,id DESC LIMIT 1`,
+            { replacements: { _id_login: idLogin }, type: QueryTypes.SELECT, transaction }
+        );
+        if (Number(lastChallenge?.retryAfterSeconds) > 0) {
+            await transaction.rollback(); transaction = null;
+            return { status: 429, data: null, retryAfterSeconds: Number(lastChallenge.retryAfterSeconds),
+                message: 'Espera antes de solicitar otro código.' };
+        }
+
+        const pendingPasswordHash = await registrationPasswords.hash(body.newPassword);
         if (!pendingPasswordHash) {
             await transaction.rollback();
             transaction = null;
@@ -1501,10 +1318,13 @@ async requestPasswordChangeCode(idLogin, body, metadata = {}) {
         await transaction.commit();
         transaction = null;
 
-        const sendMail = await mail.SendPasswordChangeCode(account.email, {
-            code: tokenRecord.code,
-            ttlMinutes: tokenRecord.ttl_minutes
-        });
+        let sendMail;
+        try {
+            sendMail = await mail.SendPasswordChangeCode(account.email, {
+                code: tokenRecord.code,
+                ttlMinutes: tokenRecord.ttl_minutes
+            });
+        } catch (_) { /* Revoke the challenge when delivery is not confirmed. */ }
 
         if (!sendMail || !sendMail.process) {
             await sequelize.query(
@@ -1533,7 +1353,8 @@ async requestPasswordChangeCode(idLogin, body, metadata = {}) {
             responseData.success({
                 sent: true,
                 emailMasked: PasswordChangeTokenService.maskEmail(account.email),
-                ttlMinutes: tokenRecord.ttl_minutes
+                ttlMinutes: tokenRecord.ttl_minutes,
+                resendAfterSeconds: 60
             }, 'Enviamos un codigo al correo asociado a tu cuenta.'),
             {
                 event: 'auth.password_change.code_requested',
@@ -1546,6 +1367,11 @@ async requestPasswordChangeCode(idLogin, body, metadata = {}) {
         if (transaction && !transaction.finished) {
             await transaction.rollback();
         }
+        if (error.code === 'PASSWORD_COMPROMISED') return responseData.bad_request('Esta contraseña es demasiado común. Elige otra.');
+        if (error.code === 'PASSWORD_INVALID') return responseData.bad_request('La contraseña debe tener entre 8 y 128 caracteres.');
+        if (['PASSWORD_POLICY_UNAVAILABLE','PASSWORD_CAPACITY_BUSY'].includes(error.code)) return {
+            status: 503, data: null, message: 'No fue posible preparar el cambio. Inténtalo más tarde.'
+        };
         return SequelizeException(error, Messages.DATA_SAVE_ERROR);
     }
 }
@@ -1723,10 +1549,14 @@ async confirmPasswordChange(idLogin, currentSessionId, code) {
             { replacements: { _id_login: idLogin, _id: challenge.id }, type: QueryTypes.UPDATE, transaction }
         );
 
+        await revokeActivePasswordResetTokens(idLogin, { transaction });
         await invalidateOtherAuthArtifacts(idLogin, currentSessionId, transaction);
+        const changedAt = new Date().toISOString();
         await transaction.commit();
 
-        const notification = await mail.SendPasswordChanged(account.email);
+        let notification;
+        try { notification = await mail.SendPasswordChanged(account.email, { changedAt, changeMethod: 'settings' }); }
+        catch (_) { /* The password change is already committed. */ }
 
         return withSecurityEvent(
             responseData.success({ password_updated: true, other_sessions_invalidated: true }, 'Tu contrasena se actualizo correctamente.'),
@@ -1749,137 +1579,63 @@ async confirmPasswordChange(idLogin, currentSessionId, code) {
  * Permite restablecer una contraseña desde el flujo público de recuperación.
  */
 async reseetPassword(body) {
-    const transaction = await sequelize.transaction();
+    let transaction;
     try {
-        const phone = body.phone || body.telephone;
-        const code = body.otp || body.code;
-        const challenge = await getLatestPasswordResetChallenge(phone, ['verified'], transaction);
-
-        if (!challenge) {
-            await transaction.rollback();
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.failed',
-                    reason: 'verified_challenge_not_found'
-                }
-            );
+        const email = normalizeEmail(body.email || body.phone || body.telephone), code = body.otp || body.code;
+        if (!email) return responseData.notSuccess(Messages.DATA_GET_ERROR);
+        transaction = await sequelize.transaction();
+        const account = await getRecoveryAccount(email, transaction);
+        const challenge = account && await getLatestPasswordResetChallenge(email, account, transaction);
+        if (!challenge || challenge.status !== 'verified'
+            || challenge.destination_email_fingerprint !== PasswordResetTokenService.fingerprintEmail(account.email)) {
+            await transaction.rollback(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
-
         if (PasswordResetTokenService.isExpired(challenge.expires_at)) {
-            await markPasswordResetChallenge(challenge.id, 'expired', {}, transaction);
-            await transaction.commit();
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.failed',
-                    reason: 'expired_challenge',
-                    code_fingerprint: challenge.code_fingerprint
-                }
-            );
+            await markPasswordResetChallenge(challenge.id, 'expired', 'verified', transaction);
+            await transaction.commit(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
-
-        const candidateHash = PasswordResetTokenService.hashCode(phone, code);
-        const matches = PasswordResetTokenService.safeCompareHash(candidateHash, challenge.code_hash);
-
-        if (!matches) {
-            await transaction.rollback();
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.failed',
-                    reason: 'code_mismatch',
-                    code_fingerprint: challenge.code_fingerprint
-                }
-            );
+        const maxAttempts = Number(challenge.max_attempts || SecurityConfig.getPasswordResetMaxAttempts());
+        if (Number(challenge.attempts || 0) >= maxAttempts) {
+            await markPasswordResetChallenge(challenge.id, 'locked', 'verified', transaction);
+            await transaction.commit(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
-
-        const account = await getPasswordResetAccountById(challenge.id_login, transaction);
-
-        if (!account) {
-            await transaction.rollback();
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.failed',
-                    reason: 'account_not_found'
-                }
-            );
+        if (!PasswordResetTokenService.safeCompareHash(PasswordResetTokenService.hashCode(email, code), challenge.code_hash)) {
+            const attempts = Number(challenge.attempts || 0) + 1;
+            await markPasswordResetChallenge(challenge.id, attempts >= maxAttempts ? 'locked' : 'verified', 'verified', transaction, attempts);
+            await transaction.commit(); return responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
-
-        if (identityAuth.enabled()) {
-            const owner = await identityAuth.findOwner(sequelize, phone, { recovery: true, transaction, lock: true });
-            if (!owner || owner.id_login !== account.id_login
-                || PasswordResetTokenService.fingerprintEmail(owner.email) !== challenge.destination_email_fingerprint) {
-                await transaction.rollback();
-                return responseData.notSuccess(Messages.DATA_SAVE_ERROR);
-            }
-        }
-        const modern = typeof account.password === 'string' && account.password.startsWith('scrypt-v1$');
-        const legacyPassword = typeof body.password === 'string' ? body.password.trim() : '';
-        if (!modern && (legacyPassword.length < 8 || legacyPassword.length > 128 || !/[A-Za-z]/.test(legacyPassword) || !/\d/.test(legacyPassword))) {
-            await transaction.rollback();
-            return responseData.notSuccess(Messages.DATA_SAVE_ERROR);
-        }
-        const pwd = modern ? await registrationPasswords.hash(body.password) : await encript(legacyPassword);
-        const updateResult = await sequelize.query(
-            `UPDATE login
-                SET password = :_password,
-                    updated_at = NOW(),
-                    updated_by = :_id_login
-              WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
-                AND active = 1`,
-            {
-                replacements: {
-                    _id_login: account.id_login,
-                    _password: pwd
-                },
-                type: QueryTypes.UPDATE,
-                transaction
-            }
+        const pwd = await registrationPasswords.hash(body.password);
+        const changed = await sequelize.query(
+            `UPDATE login SET password=:_password,updated_at=NOW(),updated_by=:_id_login
+             WHERE id_login=:_id_login AND active=1`,
+            { replacements: { _password: pwd, _id_login: account.id_login }, type: QueryTypes.UPDATE, transaction }
         );
-
-        if (affectedRows(updateResult) < 1) {
-            await transaction.rollback();
-            return withSecurityEvent(
-                responseData.notSuccess(Messages.DATA_GET_ERROR),
-                {
-                    event: 'auth.password_reset.failed',
-                    reason: 'password_update_not_applied'
-                }
-            );
+        if (affectedRows(changed) !== 1 || await markPasswordResetChallenge(challenge.id, 'used', 'verified', transaction) !== 1) {
+            await transaction.rollback(); return responseData.notSuccess(Messages.DATA_SAVE_ERROR);
         }
-
-        await markPasswordResetChallenge(challenge.id, 'used', {}, transaction);
+        if (identityAuth.enabled()) {
+            await sequelize.query(
+                `UPDATE auth_identity SET reservation_status='verified',verified_at=COALESCE(verified_at,NOW(3)),expires_at=NULL,updated_at=NOW(3)
+                 WHERE kind='email' AND normalized_value=:email AND id_login=:login`,
+                { replacements: { email, login: account.id_login }, type: QueryTypes.UPDATE, transaction }
+            );
+            await new AccountActivationService(sequelize).activateVerifiedEmail(account.id_login, transaction);
+        }
         await revokeActivePasswordResetTokens(account.id_login, { transaction });
         await invalidateAuthArtifacts(account.id_login, null, null, transaction);
+        const changedAt = new Date().toISOString();
         await transaction.commit();
-
         let notificationSent = false;
-        if (account.email) {
-            const notification = await mail.SendPasswordChanged(account.email);
-            notificationSent = Boolean(notification && notification.process);
-        }
-
-        return withSecurityEvent(
-            responseData.success({
-                password_updated: true,
-                sessions_invalidated: true
-            }, Messages.DATA_GET_SUCCESSFULLY),
-            {
-                event: 'auth.password_reset.success',
-                code_fingerprint: challenge.code_fingerprint,
-                email_fingerprint: PasswordResetTokenService.fingerprintEmail(account.email),
-                notification_sent: notificationSent
-            }
-        );
+        try { notificationSent = Boolean((await mail.SendPasswordChanged(account.email, { changedAt, changeMethod: 'recovery' }))?.process); }
+        catch (_) { /* The password change is already committed. */ }
+        return withSecurityEvent(responseData.success({ password_updated: true, sessions_invalidated: true }, Messages.DATA_GET_SUCCESSFULLY), {
+            event: 'auth.password_reset.success', code_fingerprint: challenge.code_fingerprint,
+            email_fingerprint: PasswordResetTokenService.fingerprintEmail(email), notification_sent: notificationSent
+        });
     } catch (error) {
-            if (!transaction.finished) {
-                await transaction.rollback();
-            }
-            return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        if (transaction && !transaction.finished) await transaction.rollback();
+        return SequelizeException(error, Messages.DATA_SAVE_ERROR);
     }
-
 }
 
 }

@@ -273,7 +273,7 @@ assertIncludesAll(
   [
     'AND active = 1',
     'AND l.active = 1',
-    'getPasswordResetAccountById',
+    'getRecoveryAccount',
     'WHERE id_login COLLATE'
   ],
   'DAO filters active login rows in auth/account paths.'

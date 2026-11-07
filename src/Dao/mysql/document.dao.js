@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
@@ -85,6 +86,7 @@ class DocumentDao {
             }
         );
 
+        if (result[0]) result[0].signature_image = await privateImages.inlineImage(result[0].signature_image, idBusiness);
         return result[0] || null;
     }
 

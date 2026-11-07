@@ -15,6 +15,8 @@
     "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js",
     "migration:auth-password-change": "node scripts/migrations/apply-auth-password-change-tokens.js",
     "qa:isolated": "node scripts/qa/run-isolated-regressions.js",
+    "qa:registration-legal": "bash scripts/qa/registration-legal.docker.sh",
+    "qa:registration-http": "bash scripts/qa/registration-http.docker.sh",
     "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js"
   },
   "engines": {
@@ -26,6 +28,7 @@
   ],
   "dependencies": {
     "@aws-sdk/client-sesv2": "3.1116.0",
+    "@hemia/legal": "0.1.0",
     "aws-sdk": "2.1693.0",
     "axios": "1.20.0",
     "bcryptjs": "^2.4.3",

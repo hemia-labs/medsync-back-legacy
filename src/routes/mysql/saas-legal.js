@@ -10,5 +10,8 @@ router.get('/public/:documentKey', awaitHandler(controller.publicDocument));
 router.use(Token.Auth);
 router.get('/', awaitHandler(controller.current));
 router.get('/history', awaitHandler(controller.history));
+router.get('/central/context', awaitHandler(controller.centralContext));
+router.post('/central/accept', csrfProtection(), awaitHandler(controller.acceptCentral));
+router.get('/central/documents/:versionId', awaitHandler(controller.centralDocument));
 router.post('/accept', csrfProtection(), awaitHandler(controller.accept));
 module.exports = router;

@@ -26,6 +26,7 @@ async function run() {
     try {
         const jar=new Map();const context=await request(jar,'GET','/api/registration/context');assert.equal(context.body.enabled,true);
         const input={account:{name:'QA R4 Administrator',telephone:'5590004321',email:'r4@example.invalid',password:'Synthetic R4 unique phrase only!'},business:{name:'QA R4 Clinic'},
+            legalContext:context.body.legalContext,
             legalAcceptances:context.body.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))};
         let response=await request(jar,'POST','/api/auth/register',input,{...await csrf(jar),'Idempotency-Key':randomUUID()});
         assert.equal(response.status,201);const actor=response.body.activation;
