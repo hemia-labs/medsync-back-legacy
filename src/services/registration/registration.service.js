@@ -3,7 +3,7 @@ const {randomUUID,createHmac,timingSafeEqual}=require('node:crypto');
 const {QueryTypes}=require('sequelize');
 const sequelize=require('../../db/Sequelize.connection');
 const {BusinessProvisioning}=require('./businessProvisioning');
-const {SaasLegalDao}=require('../../Dao/mysql/saasLegal.dao');
+const {LegalRegistrationService}=require('./legalRegistration.service');
 const {AdminAuditDao}=require('../../Dao/mysql/adminAudit.dao');
 const passwords=require('../security/registrationPassword.service');
 const {validateRegistration}=require('./registration.validator');
@@ -17,13 +17,12 @@ function same(a,b) {
     return typeof a==='string' && typeof b==='string' && a.length===b.length
         && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 }
-const requireSuccess=result=>{if(!result.success) throw new RegistrationError(result.code,result.status);return result.data;};
 
 class RegistrationService {
     constructor(database=sequelize, options={}) {
         this.db=database;
         this.provisioning=new BusinessProvisioning(database);
-        this.legal=new SaasLegalDao(database);
+        this.legal=options.legal||new LegalRegistrationService(database);
         this.audit=new AdminAuditDao(database);
         this.key=options.key || configuredKey;
         this.identityEnabled=options.identityEnabled || (()=>process.env.REGISTRATION_IDENTITY_ENABLED==='true');
@@ -57,7 +56,7 @@ class RegistrationService {
                 // current credentials/ownership before issuing any session.
                 return {status:200,success:true,data:{idBusiness:existing.id_business,idLogin:existing.id_login,replayed:true}};
             }
-            const legal=requireSuccess(await this.legal.registrationVersions(input.legalAcceptances,transaction));
+            const legal=this.legal.prepare(input,attempt.secret);
             const roles=await this.query("SELECT id_rol,code FROM rol WHERE active=1 AND code='admin' LIMIT 1 FOR UPDATE",{},transaction);
             if (!roles[0]) throw new RegistrationError('REGISTRATION_UNAVAILABLE',503);
             const slug='consultorio-'+idBusiness; // Visible names may repeat; random unique slug is server-owned.
@@ -66,18 +65,18 @@ class RegistrationService {
                 _trial_starts_at:null,_trial_ends_at:null,_trial_days:0,_plan:null,_active:1,_created_by:idLogin},transaction);
             await this.provisioning.defaults(idBusiness,idLogin,transaction);
             await this.provisioning.administrator({_id_login:idLogin,_id_business:idBusiness,_id_rol:roles[0].id_rol,
-                _name:input.account.name,_email:input.account.email,_telephone:input.account.telephone,_password:passwordHash,_created_by:idLogin},transaction);
+                _name:input.account.name,_first_name:input.account.first_name,_last_name:input.account.last_name,_email:input.account.email,_telephone:input.account.telephone,_password:passwordHash,_created_by:idLogin},transaction);
             if(require('./accountActivation.service').enabled()) await this.query(
                 'INSERT INTO registration_account(id_login,id_business) VALUES (:login,:business)',
                 {login:idLogin,business:idBusiness},transaction,QueryTypes.INSERT);
-            const actor={id_login:idLogin,id_business:idBusiness,rol:'admin'};
-            for(const version of legal.versions) requireSuccess(await this.legal.acceptInTransaction(actor,{id_version:version.versionId,acknowledged:true},transaction));
             await this.audit.record('SELF_REGISTRATION_CREATED',{actor_login_id:idLogin,actor_role:'self_registration',target_type:'business',
                 target_id:idBusiness,target_login_id:idLogin,target_business_id:idBusiness,
-                metadata:{source:'self_registration',attemptId:attempt.id,versions:legal.versions}}, {transaction,strict:true});
-            await this.query(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at)
-                VALUES (:event,:attempt,'registration.created',:login,:business,NOW(3))`,
-            {event:randomUUID(),attempt:attempt.id,login:idLogin,business:idBusiness},transaction,QueryTypes.INSERT);
+                metadata:{source:'self_registration',attemptId:attempt.id,snapshotToken:legal.snapshotToken,versions:input.legalAcceptances.map(({documentKey,versionId})=>({documentKey,versionId}))}}, {transaction,strict:true});
+            const event=randomUUID();
+            const evidence={...legal,idempotencyKey:event,subjectId:idLogin,organizationId:idBusiness};
+            await this.query(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at,legal_evidence_payload)
+                VALUES (:event,:attempt,'registration.created',:login,:business,UTC_TIMESTAMP(3),:evidence)`,
+            {event,attempt:attempt.id,login:idLogin,business:idBusiness,evidence:JSON.stringify(evidence)},transaction,QueryTypes.INSERT);
             await transaction.commit();
             return {status:201,success:true,data:{idBusiness,idLogin,replayed:false}};
         } catch(error) {

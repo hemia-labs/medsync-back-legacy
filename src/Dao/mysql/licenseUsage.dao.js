@@ -182,6 +182,8 @@ async function getLicenseUserState(idBusiness, idLogin, transaction = null) {
             l.id_business,
             l.id_rol,
             l.name,
+            l.first_name,
+            l.last_name,
             l.email,
             l.telephone,
             l.active,

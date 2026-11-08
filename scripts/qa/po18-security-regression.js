@@ -77,8 +77,8 @@ function authLimits() {
     const rate = require('../../src/middleware/authRateLimit.middleware');
     const payloads = {
         login: phone => ({param:phone,pwd:'Synthetic123'}),
-        sendOtp: phone => ({phone}), validateOtp: phone => ({phone,code:'123456'}),
-        resetPassword: phone => ({phone,otp:'123456',password:'SyntheticPassword123'})
+        sendOtp: email => ({email}), validateOtp: email => ({email,code:'123456'}),
+        resetPassword: email => ({email,otp:'123456',password:'abcdefgh',confirmPassword:'abcdefgh'})
     };
     let tick = 1000000;
     const realNow = Date.now;
@@ -96,8 +96,8 @@ function authLimits() {
         process.env.REGISTRATION_IDENTITY_ENABLED = 'true';
         for (const [type,limit] of [['login',6],['sendOtp',3],['validateOtp',5],['resetPassword',5]]) {
             rate._private.buckets.clear();
-            for(let i=0;i<limit;i++) assert.ok(attempt('5550000000',{type,failure:type==='login'}).passed);
-            for (const alias of ['5550000000','525550000000','+52 (555) 000-0000']) {
+            for(let i=0;i<limit;i++) assert.ok(attempt(type==='login'?'5550000000':'qa@example.test',{type,failure:type==='login'}).passed);
+            for (const alias of type==='login'?['5550000000','525550000000','+52 (555) 000-0000']:['qa@example.test','QA@EXAMPLE.TEST',' qa@example.test ']) {
                 assert.equal(attempt(alias,{type,ip:'127.0.0.2'}).status,429, `${type} alias must share quota`);
             }
         }
@@ -107,9 +107,9 @@ function authLimits() {
         assert.equal(rate._private.buckets.has('auth:login:identity:5550000000'),false);
         for (const type of Object.keys(payloads)) {
             rate._private.buckets.clear();
-            const result = attempt('+525550000000',{type});
+            const result = attempt(type==='login'?'+525550000000':'QA@EXAMPLE.TEST',{type});
             assert.ok(result.passed);
-            assert.equal(result.body.param || result.body.phone || result.body.telephone, '525550000000', 'Recovery payload/hash input remains unchanged');
+            assert.equal(result.body.param || result.body.email, type==='login'?'525550000000':'qa@example.test', 'Email aliases share one recovery identity');
         }
         process.env.REGISTRATION_IDENTITY_ENABLED = 'false';
         rate._private.buckets.clear();

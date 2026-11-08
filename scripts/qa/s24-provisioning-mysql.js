@@ -43,6 +43,7 @@ async function run({quiet=false}={}) {
             columns.map(c=>c==='code'?'medical-blue':c==='id_cat_ui_theme'?'theme':c==='name'?'Synthetic':'#123456'));
         for(const sql of identitySchema.statements) await bootstrap.query(sql);
         await bootstrap.beginTransaction();await identitySchema.backfill(bootstrap);await bootstrap.commit();
+        await require('../migrations/s25-registration-email-login').apply(bootstrap,path.join(root,'_schema_backups',database+'-s25'));
         const {preflight}=require('../migrations/s24-registration-provisioning');
         assert.equal((await preflight(bootstrap)).ready,true);
         await bootstrap.query(await fs.readFile(path.join(root,'hemia-assistance-back-legacy/scripts/migrations/s24-registration-provisioning.sql'),'utf8'));
@@ -206,18 +207,18 @@ async function run({quiet=false}={}) {
             const owner=await findOwner(db,committed.account.telephone);
             await db.query("UPDATE auth_identity SET reservation_status='verified',expires_at=NULL,verified_at=NOW(3) WHERE kind='email' AND id_login=:id",{replacements:{id:owner.id_login}});
             const resetTokens=require('../../src/services/security/passwordResetToken.service');
-            const code='123456', codeHash=resetTokens.hashCode(committed.account.telephone,code);
-            await db.query(`INSERT INTO auth_password_reset_tokens(id_login,phone_normalized,destination_email_fingerprint,code_hash,code_fingerprint,status,issued_at,expires_at,created_at)
+            const code='123456', codeHash=resetTokens.hashCode(committed.account.email,code);
+            await db.query(`INSERT INTO auth_password_reset_tokens(id_login,identifier_normalized,destination_email_fingerprint,code_hash,code_fingerprint,status,issued_at,expires_at,created_at)
                 VALUES (:id,:phone,:email,:hash,:fingerprint,'verified',NOW(),DATE_ADD(NOW(),INTERVAL 10 MINUTE),NOW())`,
-            {replacements:{id:owner.id_login,phone:committed.account.telephone,email:resetTokens.fingerprintEmail(owner.email),hash:codeHash,fingerprint:resetTokens.fingerprintFromHash(codeHash)}});
+            {replacements:{id:owner.id_login,phone:committed.account.email,email:resetTokens.fingerprintEmail(owner.email),hash:codeHash,fingerprint:resetTokens.fingerprintFromHash(codeHash)}});
             const newPassword='  Nueva frase de recuperacion segura  ';
-            const reset=await auth.reseetPassword({phone:committed.account.telephone,code,password:newPassword});
+            const reset=await auth.reseetPassword({email:committed.account.email,code,password:newPassword});
             assert.equal(reset.status,200);assert.equal(reset.data.password_updated,true);
             const updated=(await q('SELECT password FROM login WHERE id_login=:id',{id:owner.id_login}))[0];
             assert.ok(updated.password.startsWith('scrypt-v1$'));assert.ok(await compare(newPassword,updated.password));
             assert.equal(await compare(committed.account.password,updated.password),false);
             assert.equal((await q('SELECT COUNT(*) n FROM session WHERE id_login=:id AND active=1',{id:owner.id_login}))[0].n,0);
-            assert.equal((await auth.reseetPassword({phone:committed.account.telephone,code,password:newPassword})).status,404);
+            assert.equal((await auth.reseetPassword({email:committed.account.email,code,password:newPassword})).status,404);
             pass('actual login and password-reset DAO: scrypt, limited tenant, verified recovery email, preserved hash format, revoked session and one-use challenge; no mail delivered');
         } finally {
             sharedDb.query=oldDb.query;sharedDb.transaction=oldDb.transaction;security.getPasswordResetCodeSecret=oldSecret;jwtConfig.key=oldJwt;mail.SendPasswordChanged=oldMail;

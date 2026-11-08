@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
@@ -260,6 +261,7 @@ class PublicDocumentSignatureDao {
             }
         );
 
+        if (rows[0]) rows[0].logo_url = await privateImages.inlineImage(rows[0].logo_url, idBusiness);
         return rows[0] || {};
     }
 

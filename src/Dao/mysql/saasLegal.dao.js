@@ -1,6 +1,8 @@
 const { QueryTypes } = require('sequelize');
 const { v4: uuid } = require('uuid');
 const { createHash } = require('node:crypto');
+const { RegistrationError } = require('../../services/registration/errors');
+const { AccountLegalService } = require('../../services/registration/accountLegal.service');
 const sequelize = require('../../db/Sequelize.connection');
 const { DOCUMENT_SCOPES, isDocumentKey, validateDraft, validatePublish, validateAcceptance, meaningfulDocumentContent } = require('../../validators/saasLegal.validator');
 
@@ -26,7 +28,7 @@ const legalHash = (key, data) => createHash('sha256').update(JSON.stringify({ do
     description: data.description || '', content_html: data.content_html, acceptance_scope: DOCUMENT_SCOPES[key], required: Boolean(data.required) })).digest('hex');
 
 class SaasLegalDao {
-    constructor(database = sequelize) { this.db = database; }
+    constructor(database = sequelize, central) { this.db = database; this.central = central || new AccountLegalService(database); }
     query(sql, replacements = {}, transaction = null, type = QueryTypes.SELECT) { return this.db.query(sql, { replacements, transaction, type }); }
     async actor(context, transaction = null, lock = false, superAdmin = false) {
         if(!context || !context.id_login || (!superAdmin && (!context.id_business || context.rol === 'super_admin'))) return null;
@@ -37,7 +39,7 @@ class SaasLegalDao {
             LIMIT 1${lock ? ' FOR UPDATE' : ''}`, { actor: context.id_login, business: context.id_business || null }, transaction);
         const actor = rows[0];
         if(!actor || (superAdmin && actor.role !== 'super_admin') || (!superAdmin && actor.role === 'super_admin')) return null;
-        return actor;
+        return { ...actor, id_session: context.id_session };
     }
     async heads(transaction = null) {
         return this.query('SELECT * FROM saas_legal_documents ORDER BY document_key', {}, transaction);
@@ -87,7 +89,10 @@ class SaasLegalDao {
         try {
             const actor = await this.actor(context);
             if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay una cuenta activa en el consultorio para consultar estos documentos.');
-            const heads = (await this.heads()).filter(head => isDocumentKey(head.document_key));
+            const origin = await this.central.origin(actor);
+            // Central registration replaces the old registration policy, not its historical receipts.
+            const heads = (await this.heads()).filter(head => isDocumentKey(head.document_key)
+                && !(origin && ['terms_conditions', 'privacy_notice'].includes(head.document_key)));
             // Resolve the captured head IDs rather than rereading mutable heads:
             // publication between these SELECTs must not invent an unpublished state.
             const ids = heads.map(head => head.current_version_id).filter(Boolean);
@@ -106,22 +111,75 @@ class SaasLegalDao {
                     current_version: versionDto(current), accepted: acceptanceDto(acceptance),
                     can_accept: Boolean(current && !acceptance && (scope === 'user' || admin)), pending: Boolean(current && !acceptance) };
             });
-            return ok({ documents, pending_count: documents.filter(document => document.required && document.pending).length });
+            let centralAvailable = true;
+            if(origin) {
+                try { documents.push(...(await this.central.current(actor)).map(doc => asBoolean(origin.sync_pending)
+                    ? {...doc, pending:false, sync_pending:true} : doc)); }
+                catch(_) { centralAvailable = false; }
+            }
+            return ok({ documents, pending_count: documents.filter(document => document.required && document.pending).length,
+                central_available: centralAvailable, central_sync_pending: Boolean(origin && asBoolean(origin.sync_pending)),
+                pending_unknown: !centralAvailable });
         } catch(_) { return unavailable(); }
     }
-    async history(context) {
+    async history(context, cursor) {
         try {
             const actor = await this.actor(context);
             if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay una cuenta activa en el consultorio para consultar las aceptaciones.');
-            const rows = await this.query(`SELECT a.*,v.id_document,v.version_number,v.title,v.description,v.content_html,v.required,
+            const origin = await this.central.origin(actor);
+            const rows = cursor ? [] : await this.query(`SELECT a.*,v.id_document,v.version_number,v.title,v.description,v.content_html,v.required,
                     v.published_at,d.document_key FROM saas_legal_acceptances a
                 INNER JOIN saas_legal_versions v ON v.id_version=a.id_version
                 INNER JOIN saas_legal_documents d ON d.id_document=v.id_document
                 WHERE ${eq('a.id_business', ':business')} AND (a.subject_key=:subject OR a.subject_key='business')
                 ORDER BY a.accepted_at DESC,a.id_acceptance`, { business: context.id_business, subject: 'user:' + actor.id_login });
-            return ok({ acceptances: rows.map(row => ({ ...acceptanceDto(row), id_document: row.id_document, document_key: row.document_key,
-                title: row.title, version_number: Number(row.version_number), version: versionDto(row) })) });
+            const acceptances = rows.map(row => ({ ...acceptanceDto(row), id_document: row.id_document, document_key: row.document_key,
+                title: row.title, version_number: Number(row.version_number), version: versionDto(row), source: 'local' }));
+            let centralAvailable = true, nextCursor = null;
+            if(origin) {
+                try {
+                    const history = await this.central.history(actor, cursor);
+                    for(const item of history.items) for(const doc of item.documents)
+                        acceptances.push({...this.central.receipt(item, doc, actor), history_cursor: cursor || null});
+                    nextCursor = history.nextCursor;
+                } catch(_) { centralAvailable = false; }
+            }
+            acceptances.sort((a,b) => Date.parse(b.accepted_at) - Date.parse(a.accepted_at));
+            return ok({ acceptances, central_available: centralAvailable, central_next_cursor: nextCursor,
+                central_sync_pending: Boolean(origin && asBoolean(origin.sync_pending)) });
         } catch(_) { return unavailable(); }
+    }
+    async centralDocument(context, versionId, cursor) {
+        try {
+            const actor = await this.actor(context);
+            if(!actor || !await this.central.origin(actor)) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay evidencia central para esta cuenta.');
+            return ok({version: await this.central.document(actor, versionId, cursor)});
+        } catch(_) { return fail(503, 'LEGAL_SERVICE_UNAVAILABLE', 'No se pudo consultar esta versión en Legal central. El comprobante se conserva.'); }
+    }
+    async centralContext(context) {
+        try {
+            const actor=await this.actor(context);
+            const origin=actor&&await this.central.origin(actor);
+            if(!origin)return fail(403,'LEGAL_CONTEXT_FORBIDDEN','No hay evidencia central para esta cuenta.');
+            if(asBoolean(origin.sync_pending))return fail(409,'LEGAL_SYNC_PENDING','Tus confirmaciones ya están pendientes de sincronizar. Actualiza los documentos.');
+            return ok(await this.central.review(actor));
+        }catch(error) {
+            if(error instanceof RegistrationError)return fail(error.status,error.code,'No se pudo preparar la revisión. Actualiza los documentos y reintenta.');
+            return fail(503,'LEGAL_SERVICE_UNAVAILABLE','No se pudo cargar la revisión en Legal central. Reintenta.');
+        }
+    }
+    async acceptCentral(context,source) {
+        return this.transaction(async transaction=>{
+            try {
+                const actor=await this.actor(context,transaction,true);
+                if(!actor||!await this.central.origin(actor,transaction))return fail(403,'LEGAL_CONTEXT_FORBIDDEN','No hay evidencia central para esta cuenta.');
+                const data=await this.central.enqueue(actor,source,transaction);
+                return {...ok(data,data.queued?'Confirmaciones guardadas. La sincronización está pendiente.':'Legal central ya recibió estas confirmaciones.'),status:data.queued?202:200};
+            }catch(error) {
+                if(error instanceof RegistrationError)return fail(error.status,error.code,'No se pudieron confirmar los documentos. Actualiza la revisión o reintenta el envío.');
+                throw error;
+            }
+        });
     }
     async registrationVersions(acceptances, transaction) {
         if (!transaction) throw Error('LEGAL_TRANSACTION_REQUIRED');
@@ -160,6 +218,8 @@ class SaasLegalDao {
         if(!head || !isDocumentKey(head.document_key)) return fail(404, 'LEGAL_DOCUMENT_NOT_FOUND', 'El documento legal no está disponible.');
         const actor = await this.actor(context, transaction, true);
         if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'La cuenta ya no pertenece al consultorio activo.');
+        if(['terms_conditions', 'privacy_notice'].includes(head.document_key) && await this.central.origin(actor, transaction))
+            return fail(409, 'LEGAL_CENTRAL_REQUIRED', 'Los documentos de registro de esta cuenta se administran en Legal central.');
         if(head.current_version_id !== version.id_version) return fail(409, 'LEGAL_VERSION_STALE', 'Este documento tiene una nueva versión. Consúltala antes de aceptar.');
         const scope = DOCUMENT_SCOPES[head.document_key];
         if(scope === 'business' && !['admin', 'business_admin'].includes(actor.role)) return fail(403, 'LEGAL_ADMIN_REQUIRED', 'El contrato del consultorio debe aceptarlo su administrador.');

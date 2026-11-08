@@ -178,7 +178,7 @@ async function resetAuthState(transaction = null) {
   await sequelize.query(
     `DELETE FROM auth_password_reset_tokens
       WHERE id_login IN (:ids)
-         OR phone_normalized IN (:phones)`,
+         OR identifier_normalized IN (:phones)`,
     { replacements: { ids: fixtureIds(), phones: fixturePhones() }, type: QueryTypes.DELETE, transaction }
   );
   await sequelize.query(
@@ -193,7 +193,7 @@ async function resetAuthState(transaction = null) {
 
 async function resetRowsForUser(userId) {
   return sequelize.query(
-    `SELECT id, id_login, phone_normalized, code_hash, code_fingerprint, status,
+    `SELECT id, id_login, identifier_normalized, code_hash, code_fingerprint, status,
             attempts, max_attempts, expires_at, verified_at, used_at, revoked_at, locked_at, expired_at
        FROM auth_password_reset_tokens
       WHERE id_login COLLATE utf8mb4_unicode_ci = :userId COLLATE utf8mb4_unicode_ci
@@ -223,14 +223,14 @@ async function refreshRows(userId) {
 }
 
 async function insertChallenge(user, options = {}) {
-  const tokenRecord = PasswordResetTokenService.buildCodeRecord(user.phone);
+  const tokenRecord = PasswordResetTokenService.buildCodeRecord(user.email);
   const ttlSql = options.expired
     ? 'DATE_SUB(NOW(), INTERVAL 1 MINUTE)'
     : 'DATE_ADD(NOW(), INTERVAL :ttlMinutes MINUTE)';
 
   await sequelize.query(
     `INSERT INTO auth_password_reset_tokens (
-        id_login, phone_normalized, destination_email_fingerprint, code_hash, code_fingerprint,
+        id_login, identifier_normalized, destination_email_fingerprint, code_hash, code_fingerprint,
         purpose, status, attempts, max_attempts, issued_at, expires_at,
         requested_ip, requested_user_agent, created_at, updated_at
       ) VALUES (
@@ -241,7 +241,7 @@ async function insertChallenge(user, options = {}) {
     {
       replacements: {
         idLogin: user.id,
-        phone: user.phone,
+        phone: user.email,
         emailFingerprint: PasswordResetTokenService.fingerprintEmail(user.email),
         codeHash: tokenRecord.code_hash,
         codeFingerprint: tokenRecord.code_fingerprint,
@@ -393,7 +393,7 @@ async function status() {
     `SELECT status, COUNT(*) AS total
        FROM auth_password_reset_tokens
       WHERE id_login IN (:ids)
-         OR phone_normalized IN (:phones)
+         OR identifier_normalized IN (:phones)
       GROUP BY status
       ORDER BY status`,
     { replacements: { ids: fixtureIds(), phones: fixturePhones() }, type: QueryTypes.SELECT }
@@ -413,7 +413,7 @@ async function status() {
     requiredColumnsPresent: [
       'id',
       'id_login',
-      'phone_normalized',
+      'identifier_normalized',
       'destination_email_fingerprint',
       'code_hash',
       'code_fingerprint',
@@ -501,7 +501,7 @@ async function validate() {
     process.env.EMAIL_PROVIDER = 'disabled';
     process.env.NODE_ENV = 'test';
   }
-  const requestRecovery = await AuthDao.sendOtpRecoverPassword(USERS.userA.phone, {
+  const requestRecovery = await AuthDao.sendOtpRecoverPassword(USERS.userA.email, {
     ip: '127.0.0.1',
     userAgent: 'QA_AUTH_PASSWORD_RESET_FIXTURE'
   });
@@ -517,14 +517,14 @@ async function validate() {
     rawCodeStored: recoveryRows.some((row) => row.code_hash === previous.code)
   };
 
-  await AuthDao.sendOtpRecoverPassword(USERS.userB.phone, {
+  await AuthDao.sendOtpRecoverPassword(USERS.userB.email, {
     ip: '127.0.0.1',
     userAgent: 'QA_AUTH_PASSWORD_RESET_FIXTURE'
   });
   const maxAttempts = SecurityConfig.getPasswordResetMaxAttempts();
   let wrongResponse = null;
   for (let index = 0; index < maxAttempts; index += 1) {
-    wrongResponse = await AuthDao.validateOtp({ telephone: USERS.userB.phone, code: '000000' });
+    wrongResponse = await AuthDao.validateOtp({ email: USERS.userB.email, code: '000000' });
   }
   const userBRows = await resetRowsForUser(USERS.userB.id);
   results.wrongCodeAndLock = {
@@ -535,7 +535,7 @@ async function validate() {
   };
 
   const controlled = await insertChallenge(USERS.userA, { status: 'pending' });
-  const validResponse = await AuthDao.validateOtp({ telephone: USERS.userA.phone, code: controlled.code });
+  const validResponse = await AuthDao.validateOtp({ email: USERS.userA.email, code: controlled.code });
   const verifiedRows = await resetRowsForUser(USERS.userA.id);
   results.validCode = {
     response: safeResponse(validResponse),
@@ -546,7 +546,7 @@ async function validate() {
   };
 
   const resetResponse = await AuthDao.reseetPassword({
-    phone: USERS.userA.phone,
+    email: USERS.userA.email,
     otp: controlled.code,
     password: newPassword
   });
@@ -576,20 +576,20 @@ async function validate() {
   };
 
   const expired = await insertChallenge(USERS.userB, { expired: true });
-  const expiredResponse = await AuthDao.validateOtp({ telephone: USERS.userB.phone, code: expired.code });
+  const expiredResponse = await AuthDao.validateOtp({ email: USERS.userB.email, code: expired.code });
   const expiredRows = await resetRowsForUser(USERS.userB.id);
   const resetWithoutVerified = await AuthDao.reseetPassword({
-    phone: USERS.userB.phone,
+    email: USERS.userB.email,
     otp: expired.code,
     password: newPassword
   });
   results.negativeCases = {
-    unknownPhoneGeneric: safeResponse(await AuthDao.sendOtpRecoverPassword('9992999999')),
+    unknownPhoneGeneric: safeResponse(await AuthDao.sendOtpRecoverPassword('missing@example.test')),
     invalidPhone400: runPayloadValidation('sendOtp', { phone: 'abc' }),
-    invalidCodeShape400: runPayloadValidation('validateOtp', { telephone: USERS.userA.phone, code: '@@@' }),
-    weakPassword400: runPayloadValidation('resetPassword', { phone: USERS.userA.phone, otp: '123456', password: 'weak' }),
+    invalidCodeShape400: runPayloadValidation('validateOtp', { email: USERS.userA.email, code: '@@@' }),
+    weakPassword400: runPayloadValidation('resetPassword', { email: USERS.userA.email, otp: '123456', password: 'weak' }),
     confirmMismatch400: runPayloadValidation('resetPassword', {
-      phone: USERS.userA.phone,
+      email: USERS.userA.email,
       otp: '123456',
       password: 'Password123',
       confirmPassword: 'Password124'
@@ -649,7 +649,7 @@ async function down() {
     `SELECT COUNT(*) AS total
        FROM auth_password_reset_tokens
       WHERE id_login IN (:ids)
-         OR phone_normalized IN (:phones)`,
+         OR identifier_normalized IN (:phones)`,
     { replacements: { ids: fixtureIds(), phones: fixturePhones() }, type: QueryTypes.SELECT }
   );
 

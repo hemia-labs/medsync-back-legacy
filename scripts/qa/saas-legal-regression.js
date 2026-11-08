@@ -32,6 +32,7 @@ class MemoryDb {
     }
     async query(sql, options) {
         this.calls.push({ sql, options }); const p = options.replacements || {}, state = this.state;
+        if(sql.includes('FROM registration_outbox')) return [];
         if(sql.includes('FROM login l')) return state.actors.filter(actor => actor.id_login === p.actor && actor.active && (!sql.includes('l.id_business COLLATE') || actor.id_business === p.business)).map(actor => ({ ...actor }));
         if(sql.startsWith('SELECT * FROM saas_legal_documents')) {
             const rows = state.heads.filter(head => p.key ? head.document_key === p.key : p.document ? head.id_document === p.document : true).map(head => ({ ...head }));
@@ -155,7 +156,7 @@ async function publish(key, html) {
     const controller = require('../../src/controller/mysql/saasLegal.controller');
     const res = { status() { return this; }, send(value) { this.value = value; return this; } };
     await controller.accept({ tokenDecode: contexts.user, body: { id_version: v2.id_version, acknowledged: true, id_login: 'injected', id_business: 'injected', rol: 'admin' } }, res);
-    assert.deepEqual(captured, { context: contexts.user, payload: { id_version: v2.id_version, acknowledged: true } });
+    assert.deepEqual(captured, { context: { ...contexts.user, id_session: contexts.user.id_session }, payload: { id_version: v2.id_version, acknowledged: true } });
     stub('../../src/auth/authenticate', { Auth: (req, response, next) => req.tokenDecode ? next() : response.status(401).send({ status: 401 }) });
     stub('../../src/middleware/requireTenantOperational.middleware', (req, response, next) => req.operational === false ? response.status(403).send({ status: 403 }) : next());
     stub('../../src/middleware/csrf.middleware', { csrfProtection: () => (req, response, next) => req.csrf ? next() : response.status(403).send({ status: 403 }) });

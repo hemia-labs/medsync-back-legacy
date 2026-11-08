@@ -13,7 +13,7 @@ const {RegistrationService}=require('../../services/registration/registration.se
 const {ContactVerificationService}=require('../../services/registration/contactVerification.service');
 const {AccountActivationService,enabled:activationEnabled}=require('../../services/registration/accountActivation.service');
 const {RegistrationRateLimit}=require('../../services/registration/registrationRateLimit');
-const {SaasLegalDao}=require('../../Dao/mysql/saasLegal.dao');
+const {LegalRegistrationService}=require('../../services/registration/legalRegistration.service');
 const {configuredDelivery}=require('../../services/registration/contactDelivery');
 const Passwords=require('../../services/security/registrationPassword.service');
 const {validateRegistration}=require('../../services/registration/registration.validator');
@@ -52,7 +52,7 @@ function requireConfiguration() {
 function createRouter(options={}) {
     const database=options.database||db,delivery=options.delivery||configuredDelivery();
     const registration=options.registration||new RegistrationService(database);
-    const contacts=new ContactVerificationService(database,delivery),limiter=new RegistrationRateLimit(database),legal=new SaasLegalDao(database);
+    const contacts=new ContactVerificationService(database,delivery,options.preparation),limiter=new RegistrationRateLimit(database),legal=options.legal||new LegalRegistrationService(database);
     const activation=new AccountActivationService(database,options.preparation);
     const authenticate=options.authenticate||Token.Auth, optional=options.optionalAuth||Token.OptionalAuth;
     const login=options.login||((body,metadata)=>AuthDao.login(body,metadata));
@@ -93,27 +93,21 @@ function createRouter(options={}) {
         if(process.env.REGISTRATION_ENABLED!=='true'||!delivery.ready('email')) throw new RegistrationError('REGISTRATION_UNAVAILABLE',503);
         if(checkPasswords) await Passwords.configuredBlocklist();
     }
+    // Public product information must not depend on registration or email delivery readiness.
+    router.get('/registration/plans',clean,run(async(req,res)=>{
+        res.json(await require('../../services/registration/commercialAdapter').plans());
+    }));
     router.get('/registration/context',clean,optional,run(async(req,res)=>{
         let enabled=true;
         try { await ready(false); } catch(_) {enabled=false;}
         if(!enabled) return res.json({enabled:false,planId:'professional',verificationChannels:['email'],legalDocuments:[],registrationAttemptExpiresAt:new Date().toISOString()});
         await limiter.consume([['context-ip',req.ip,60,900]]);
         await Passwords.configuredBlocklist();
-        const documents=[];
-        for(const key of ['terms_conditions','privacy_notice']) {
-            const result=await legal.publicDocument(key),v=result.data?.document?.current_version;
-            if(!result.success||!v) throw new RegistrationError('LEGAL_UNAVAILABLE',503);
-            documents.push({documentKey:key,versionId:v.id_version,title:v.title,contentHash:v.content_hash,contentHtml:v.content_html});
-        }
-        const tx=await database.transaction();
-        try {
-            const validation=await legal.registrationVersions(documents.map(d=>({...d,acknowledged:true})),tx);
-            if(!validation.success) throw new RegistrationError('LEGAL_UNAVAILABLE',503);
-            await tx.commit();
-        } catch(error){if(!tx.finished)await tx.rollback();throw error;}
+        await legal.ready();
         const attempt=attemptSecurity.issueAttempt(req,res);
+        const legalContext=await legal.context(attempt.secret);
         const csrf=Csrf.issueToken(req);res.cookie(Csrf.csrfCookieName(),csrf.token,Csrf.csrfCookieOptions());
-        res.json({enabled:true,planId:'professional',verificationChannels:['email'],legalDocuments:documents,registrationAttemptExpiresAt:attempt.expiresAt});
+        res.json({enabled:true,planId:'professional',verificationChannels:['email'],...legalContext,registrationAttemptExpiresAt:attempt.expiresAt});
     }));
     router.post('/auth/register',clean,configuration,optional,anonymous,origin,csrfProtection(),csrfContext('preauth'),run(async(req,res)=>{
         if(req.tokenDecode || req.authTokenPresent || req.authTokenInvalid) throw new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409);
@@ -123,7 +117,7 @@ function createRouter(options={}) {
         if(!attempt) throw new RegistrationError('REGISTRATION_ATTEMPT_INVALID',400);
         const input=validateRegistration(req.body),id=req.get('Idempotency-Key');
         if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id||'')) throw new RegistrationError('REGISTRATION_ATTEMPT_INVALID');
-        await limiter.consume([['register-phone',input.account.telephone,5,900],['register-email',input.account.email,5,900]]);
+        await limiter.consume([['register-email',input.account.email,5,900]]);
         const result=await registration.create(input,{id,secret:attempt.secret});
         if(!result.success) throw new RegistrationError(result.code,result.status);
         const actor={id_login:result.data.idLogin,id_business:result.data.idBusiness};
@@ -131,7 +125,7 @@ function createRouter(options={}) {
         // CURRENT password/owner, including on replay after a reset or reclaim.
         let sessionEstablished=false;
         try {
-            const auth=await login({param:input.account.telephone,pwd:input.account.password,refresh:true},
+            const auth=await login({param:input.account.email,pwd:input.account.password,refresh:true},
                 {expectedLoginId:actor.id_login,ip:req.ip,userAgent:req.get('user-agent')});
             const decoded=auth?.data?.token?jwt.decode(auth.data.token):null;
             if(auth?.status===200 && decoded?.id_login===actor.id_login && decoded?.id_business===actor.id_business && decoded?.id_session) {

@@ -15,3 +15,4 @@ tmp/
 temp/
 .local/po15/
 .agents/
+.schema-backups/

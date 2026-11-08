@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
@@ -9,7 +10,25 @@ const { getBusinessEffectiveLicense } = require('../../util/licenseLimits');
 const responseData = require('../../util/responsedata');
 const { isValidSaasPlan } = require('../../config/saasPlans');
 
+async function presentLogo(response, business) {
+    if (response?.status === 200 && response.data) {
+        response.data.logoKey = privateImages.isPrivateKey(response.data.logoUrl) ? response.data.logoUrl : null;
+        response.data.logoUrl = await privateImages.signedImage(response.data.logoUrl, business);
+    }
+    return response;
+}
 class BusinessController extends httpResponseHelper {
+    updateLogo = async(req, res) => {
+        const business = getBusinessIdFromToken(req.tokenDecode);
+        let response;
+        try {
+            if (!await isTenantAdministrator(req.tokenDecode.id_login, business, 'admin.config')) response = responseData.forbidden('No tienes permiso para modificar el logo.');
+            else response = await presentLogo(await BusinessDao.updateLogo(business, { image: req.body?.image, id_login: req.tokenDecode.id_login }, req.method === 'DELETE'), business);
+        } catch (_) { response = responseData.error('No se pudo confirmar el logo. Vuelve a consultar antes de reintentar.'); }
+        res.set('Cache-Control', 'no-store');
+        res.status(response.status).send(response);
+    }
+
     licenseUsage = async(req, res) => {
         let response;
         try {
@@ -33,7 +52,8 @@ class BusinessController extends httpResponseHelper {
     current = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
-            response = await BusinessDao.get(getBusinessIdFromToken(req.tokenDecode));
+            response = await presentLogo(await BusinessDao.get(getBusinessIdFromToken(req.tokenDecode)), getBusinessIdFromToken(req.tokenDecode));
+            res.set('Cache-Control', 'no-store');
             if (response && response.data && req.tenantOperational) {
                 response.data.tenantOperational = req.tenantOperational;
                 response.data.tenantOperationalMessage = req.tenantOperationalMessage || null;
@@ -56,7 +76,8 @@ class BusinessController extends httpResponseHelper {
 
             const body = req.body || {};
             body.id_login = req.tokenDecode ? req.tokenDecode.id_login : null;
-            response = await BusinessDao.update(getBusinessIdFromToken(req.tokenDecode), body);
+            response = await presentLogo(await BusinessDao.update(getBusinessIdFromToken(req.tokenDecode), body), getBusinessIdFromToken(req.tokenDecode));
+            res.set('Cache-Control', 'no-store');
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }

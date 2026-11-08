@@ -1,5 +1,6 @@
 const responseData = require('../util/responsedata');
 const AuthCookieConfig = require('../config/authCookie.config');
+const { normalizeEmail } = require('../services/registration/identity');
 
 const PHONE_MIN_LENGTH = 7;
 const PHONE_MAX_LENGTH = 15;
@@ -10,9 +11,9 @@ const PASSWORD_MAX_LENGTH = 128;
 
 const ALLOWED_FIELDS = {
     login: ['param', 'pwd', 'refresh', 'secretkey', 'timestamp', 'signature'],
-    sendOtp: ['phone'],
-    validateOtp: ['telephone', 'phone', 'code'],
-    resetPassword: ['phone', 'telephone', 'otp', 'code', 'password', 'confirmPassword'],
+    sendOtp: ['email', 'phone'],
+    validateOtp: ['email', 'telephone', 'phone', 'code'],
+    resetPassword: ['email', 'phone', 'telephone', 'otp', 'code', 'password', 'confirmPassword'],
     requestPasswordChangeCode: ['currentPassword', 'newPassword', 'confirmPassword'],
     confirmPasswordChange: ['code'],
     refreshToken: ['id_refresh_token', 'refresh_token']
@@ -32,6 +33,15 @@ function normalizePhone(value) {
 
 function isValidPhone(phone) {
     return /^\d+$/.test(phone) && phone.length >= PHONE_MIN_LENGTH && phone.length <= PHONE_MAX_LENGTH;
+}
+
+function normalizeIdentifier(value) {
+    const input = normalizeString(value);
+    return input.includes('@') ? normalizeEmail(input) || '' : normalizePhone(value);
+}
+
+function isValidIdentifier(value) {
+    return Boolean(normalizeEmail(value)) || isValidPhone(value);
 }
 
 function normalizeOtp(value) {
@@ -56,18 +66,8 @@ function hasUnexpectedFields(body, allowedFields) {
 }
 
 function passwordPolicyError(password) {
-    if (!password) {
-        return 'La contrasena es requerida.';
-    }
-
-    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
-        return `La contrasena debe tener entre ${PASSWORD_MIN_LENGTH} y ${PASSWORD_MAX_LENGTH} caracteres.`;
-    }
-
-    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-        return 'La contrasena debe incluir al menos una letra y un numero.';
-    }
-
+    try { require('../services/security/registrationPassword.service').normalizePassword(password); }
+    catch (_) { return 'La contraseña debe tener entre 8 y 128 caracteres.'; }
     return null;
 }
 
@@ -92,11 +92,11 @@ function validateAuthPayload(type) {
         }
 
         if (type === 'login') {
-            const phone = normalizePhone(body.param);
+            const phone = normalizeIdentifier(body.param);
             const pwd = typeof body.pwd === 'string' ? body.pwd : '';
 
-            if (!isValidPhone(phone)) {
-                reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
+            if (!isValidIdentifier(phone)) {
+                reject(res, 'Ingresa un correo electrónico válido o un teléfono de entre 7 y 15 dígitos.');
                 return;
             }
 
@@ -111,31 +111,31 @@ function validateAuthPayload(type) {
                 pwd,
                 refresh: normalizeBoolean(body.refresh)
             };
-            req.authIdentity = { phone };
+            req.authIdentity = normalizeEmail(phone) ? { email: phone } : { phone };
             next();
             return;
         }
 
         if (type === 'sendOtp') {
-            const phone = normalizePhone(body.phone);
+            const email = normalizeEmail(body.email || body.phone);
 
-            if (!isValidPhone(phone)) {
-                reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
+            if (!email) {
+                reject(res, 'Ingresa un correo electrónico válido.');
                 return;
             }
 
-            req.body = { phone };
-            req.authIdentity = { phone };
+            req.body = { email };
+            req.authIdentity = { email };
             next();
             return;
         }
 
         if (type === 'validateOtp') {
-            const phone = normalizePhone(body.telephone || body.phone);
+            const email = normalizeEmail(body.email || body.telephone || body.phone);
             const code = normalizeOtp(body.code);
 
-            if (!isValidPhone(phone)) {
-                reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
+            if (!email) {
+                reject(res, 'Ingresa un correo electrónico válido.');
                 return;
             }
 
@@ -144,21 +144,20 @@ function validateAuthPayload(type) {
                 return;
             }
 
-            req.body = { telephone: phone, code };
-            req.authIdentity = { phone };
+            req.body = { email, code };
+            req.authIdentity = { email };
             next();
             return;
         }
 
         if (type === 'resetPassword') {
-            const phone = normalizePhone(body.phone || body.telephone);
+            const email = normalizeEmail(body.email || body.phone || body.telephone);
             const otp = normalizeOtp(body.otp || body.code);
-            const identityMode = require('../services/registration/identityAuth').enabled();
-            const password = identityMode && typeof body.password === 'string' ? body.password : normalizeString(body.password);
-            const confirmPassword = body.confirmPassword === undefined ? null : identityMode ? body.confirmPassword : normalizeString(body.confirmPassword);
+            const password = body.password;
+            const confirmPassword = body.confirmPassword;
 
-            if (!isValidPhone(phone)) {
-                reject(res, 'El telefono es requerido y debe contener entre 7 y 15 digitos.');
+            if (!email) {
+                reject(res, 'Ingresa un correo electrónico válido.');
                 return;
             }
 
@@ -167,23 +166,16 @@ function validateAuthPayload(type) {
                 return;
             }
 
-            if (confirmPassword !== null && password !== confirmPassword) {
+            if (typeof confirmPassword !== 'string' || password !== confirmPassword) {
                 reject(res, 'La confirmacion de contrasena no coincide.');
                 return;
             }
 
-            let passwordError = passwordPolicyError(password);
-            if (identityMode) {
-                try { require('../services/security/registrationPassword.service').normalizePassword(password); passwordError = null; }
-                catch (_) { /* The DAO applies the exact policy of the stored hash version. */ }
-            }
-            if (passwordError) {
-                reject(res, passwordError);
-                return;
-            }
+            try { require('../services/security/registrationPassword.service').normalizePassword(password); }
+            catch (_) { reject(res, 'La contraseña debe tener entre 8 y 128 caracteres.'); return; }
 
-            req.body = { phone, otp, password };
-            req.authIdentity = { phone };
+            req.body = { email, otp, password };
+            req.authIdentity = { email };
             next();
             return;
         }

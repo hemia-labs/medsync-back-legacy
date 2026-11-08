@@ -1,3 +1,5 @@
+const { slogan, logoHtml } = require('../emailBrand');
+
 function escapeHtml(value) {
     return String(value === undefined || value === null ? '' : value)
         .replace(/&/g, '&amp;')
@@ -30,9 +32,9 @@ function documentSignatureEmailTemplate({
     const safePublicUrl = escapeHtml(formatText(publicUrl));
     const safeLogoUrl = /^https?:\/\//i.test(String(clinicLogoUrl || '')) ? escapeHtml(clinicLogoUrl) : '';
     const doctorLine = safeDoctorName ? `<p style="margin:0;color:#5f6f73;">Doctor responsable: ${safeDoctorName}</p>` : '';
-    const logo = safeLogoUrl
-        ? `<img src="${safeLogoUrl}" alt="${safeClinicName}" style="max-height:56px;max-width:180px;object-fit:contain;">`
-        : `<strong style="font-size:26px;color:#1b6b6f;">Hemia</strong>`;
+    const clinicLogo = safeLogoUrl
+        ? `<img src="${safeLogoUrl}" alt="${safeClinicName}" style="display:block;margin:12px 0 0;max-height:56px;max-width:180px;object-fit:contain;">`
+        : '';
 
     const subject = `${plainClinicName} te solicita firmar un documento`;
     const html = `
@@ -50,7 +52,8 @@ function documentSignatureEmailTemplate({
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dce8e6;border-radius:12px;overflow:hidden;">
             <tr>
               <td style="padding:24px 28px;border-bottom:1px solid #e5efed;">
-                ${logo}
+                ${logoHtml}
+                ${clinicLogo}
                 <p style="margin:12px 0 0;color:#1b6b6f;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">${safeClinicName}</p>
               </td>
             </tr>
@@ -86,6 +89,8 @@ function documentSignatureEmailTemplate({
 </html>`;
 
     const text = [
+        'MedSync',
+        slogan,
         `Hola ${formatText(patientName, 'paciente')},`,
         '',
         `${formatText(clinicName, 'Tu consultorio')} te comparte un documento para revision y firma.`,

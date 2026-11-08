@@ -5,7 +5,7 @@ require('../../src/config/env');
 const EmailService = require('../../src/services/email/email.service');
 const names = ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'EMAIL_FROM_NAME', 'EMAIL_FROM_AUTH',
     'EMAIL_FROM_NOTIFICATIONS', 'EMAIL_REPLY_TO', 'EMAIL_CONFIGURATION_SET_AUTH', 'EMAIL_CONFIGURATION_SET_TRANSACTIONAL',
-    'EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_DOCUMENT_SIGNATURE_TEMPLATE'];
+    'EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE', 'EMAIL_PASSWORD_CHANGED_TEMPLATE', 'EMAIL_DOCUMENT_SIGNATURE_TEMPLATE'];
 const provider = EmailService.providerName();
 const missing = names.filter(name => !String(process.env[name] || '').trim());
 const initialized = provider === 'ses' ? EmailService.initialize() : { success: false, code: 'EMAIL_SES_NOT_SELECTED' };

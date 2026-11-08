@@ -826,7 +826,7 @@ async function removeFixtures(transaction = null) {
   await queryIfTable('address', 'DELETE FROM address WHERE id_person IN (:personIds) OR id_address LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('person', 'DELETE FROM person WHERE id_person IN (:personIds) OR id_person LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('auth_password_change_tokens', 'DELETE FROM auth_password_change_tokens WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
-  await queryIfTable('auth_password_reset_tokens', 'DELETE FROM auth_password_reset_tokens WHERE id_login IN (:loginIds) OR phone_normalized IN (:phones)', replacements, QueryTypes.DELETE, transaction);
+  await queryIfTable('auth_password_reset_tokens', 'DELETE FROM auth_password_reset_tokens WHERE id_login IN (:loginIds) OR identifier_normalized IN (:phones)', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('refresh_token', 'DELETE FROM refresh_token WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('session', 'DELETE FROM `session` WHERE id_login IN (:loginIds) OR id_login LIKE :prefixLike', replacements, QueryTypes.DELETE, transaction);
   await queryIfTable('doctor_professional_profile', 'DELETE FROM doctor_professional_profile WHERE id_doctor_professional_profile = :doctorProfileId OR id_login IN (:loginIds)', replacements, QueryTypes.DELETE, transaction);

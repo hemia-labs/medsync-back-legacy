@@ -6,7 +6,7 @@ const { SESv2Client, TestRenderEmailTemplateCommand } = require('@aws-sdk/client
 const EmailService = require('../../src/services/email/email.service');
 async function main() {
     if (!process.argv.includes('--aws-render')) {
-        console.log('Use --aws-render to check the two published templates with synthetic variables. No email is sent.');
+        console.log('Use --aws-render to check the four published templates with synthetic variables. No email is sent.');
         return;
     }
     const ready = EmailService.initialize();
@@ -17,7 +17,12 @@ async function main() {
         requestHandler: { connectionTimeout: 5000, requestTimeout: 15000, throwOnRequestTimeout: true } });
     const signature = { patientName: 'QA Synthetic', clinicName: 'QA Clinic', clinicLogoUrl: '', documentTitle: 'QA Document',
         doctorName: '', expiresAt: '20 de octubre de 2026, 18:00 (CDMX)', publicUrl: 'https://example.invalid/firma/qa-render' };
+    const changed = { accountEmail: 'qa@example.invalid', changedAtLabel: '29 oct 2026, 10:30 h (Ciudad de México)',
+        changeOrigin: 'Recuperación de contraseña', sessionNotice: 'Todas las sesiones se cerraron. Inicia sesión con tu nueva contraseña.',
+        supportUrl: 'mailto:qa%40example.invalid' };
     const cases = [
+        [process.env.EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE, { code: '059173', ttlMinutes: 10, html: { code: '059173', ttlMinutes: '10' } }],
+        [process.env.EMAIL_PASSWORD_CHANGED_TEMPLATE, { ...changed, html: { ...changed } }],
         [process.env.EMAIL_PASSWORD_RESET_TEMPLATE, { code: '048291', ttlMinutes: 10, html: { code: '048291', ttlMinutes: '10' } }],
         [process.env.EMAIL_DOCUMENT_SIGNATURE_TEMPLATE, { ...signature, html: { ...signature } }]
     ];

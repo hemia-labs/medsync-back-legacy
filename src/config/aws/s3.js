@@ -9,6 +9,7 @@ function getS3() {
     if (!s3) {
         s3 = new AWS.S3({
             apiVersion: config.AWS_API_VERSION,
+            signatureVersion: 'v4',
             accessKeyId: config.AWS_ACCESS_KEY,
             secretAccessKey: config.AWS_SECRET_KEY,
             region: validatedAwsRegion(config.AWS_REGION)
@@ -66,5 +67,7 @@ module.exports = {
     getBuckets,
     uploadToBucket,
     uploadBufferToBucket,
-    deleteFileToBucket
+    deleteFileToBucket,
+    signGetObject: (Bucket, Key, Expires) => getS3().getSignedUrlPromise('getObject', { Bucket, Key, Expires, ResponseCacheControl: 'private, no-store' }),
+    readObject: (Bucket, Key) => getS3().getObject({ Bucket, Key }).promise()
 };
