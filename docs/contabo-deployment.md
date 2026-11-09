@@ -13,14 +13,13 @@ Pushes to the matching branch deploy automatically after required checks. Manual
 
 ## GitHub setup
 
-The dev job declares environment: dev. Store DEV_* connection secrets in Settings > Environments > dev; DEV_ENV_FILE and other DEV_* values may also be repository secrets. GitHub makes repository secrets available to the job and environment secrets override same-named repository secrets. Restrict the dev environment to the develop branch. Production retains its prod environment and secret names; configure it separately before migration.
+The dev job declares environment: dev. Store DEV_* connection secrets in Settings > Environments > dev; These connection secrets may also be repository secrets. GitHub makes repository secrets available to the job and environment secrets override same-named repository secrets. Restrict the dev environment to the develop branch. Production retains its prod environment and secret names; configure it separately before migration.
 
 The destination IP is explicit in each workflow. The old VPS_HOST secret is no longer read. Existing production secret names are retained; verify their values for the new VPS. Dev reads only DEV_* secrets, with no fallback to production names. Never copy the production database credentials, signing keys, external service credentials or API URL into dev.
 
 | Production secret | Development secret |
 | --- | --- |
 | `APP_PORT` | `DEV_APP_PORT` |
-| `ENV_FILE` | `DEV_ENV_FILE` |
 | `VPS_APP_DIR` | `DEV_VPS_APP_DIR` |
 | `VPS_KNOWN_HOSTS` | `DEV_VPS_KNOWN_HOSTS` |
 | `VPS_PORT` | `DEV_VPS_PORT` |
@@ -29,7 +28,7 @@ The destination IP is explicit in each workflow. The old VPS_HOST secret is no l
 
 VPS_PORT/DEV_VPS_PORT default to 22. APP_PORT/DEV_APP_PORT default to 3009. Other listed secrets are required. For dev, DEV_VPS_USER is medsync-deploy and DEV_VPS_APP_DIR is /srv/medsync/backend. This account has no sudo/docker/lxd membership. Production credentials remain to be configured separately. Use dedicated GitHub Actions SSH keys, separate from personal login keys. Install each public key in the corresponding server account; put its private key in the corresponding GitHub secret. These workflows expect deployment keys without a passphrase; restrict and rotate them as deployment credentials. Never put private keys in the repository.
 
-VPS_KNOWN_HOSTS/DEV_VPS_KNOWN_HOSTS must contain the new server public host keys, verified through the Contabo console or another trusted channel. Do not blindly trust ssh-keyscan output. ENV_FILE/DEV_ENV_FILE contain the complete environment file for the corresponding backend. Keep NODE_ENV=production on both internet-facing servers for runtime security, with separate databases, secrets, HTTPS CORS origins and cookies. NODE_ENV does not select the Git branch. Configure the backend PORT to match APP_PORT (default 3009). The release script requires Node 22 via nvm, PM2, and a database/schema that passes /readyz.
+VPS_KNOWN_HOSTS/DEV_VPS_KNOWN_HOSTS must contain the new server public host keys, verified through the Contabo console or another trusted channel. Do not blindly trust ssh-keyscan output. Production uses the `ENV_FILE` secret. Before deploying QA, provision `/srv/medsync/backend/shared/qa.env` on the QA VPS as `medsync-deploy` with mode `600`. The QA release links this file as `.env`. Keep NODE_ENV=production on both internet-facing servers for runtime security, with separate databases, secrets, HTTPS CORS origins and cookies. NODE_ENV does not select the Git branch. Configure the backend PORT to match APP_PORT (default 3009). The release script requires Node 22 via nvm, PM2, and a database/schema that passes /readyz.
 
 ## Activation and verification
 
@@ -54,4 +53,4 @@ Disable the affected workflow before changing routing. Reverting these workflow 
 
 Frontend: https://test.medsync.mx/ . Backend base URL: https://api-test.medsync.mx/ (do not append /api in DEV_VUE_APP_CORE_URL_API).
 
-The backend connects to MySQL on 127.0.0.1:3306, database hemia_assitant_legacy, user medsync_test_app. DEV_ENV_FILE contains its password and independent application signing keys. Email, self-registration and application background jobs are initially disabled; email and S3 still require their own test configuration. Never print the environment file in CI logs.
+The backend connects to MySQL on 127.0.0.1:3306, database hemia_assitant_legacy, user medsync_test_app. The server QA environment contains its database password, signing keys and SES settings. Update it atomically and keep a private copy before changes. If a release rolls back after an environment change, restore the previous environment separately. Never print it in CI logs.

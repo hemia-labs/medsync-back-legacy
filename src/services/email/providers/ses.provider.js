@@ -80,10 +80,18 @@ function templateData(type, input = {}) {
     return { ...data, html: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, escapeHtml(value)])) };
 }
 function config() {
-    const region = required('AWS_REGION');
-    try { validatedAwsRegion(region); } catch (_) { throw invalid('Revisa la configuración de AWS_REGION.'); }
-    const credentials = { accessKeyId: required('AWS_ACCESS_KEY_ID'), secretAccessKey: required('AWS_SECRET_ACCESS_KEY') };
-    if (process.env.AWS_SESSION_TOKEN) credentials.sessionToken = required('AWS_SESSION_TOKEN');
+    const regionKey = process.env.EMAIL_AWS_REGION !== undefined ? 'EMAIL_AWS_REGION' : 'AWS_REGION';
+    const region = required(regionKey);
+    try { validatedAwsRegion(region); } catch (_) { throw invalid(`Revisa la configuración de ${regionKey}.`); }
+    const hasEmailCredentials = ['EMAIL_AWS_ACCESS_KEY_ID', 'EMAIL_AWS_SECRET_ACCESS_KEY', 'EMAIL_AWS_SESSION_TOKEN']
+        .some(key => process.env[key] !== undefined);
+    const prefix = hasEmailCredentials ? 'EMAIL_AWS_' : 'AWS_';
+    const credentials = {
+        accessKeyId: required(`${prefix}ACCESS_KEY_ID`),
+        secretAccessKey: required(`${prefix}SECRET_ACCESS_KEY`)
+    };
+    const tokenKey = `${prefix}SESSION_TOKEN`;
+    if (process.env[tokenKey]) credentials.sessionToken = required(tokenKey);
     const fromName = required('EMAIL_FROM_NAME');
     if (/[<>"\\]/.test(fromName)) throw invalid('Revisa la configuración de EMAIL_FROM_NAME.');
     const replyTo = required('EMAIL_REPLY_TO');
