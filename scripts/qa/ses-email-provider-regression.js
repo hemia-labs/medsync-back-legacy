@@ -21,7 +21,8 @@ const base = {
     EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:'Exact-Change-Code-QA',EMAIL_PASSWORD_CHANGED_TEMPLATE:'Exact-Changed-Template-QA',EMAIL_PASSWORD_RESET_TEMPLATE:'Exact-Reset-Template-QA',EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA',
     SMTP_HOST:'relay.qa.invalid',SMTP_PORT:'2525',SMTP_SECURE:'false',SMTP_USER:'synthetic-smtp-user',SMTP_PASSWORD:'synthetic-smtp-password',EMAIL_FROM:'legacy@example.test'
 };
-const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','PUBLIC_APP_URL','EMAIL_REGISTRATION_CODE_TEMPLATE','EMAIL_REGISTRATION_WELCOME_TEMPLATE'];
+const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','PUBLIC_APP_URL','EMAIL_REGISTRATION_CODE_TEMPLATE','EMAIL_REGISTRATION_WELCOME_TEMPLATE',
+    'EMAIL_AWS_REGION','EMAIL_AWS_ACCESS_KEY_ID','EMAIL_AWS_SECRET_ACCESS_KEY','EMAIL_AWS_SESSION_TOKEN'];
 const originalEnv=new Map(envKeys.map(key=>[key,process.env[key]]));
 const originalLoad=Module._load;
 const originalConsole={log:console.log,warn:console.warn,error:console.error};
@@ -109,6 +110,18 @@ async function credentials(config) {return typeof config.credentials==='function
         await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}});
         assert.equal(clients.length,1);assert.equal(commands.length,2);assert.equal(commands[0].client,commands[1].client);
         assertNoSecretLogs();
+    });
+    await check('SES-only credentials do not use the shared AWS credential pair or session token',async()=>{
+        const service=configure({
+            AWS_SESSION_TOKEN:synthetic.session,EMAIL_AWS_REGION:'us-east-2',
+            EMAIL_AWS_ACCESS_KEY_ID:'qa-only-access',EMAIL_AWS_SECRET_ACCESS_KEY:'qa-only-secret'
+        });
+        assert.equal(service.initialize().success,true);
+        assert.equal(clients[0].config.region,'us-east-2');
+        assert.deepEqual(await credentials(clients[0].config),{accessKeyId:'qa-only-access',secretAccessKey:'qa-only-secret'});
+        const incomplete=configure({EMAIL_AWS_ACCESS_KEY_ID:'qa-only-access'});
+        assertSafeFailure(incomplete.initialize());
+        assert.equal(clients.length,0);
     });
     await check('password reset preserves leading zeroes, normalizes TTL and uses exact auth sender, template and configuration set',async()=>{
         const service=configure();

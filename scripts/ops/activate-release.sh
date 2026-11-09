@@ -4,7 +4,19 @@ set -Eeuo pipefail
 [[ "$VPS_APP_DIR" == /* && "$VPS_APP_DIR" != / && "$RELEASE_ID" =~ ^[0-9]+-[0-9]+$ ]] || exit 1
 root="$(realpath "$VPS_APP_DIR")"
 release="$root/releases/$RELEASE_ID"
-[[ -d "$release/src" && -f "$release/.env" && ! -L "$release" ]] || exit 1
+[[ -d "$release/src" && ! -L "$release" ]] || exit 1
+case "${RELEASE_ENV_SOURCE:-bundle}" in
+  bundle) [[ -f "$release/.env" ]] || exit 1 ;;
+  server)
+    env_file="$root/shared/qa.env"
+    if [[ ! -f "$env_file" || -L "$env_file" || ! -O "$env_file" || "$(stat -c %a "$env_file")" != 600 ]]; then
+      echo 'Server QA environment must be a regular file owned by the deploy user with mode 600.' >&2
+      exit 1
+    fi
+    ln -s "$env_file" "$release/.env"
+    ;;
+  *) exit 1 ;;
+esac
 previous="$(readlink -f "$root/current" || true)"
 if [[ ! -f "$previous/ecosystem.config.cjs" ]]; then previous="$root"; fi
 
