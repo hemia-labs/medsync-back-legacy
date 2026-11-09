@@ -8,11 +8,13 @@ services:
       NODE_ENV: production
       APP_RELEASE_ID: ${MEDSYNC_QA_IMAGE}
       PORT: '3009'
-    ports:
-      - '127.0.0.1:${MEDSYNC_QA_PORT:-3010}:3009'
+    network_mode: host
+    user: '1001:1001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     volumes:
-      - uploads:/app/src/tempFolder
-      - logs:/app/logs
+      - /srv/medsync/backend/shared/tempFolder:/app/src/tempFolder
+      - /srv/medsync/backend/shared/logs:/app/logs
     restart: unless-stopped
     init: true
     healthcheck:
@@ -35,6 +37,3 @@ services:
       options:
         max-size: '10m'
         max-file: '3'
-volumes:
-  uploads:
-  logs:

@@ -1,5 +1,7 @@
 # Contabo deployments
 
+Medsync backend QA uses [the Docker workflow](platform-operations/qa-docker-registry.md). The PM2 instructions below describe the legacy QA deployment and the existing production flow.
+
 Both repositories use these destinations:
 
 | Branch | GitHub environment | Workflow | VPS |

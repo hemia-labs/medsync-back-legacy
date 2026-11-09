@@ -38,11 +38,16 @@ activate() {
     compose "$1" up --detach --no-deps --pull never --wait --wait-timeout 85 api
 }
 probe() {
-    local url="http://127.0.0.1:${MEDSYNC_QA_PORT:-3010}/readyz"
+    local url="http://127.0.0.1:3009/readyz"
     local response
     response="$(curl --noproxy '*' --fail --silent --show-error --max-time 5 "$url")" || return 1
     # Docker's health check already parses the JSON. Verify the published port too.
-    [[ "$response" == "{\"ready\":true,\"release\":\"$1\"}" ]]
+    [[ "$response" == "{\"ready\":true,\"release\":\"$1\"}" ]] || return 1
+    if [[ "${MEDSYNC_QA_LOCAL_TEST:-0}" != 1 ]]; then
+        curl --noproxy '*' --fail --silent --show-error --max-time 8 \
+            --resolve api-test.medsync.mx:443:127.0.0.1 https://api-test.medsync.mx/readyz |
+            jq -e --arg image "$1" '.ready == true and .release == $image' >/dev/null
+    fi
 }
 restore_previous() {
     if [[ -n "$current" ]]; then

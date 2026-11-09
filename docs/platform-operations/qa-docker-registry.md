@@ -2,22 +2,15 @@
 
 El contenedor ejecuta un proceso Node 22 sin privilegios. La imagen incluye código y dependencias de producción. GitHub Actions construye y publica la imagen en `registry.hemia.cloud` cuando se actualiza `develop`. El host de QA activa la imagen por digest. MySQL, el proxy HTTPS y la configuración de QA viven fuera del contenedor.
 
-## Publicar y activar
+## Publicación, despliegue y rollback
 
-1. Crear el environment GitHub `qa-registry` para `develop`. Configurar la variable `REGISTRY_USERNAME` con la cuenta escritora y `REGISTRY_PASSWORD` como secreto del environment. El runner se conecta por HTTPS directo a `registry.hemia.cloud`, en Hemia VPS DEV. La ruta de la imagen es `registry.hemia.cloud/medsync/qa-backend`.
-2. El flujo **Publish MedSync QA image to private registry** ejecuta las regresiones y publica para Linux amd64 en cada push a `develop`. El resumen muestra la referencia completa por digest. El disparo manual también está disponible cuando el workflow existe en la rama por defecto.
-3. En el host amd64 de QA, instalar Docker Compose 2.30 o superior y curl. Configurar acceso de red al registry y autenticación con su cuenta lectora. Copiar `ops/qa` desde el commit publicado. Guardar el entorno de QA con permisos 0600 fuera del repo, en formato literal `KEY=valor` sin comillas envolventes. Configurar una dirección privada de MySQL alcanzable desde el contenedor y limitar el acceso a la red de QA. El `localhost` del contenedor solo alcanza al contenedor. Usar credenciales o un rol de QA para S3 y SES, orígenes HTTPS de QA y configuración de cookies apropiada.
-4. Reservar `127.0.0.1:3010` para Docker. Configurar la confianza en el proxy según su dirección real y probar el flujo HTTPS y las cookies antes de mover la ruta de QA. Para el primer cambio, pausar los jobs del candidato o detener el proceso PM2 anterior antes de habilitar los jobs en Docker. El backend ejecuta jobs en proceso y usa estado local. El cambio normal recrea una instancia y puede interrumpir brevemente la API.
-5. Activar el digest del resumen y verificar `/readyz` por HTTPS a través del proxy. La activación conserva las tres imágenes sanas más recientes en el estado del host, comprueba el digest a través del puerto local y restaura automáticamente el digest activo anterior si falla el candidato.
+El workflow **Deploy MedSync QA to Hemia VPS DEV** ejecuta las regresiones en PRs a `develop`. En pushes a `develop`, construye la imagen Linux amd64, la publica en `registry.hemia.cloud/medsync/qa-backend` y activa el digest en Hemia VPS DEV. El último paso verifica el digest y `/readyz` desde fuera del VPS.
 
-```bash
-export MEDSYNC_QA_STATE_DIR=/srv/medsync-qa/state
-export MEDSYNC_QA_ENV_FILE=/srv/medsync-qa/runtime.env
-bash ops/qa/deploy.sh "registry.hemia.cloud/medsync/qa-backend@$digest"
-bash ops/qa/deploy.sh rollback
-```
+El environment `qa-registry` está restringido a `develop`. Usa `REGISTRY_USERNAME` y `REGISTRY_PASSWORD` para publicar, `QA_SSH_KEY` para solicitar una operación de QA y `QA_KNOWN_HOSTS` para verificar el servidor. La clave SSH está restringida a un comando en el host que acepta únicamente desplegar un digest del namespace de MedSync QA o revertir la última imagen. El host descarga con una credencial lectora y conserva su entorno en `/srv/medsync-qa/runtime.env` con permisos 0600. Los scripts de operación residen en `/srv/medsync-qa/ci`, propiedad de root.
 
-Si el proceso muere sin ejecutar la limpieza, confirmar que no hay otro despliegue, quitar el directorio vacío `deploy.lock` y reactivar el primer digest del archivo `images`. Después de un rollback, verificar `/readyz` por HTTPS y revisar los logs. Aplicar migraciones compatibles con ambas imágenes para conservar las escrituras entre versiones. Si una migración impide ejecutar la imagen anterior, seguir el procedimiento MySQL.
+Docker escucha en el puerto `3009` usando la red del host para conservar el acceso local a MySQL y el proxy existente. Ejecuta la aplicación como el usuario de QA y comparte sus archivos y logs persistentes. En el primer corte, CI descarga las dos imágenes antes de detener MedSync QA en PM2. Levanta la imagen inicial, despliega el digest nuevo, prueba volver al inicial y reactiva el nuevo. Si el corte falla, recupera PM2. Tras confirmar Docker, retira solo la entrada PM2 de MedSync QA y conserva su última release en disco.
+
+Para revertir desde GitHub Actions, seleccionar `develop` y la operación `rollback` en el workflow. El host conserva los tres digests sanos más recientes y verifica la imagen restaurada por el puerto local y por HTTPS. Si un proceso termina abruptamente y deja el directorio vacío `deploy.lock`, comprobar primero que no hay un despliegue en curso. Aplicar migraciones compatibles con ambas imágenes para conservar las escrituras entre versiones. Si una migración impide ejecutar la imagen anterior, seguir el procedimiento MySQL.
 
 ## Recuperar MySQL
 
@@ -51,4 +44,4 @@ Comprobar que la imagen elegida arranca contra la base recuperada. Verificar cit
 | MySQL y adjuntos | Mantener 30 días recuperables fuera del VPS. Conservar el último backup base anterior al inicio de la ventana y los binlogs consecutivos desde ese backup. Ampliar la retención si faltan backups verificados. Conservar los adjuntos y sus versiones durante la misma ventana. Ensayar una restauración cada mes. |
 | Logs | Docker rota stdout y stderr con hasta tres archivos de 10 MB por contenedor. Si la aplicación escribe archivos en el volumen de logs, configurar su rotación en el host. |
 
-Para el ensayo local se puede usar `MEDSYNC_QA_LOCAL_TEST=1` con IDs de imágenes construidas localmente. En QA se usa la referencia completa del registry privado por digest.
+En QA se usa la referencia completa del registry privado por digest.
