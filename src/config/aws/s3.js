@@ -1,73 +1,62 @@
-
+const fs = require('node:fs');
+const { S3Client, DeleteObjectCommand, GetObjectCommand, ListBucketsCommand } = require('@aws-sdk/client-s3');
+const { Upload } = require('@aws-sdk/lib-storage');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
-const AWS = require('aws-sdk');
-const fs = require('fs');
 const { validatedAwsRegion } = require('./region');
+const { maxImageBytes } = require('../../util/file/image');
 
 let s3;
 function getS3() {
     if (!s3) {
-        s3 = new AWS.S3({
-            apiVersion: config.AWS_API_VERSION,
-            signatureVersion: 'v4',
-            accessKeyId: config.AWS_ACCESS_KEY,
-            secretAccessKey: config.AWS_SECRET_KEY,
-            region: validatedAwsRegion(config.AWS_REGION)
+        s3 = new S3Client({
+            region: validatedAwsRegion(config.AWS_REGION),
+            ignoreConfiguredEndpointUrls: true,
+            credentials: config.AWS_ACCESS_KEY && config.AWS_SECRET_KEY ? {
+                accessKeyId: config.AWS_ACCESS_KEY,
+                secretAccessKey: config.AWS_SECRET_KEY,
+                sessionToken: process.env.AWS_SESSION_TOKEN || undefined
+            } : undefined
         });
     }
     return s3;
 }
 
-/**
- * Obtiene la lista de buckets
- * @returns 
- */
-const getBuckets = () => {
-    return getS3().listBuckets().promise();
-};
+async function upload(client, params) {
+    const result = await new Upload({ client, params, queueSize: 1 }).done();
+    return { ...result, Key: params.Key, key: params.Key };
+}
 
-/**
- * Realiza la carga de archivos a un bucket
- * @param {String} bucketName Nombre del Bucket
- * @param {String} tempFilePath path del archivo
- * @param {String} key Key
- * @returns 
- */
-const uploadToBucket = (bucketName, tempFilePath, key) => {
+function uploadToBucket(Bucket, tempFilePath, Key) {
     const client = getS3();
-    const stream = fs.createReadStream(tempFilePath);
-    const params = {
-        Bucket:bucketName,
-        Key: key,
-        Body: stream
-    };
-     return client.upload(params).promise();
-};
+    return upload(client, { Bucket, Key, Body: fs.createReadStream(tempFilePath) });
+}
 
-/**
- * Elimina un archivo de un bucket especifico
- * @param {String} bucketName Nombre del Bucket
- * @param {String} key Key
- * @returns 
- */
-const deleteFileToBucket = (bucketName, key) => {
-    const params = {
-        Bucket:bucketName,
-        Key: key
-    };
-     return getS3().deleteObject(params).promise();
-};
+function uploadBufferToBucket(Bucket, Body, Key, ContentType) {
+    if (!Buffer.isBuffer(Body)) throw new TypeError('Se requiere una imagen decodificada.');
+    return upload(getS3(), { Bucket, Key, Body, ContentType });
+}
 
-const uploadBufferToBucket = (bucketName, body, key, contentType) => {
-    if (!Buffer.isBuffer(body)) throw new TypeError('Se requiere una imagen decodificada.');
-    return getS3().upload({ Bucket: bucketName, Key: key, Body: body, ContentType: contentType }).promise();
-};
+async function readObject(Bucket, Key) {
+    const object = await getS3().send(new GetObjectCommand({ Bucket, Key }));
+    const chunks = [];
+    let size = 0;
+    // Consume or close the v3 stream so the HTTP connection can be released.
+    for await (const chunk of object.Body) {
+        size += chunk.length;
+        if (size > maxImageBytes) throw new Error('Imagen privada inválida.');
+        chunks.push(chunk);
+    }
+    return { ...object, Body: Buffer.concat(chunks, size) };
+}
 
 module.exports = {
-    getBuckets,
+    getBuckets: () => getS3().send(new ListBucketsCommand({})),
     uploadToBucket,
     uploadBufferToBucket,
-    deleteFileToBucket,
-    signGetObject: (Bucket, Key, Expires) => getS3().getSignedUrlPromise('getObject', { Bucket, Key, Expires, ResponseCacheControl: 'private, no-store' }),
-    readObject: (Bucket, Key) => getS3().getObject({ Bucket, Key }).promise()
+    deleteFileToBucket: (Bucket, Key) => getS3().send(new DeleteObjectCommand({ Bucket, Key })),
+    signGetObject: (Bucket, Key, expiresIn) => getSignedUrl(
+        getS3(), new GetObjectCommand({ Bucket, Key, ResponseCacheControl: 'private, no-store' }), { expiresIn }
+    ),
+    readObject
 };
