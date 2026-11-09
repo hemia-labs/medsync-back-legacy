@@ -2,7 +2,7 @@ name: Publish MedSync QA image to private registry
 
 on:
   push:
-    branches: [develop, codex/medsync-qa-registry-smoke]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   test:
-    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/codex/medsync-qa-registry-smoke'
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,7 +29,7 @@ jobs:
 
   publish:
     needs: test
-    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/codex/medsync-qa-registry-smoke'
+    if: github.ref == 'refs/heads/develop'
     environment: qa-registry
     runs-on: ubuntu-24.04
     timeout-minutes: 25
