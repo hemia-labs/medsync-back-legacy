@@ -4,7 +4,7 @@ El VPS de producción descarga desde `registry.hemia.cloud/medsync/prod-backend`
 
 El workflow manual **Build MedSync production image** ejecuta las regresiones en `main`, publica la imagen Linux amd64 y escribe su digest en el resumen. Configurar `PROD_REGISTRY_USERNAME` y `PROD_REGISTRY_PASSWORD` en el environment `prod` con una cuenta escritora. Conservar la credencial de escritura en CI. La imagen no contiene la configuración del servidor.
 
-Instalar `ops/prod/deploy.sh` y `ops/prod/compose.yml` como root en `/srv/medsync-prod/ci`. Provisionar `/srv/medsync-prod/prod.env` como archivo regular propiedad de root con modo 600 y revisar que sus valores correspondan a producción. El contenedor usa UID/GID 1001, el mismo puerto 3009 de PM2 y los directorios compartidos de archivos temporales y logs. Instalar la lista de contraseñas en `/srv/medsync-prod/security` y configurar su ruta dentro del contenedor (`/app/config/security/registration-password-blocklist.json`) y su SHA-256 en `prod.env` al habilitar el registro.
+Instalar `ops/prod/deploy.sh` y `ops/prod/compose.yml` como root en `/srv/medsync-prod/ci`. PM2 y Docker leen `/srv/medsync/backend/shared/.env.production`, un archivo regular de `medsync-deploy` con modo `0600`. El script de Docker lee el archivo como ese usuario y le entrega a Compose una copia temporal privada. El contenedor usa UID/GID 1001, el mismo puerto 3009 de PM2 y los directorios compartidos de archivos temporales y logs. Antes de habilitar el registro, configurar en `.env.production` la ruta `/srv/medsync-prod/security/registration-password-blocklist.json` y su SHA-256. Docker monta ese directorio en la misma ruta y en solo lectura.
 
 ```sh
 sudo bash /srv/medsync-prod/ci/deploy.sh preflight sha256:<digest>

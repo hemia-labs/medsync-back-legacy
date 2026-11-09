@@ -13,7 +13,9 @@ QA deploys with Docker by digest. Use the [QA Docker runbook](platform-operation
 
 ## Production
 
-Production deploys with PM2. Configure `ENV_FILE`, `VPS_APP_DIR`, `VPS_KNOWN_HOSTS`, `VPS_SSH_KEY` and `VPS_USER` in the `prod` environment. `VPS_PORT` defaults to 22 and `APP_PORT` to 3009. Verify the SSH host key against a trusted source, use a dedicated Actions SSH key and keep the environment file private. The server uses Node 22 via nvm and needs a database schema that passes `/readyz`.
+Production deploys with PM2. Configure `VPS_APP_DIR`, `VPS_KNOWN_HOSTS`, `VPS_SSH_KEY` and `VPS_USER` in the `prod` environment. `VPS_PORT` defaults to 22 and `APP_PORT` to 3009. Verify the SSH host key against a trusted source and use a dedicated Actions SSH key. The server uses Node 22 via nvm and needs a database schema that passes `/readyz`.
+
+Keep the production environment at `/srv/medsync/backend/shared/.env.production` as a regular file owned by `medsync-deploy` with mode `0600`. Each new PM2 release links that file as `.env`. Keep a protected backup when updating it and restore the backup separately if a configuration change needs to be reverted.
 
 Before merging to `main`, confirm the production configuration and schema for the incoming release. After the merge, check the Actions run and the [production readiness endpoint](https://api.medsync.mx/readyz).
 

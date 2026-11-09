@@ -6,10 +6,10 @@ root=/srv/medsync-prod
 legacy=/srv/medsync/backend
 repository=registry.hemia.cloud/medsync/prod-backend
 export DOCKER_CONFIG="$root/docker"
-export MEDSYNC_PROD_ENV_FILE="$root/prod.env"
-[[ "$EUID" == 0 && -f "$MEDSYNC_PROD_ENV_FILE" && ! -L "$MEDSYNC_PROD_ENV_FILE" &&
-   "$(stat -c '%u:%a' "$MEDSYNC_PROD_ENV_FILE")" == 0:600 ]] || {
-    echo 'Run as root with a root-owned prod.env (mode 600).' >&2
+env_source="$legacy/shared/.env.production"
+[[ "$EUID" == 0 && -f "$env_source" && ! -L "$env_source" &&
+   "$(stat -c '%U:%a' "$env_source")" == medsync-deploy:600 ]] || {
+    echo 'Run as root with shared/.env.production owned by medsync-deploy (mode 600).' >&2
     exit 1
 }
 
@@ -17,7 +17,11 @@ exec 9>"$root/deploy.lock"
 flock -n 9 || { echo 'Another production deployment is running.' >&2; exit 1; }
 history="$root/images"
 pending="$root/images.next"
-trap 'rm -f -- "$pending"' EXIT
+MEDSYNC_PROD_ENV_FILE="$(mktemp "$root/prod-env.XXXXXX")"
+export MEDSYNC_PROD_ENV_FILE
+trap 'rm -f -- "$pending" "$MEDSYNC_PROD_ENV_FILE"' EXIT
+# Read as the file owner before giving Compose a root-owned copy for this operation.
+runuser -u medsync-deploy -- cat -- "$env_source" > "$MEDSYNC_PROD_ENV_FILE"
 
 valid_digest() { [[ "$1" =~ ^sha256:[a-f0-9]{64}$ ]]; }
 is_pm2() { [[ "$1" =~ ^pm2:[0-9]+-[0-9]+$ ]]; }

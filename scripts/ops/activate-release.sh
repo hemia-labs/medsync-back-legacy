@@ -5,12 +5,14 @@ set -Eeuo pipefail
 root="$(realpath "$VPS_APP_DIR")"
 release="$root/releases/$RELEASE_ID"
 [[ -d "$release/src" && ! -L "$release" ]] || exit 1
-case "${RELEASE_ENV_SOURCE:-bundle}" in
+env_source="${RELEASE_ENV_SOURCE:-bundle}"
+case "$env_source" in
   bundle) [[ -f "$release/.env" ]] || exit 1 ;;
-  server)
+  server|production)
     env_file="$root/shared/qa.env"
+    if [[ "$env_source" == production ]]; then env_file="$root/shared/.env.production"; fi
     if [[ ! -f "$env_file" || -L "$env_file" || ! -O "$env_file" || "$(stat -c %a "$env_file")" != 600 ]]; then
-      echo 'Server QA environment must be a regular file owned by the deploy user with mode 600.' >&2
+      echo 'Shared environment must be a regular file owned by the deploy user with mode 600.' >&2
       exit 1
     fi
     ln -s "$env_file" "$release/.env"
@@ -24,7 +26,27 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [[ ! -s "$NVM_DIR/nvm.sh" ]] || source "$NVM_DIR/nvm.sh"
 nvm use 22
 cd "$release"
-chmod 600 .env
+if [[ "$env_source" == bundle ]]; then chmod 600 .env; fi
+if [[ "$env_source" == production ]]; then
+  node <<'NODE'
+const fs = require('node:fs');
+const { parseEnv } = require('node:util');
+const env = parseEnv(fs.readFileSync('.env', 'utf8'));
+const required = [
+  'PORT', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
+  'JWT_SECRET', 'REFRESH_TOKEN_SECRET', 'PASSWORD_RESET_CODE_SECRET', 'CORS_ALLOWED_ORIGINS',
+];
+const missing = required.filter(key => !env[key]?.trim());
+if (missing.length) {
+  console.error('Missing production environment keys: ' + missing.join(', '));
+  process.exit(1);
+}
+if (env.NODE_ENV !== 'production') {
+  console.error('The shared environment must set NODE_ENV=production.');
+  process.exit(1);
+}
+NODE
+fi
 npm ci --omit=dev
 command -v pm2 >/dev/null
 

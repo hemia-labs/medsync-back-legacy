@@ -15,7 +15,7 @@ services:
       - /srv/medsync/backend/shared/logs:/app/logs
       - type: bind
         source: /srv/medsync-prod/security
-        target: /app/config/security
+        target: /srv/medsync-prod/security
         read_only: true
         bind:
           create_host_path: false

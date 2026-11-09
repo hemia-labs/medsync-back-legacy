@@ -12,12 +12,14 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'medsync-deploy-'));
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, { mode: 0o700 }); };
 try {
     const phases = ['install-failure', 'start-failure', 'readiness-failure', 'success'];
-    if (process.platform === 'linux') phases.push('server-success', 'server-missing-env', 'server-readable-env');
+    if (process.platform === 'linux') phases.push('server-success', 'server-missing-env', 'server-readable-env', 'production-success', 'production-invalid-env');
     for (const phase of phases) {
-        const serverEnv = phase.startsWith('server-');
-        const success = phase === 'success' || phase === 'server-success';
+        const production = phase.startsWith('production-');
+        const serverEnv = production || phase.startsWith('server-');
+        const success = phase.endsWith('success');
         const failsBeforeStart = phase === 'install-failure' || (serverEnv && !success);
         const root = path.join(scratch, phase), candidate = path.join(root, 'releases/100-1'), bin = path.join(root, 'fake-bin');
+        const sharedEnv = path.join(root, 'shared', production ? '.env.production' : 'qa.env');
         write(path.join(root, 'ecosystem.config.cjs'), 'legacy-release');
         write(path.join(root, '.env'), 'SYNTHETIC_PREVIOUS=1');
         write(path.join(root, 'src/tempFolder/kept'), 'persistent-temp');
@@ -25,9 +27,11 @@ try {
         write(path.join(candidate, 'ecosystem.config.cjs'), 'candidate');
         if (!serverEnv) write(path.join(candidate, '.env'), 'SYNTHETIC_CANDIDATE=1');
         if (serverEnv && phase !== 'server-missing-env') {
-            const env = path.join(root, 'shared/qa.env');
-            write(env, 'SYNTHETIC_SERVER=1');
-            fs.chmodSync(env, success ? 0o600 : 0o644);
+            const content = production && success
+                ? 'NODE_ENV=production\nPORT=1\nDB_HOST=localhost\nDB_PORT=3306\nDB_NAME=synthetic\nDB_USER=synthetic\nDB_PASSWORD=synthetic\nJWT_SECRET=synthetic\nREFRESH_TOKEN_SECRET=synthetic\nPASSWORD_RESET_CODE_SECRET=synthetic\nCORS_ALLOWED_ORIGINS=https://example.invalid\n'
+                : 'SYNTHETIC_SERVER=1';
+            write(sharedEnv, content);
+            fs.chmodSync(sharedEnv, phase === 'server-readable-env' ? 0o644 : 0o600);
         }
         write(path.join(candidate, 'src/index.js'), 'candidate');
         write(path.join(root, 'nvm/nvm.sh'), 'nvm() { return 0; }\n');
@@ -46,7 +50,7 @@ try {
         const result = spawnSync(bash, ['-c', 'export PATH="$QA_BIN:$PATH"; bash "$QA_SCRIPT"'], {
             encoding: 'utf8', timeout: 20000,
             env: { ...process.env, MSYS: 'winsymlinks:nativestrict', VPS_APP_DIR: shellPath(root), RELEASE_ID: '100-1', APP_PORT: '1',
-                RELEASE_ENV_SOURCE: serverEnv ? 'server' : 'bundle',
+                RELEASE_ENV_SOURCE: production ? 'production' : serverEnv ? 'server' : 'bundle',
                 NVM_DIR: shellPath(path.join(root, 'nvm')), QA_BIN: shellPath(bin), QA_SCRIPT: shellPath(path.resolve(__dirname, '../ops/activate-release.sh')),
                 QA_JUNCTION: shellPath(path.join(root, 'junction.cjs')), QA_PHASE: phase, QA_RECORD: shellPath(path.join(root, 'pm2-record')) }
         });
@@ -70,7 +74,7 @@ try {
             assert.ok(fs.existsSync(path.join(root, 'current')), result.stdout + result.stderr);
             assert.equal(fs.realpathSync(path.join(root, 'current')), fs.realpathSync(success ? candidate : root));
             if (serverEnv) {
-                assert.equal(fs.readlinkSync(path.join(candidate, '.env')), fs.realpathSync(path.join(root, 'shared/qa.env')));
+                assert.equal(fs.readlinkSync(path.join(candidate, '.env')), fs.realpathSync(sharedEnv));
             }
             assert.equal(fs.readFileSync(path.join(root, 'shared/logs/kept'), 'utf8'), 'persistent-logs');
             assert.equal(fs.readFileSync(path.join(candidate, 'src/tempFolder/kept'), 'utf8'), 'persistent-temp');

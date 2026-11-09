@@ -21,7 +21,7 @@ env_source="${RELEASE_ENV_SOURCE:-bundle}"
 files=(src scripts/ops/activate-release.sh package.json package-lock.json ecosystem.config.cjs)
 case "$env_source" in
   bundle) files+=(.env) ;;
-  server) ;;
+  server|production) ;;
   *) exit 1 ;;
 esac
 tar -czf "$bundle" "${files[@]}"
