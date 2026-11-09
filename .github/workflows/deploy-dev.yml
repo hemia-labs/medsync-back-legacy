@@ -106,3 +106,24 @@ jobs:
             https://api-test.medsync.mx/readyz |
             jq -e --arg image "$image" '.ready == true and .release == $image'
           printf 'QA active: `%s` on port 3009.\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+
+  prerelease:
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Publish prerelease notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-backend.sh
