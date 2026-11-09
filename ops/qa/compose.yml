@@ -1,0 +1,39 @@
+services:
+  api:
+    image: ${MEDSYNC_QA_IMAGE:?missing image digest}
+    env_file:
+      - path: ${MEDSYNC_QA_ENV_FILE:?missing QA environment file}
+        format: raw
+    environment:
+      NODE_ENV: production
+      APP_RELEASE_ID: ${MEDSYNC_QA_IMAGE}
+      PORT: '3009'
+    network_mode: host
+    user: '1001:1001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /srv/medsync/backend/shared/tempFolder:/app/src/tempFolder
+      - /srv/medsync/backend/shared/logs:/app/logs
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          fetch('http://127.0.0.1:3009/readyz', {signal: AbortSignal.timeout(3500)})
+            .then(async response => {
+              const body = await response.json();
+              if (!response.ok || !body.ready || body.release !== process.env.APP_RELEASE_ID) process.exit(1);
+            })
+            .catch(() => process.exit(1));
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 10s
+    logging:
+      options:
+        max-size: '10m'
+        max-file: '3'

@@ -30,18 +30,14 @@ async function main() {
         assert.throws(() => validatedAwsRegion(region), { code: 'AWS_REGION_INVALID' });
     }
 
-    // Both existing consumers use v1/v4 without caller-provided buffers.
     const uuid = require('uuid');
-    for (const parent of ['aws-sdk', 'sequelize']) {
-        const consumerRequire = createRequire(require.resolve(parent));
-        assert.equal(consumerRequire('uuid/package.json').version, '11.1.1');
-        assert.equal(uuid.validate(consumerRequire('uuid').v4()), true);
-    }
+    const sequelizeRequire = createRequire(require.resolve('sequelize'));
+    assert.equal(sequelizeRequire('uuid/package.json').version, '11.1.1');
+    assert.equal(uuid.validate(sequelizeRequire('uuid').v4()), true);
     const sequelizeUtils = require('sequelize/lib/utils');
     const { DataTypes } = require('sequelize');
     assert.equal(uuid.version(sequelizeUtils.toDefaultValue(DataTypes.UUIDV1())), 1);
     assert.equal(uuid.version(sequelizeUtils.toDefaultValue(DataTypes.UUIDV4())), 4);
-    assert.equal(uuid.version(require('aws-sdk').util.uuid.v4()), 4);
 
     const server = http.createServer((req, res) => {
         const chunks = [];
@@ -85,7 +81,7 @@ async function main() {
         assert.equal(messages[0].message.replyTo, 'reply@example.invalid');
         assert.match(messages[0].result.message.toString(), /Content-Type: multipart\/alternative/);
         const legacy = require('../../src/mail/mail');
-        assert.deepEqual(await legacy.SendMail('recipient@example.invalid', '<p>Documento</p>', 'Consentimiento', 'Documento'), { process: true });
+        assert.deepEqual(await legacy.SendMail('recipient@example.invalid', '<p>Documento</p>', 'Consentimiento', 'Documento'), { process: true, errorCode: null });
         assert.equal(messages.length, 2);
         assert.deepEqual(messages[1].result.envelope.to, ['recipient@example.invalid']);
     } finally {
@@ -95,7 +91,7 @@ async function main() {
     // Fail before constructing a client or opening a local upload stream.
     let clientsCreated = 0;
     replaceModule('../../src/config/config', { AWS_REGION: 'us-east-1.attacker.example' });
-    replaceModule('aws-sdk', { S3: class { constructor() { clientsCreated += 1; } } });
+    replaceModule('@aws-sdk/client-s3', { ...require('@aws-sdk/client-s3'), S3Client: class { constructor() { clientsCreated += 1; } } });
     const s3 = require('../../src/config/aws/s3');
     for (const operation of [() => s3.getBuckets(), () => s3.deleteFileToBucket('unused', 'unused'),
         () => s3.uploadToBucket('unused', path.join(__dirname, 'does-not-exist'), 'unused'),

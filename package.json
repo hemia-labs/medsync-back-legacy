@@ -28,9 +28,11 @@
     "heroku"
   ],
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1116.0",
     "@aws-sdk/client-sesv2": "3.1116.0",
+    "@aws-sdk/lib-storage": "3.1116.0",
+    "@aws-sdk/s3-request-presigner": "3.1116.0",
     "@hemia/legal": "0.1.0",
-    "aws-sdk": "2.1693.0",
     "axios": "1.20.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "~1.4.4",
@@ -57,9 +59,6 @@
     "nodemon": "3.1.14"
   },
   "overrides": {
-    "aws-sdk": {
-      "uuid": "$uuid"
-    },
     "sequelize": {
       "uuid": "$uuid"
     }

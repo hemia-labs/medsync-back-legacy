@@ -9,16 +9,25 @@ const dataUrl = 'data:image/png;base64,' + image.toString('base64');
 let sdkCalls = [], sqlCalls = [], events = [], deleteKeys = [], owns = true, uploadFails = false, sqlFails = false, sqlCode = 0, sqlEmpty = false, deleteFails = false, active = 0, peak = 0;
 const config = { AWS_REGION: 'us-east-2', BUCKETS: { PHOTOS: 'qa-photo', PROFILE: 'qa-profile', FIRMAS: 'qa-signature', CONFIGFIRMS: 'qa-config' } };
 stub('../../src/config/config', config);
-stub('aws-sdk', { S3: class {
-    upload(params) {
-        sdkCalls.push(params); events.push('upload'); active++; peak = Math.max(peak, active);
-        return { promise: async () => {
-            try { await new Promise(resolve => setImmediate(resolve)); if (uploadFails) throw new Error('Synthetic S3 failure');
-                return { Location: 'https://synthetic.invalid/' + params.Key, Key: params.Key, key: params.Key }; }
-            finally { active--; }
-        } };
+const sdk = require('@aws-sdk/client-s3');
+stub('@aws-sdk/client-s3', { ...sdk, S3Client: class {
+    async send(command) {
+        assert.ok(command instanceof sdk.DeleteObjectCommand);
+        events.push('delete'); deleteKeys.push(command.input.Key);
+        if (deleteFails) throw new Error('Synthetic delete failure');
+        return {};
     }
-    deleteObject(params) { events.push('delete'); deleteKeys.push(params.Key); return { promise: async () => { if (deleteFails) throw new Error('Synthetic delete failure'); return {}; } }; }
+} });
+stub('@aws-sdk/lib-storage', { Upload: class {
+    constructor({ params }) { this.params = params; }
+    async done() {
+        sdkCalls.push(this.params); events.push('upload'); active++; peak = Math.max(peak, active);
+        try {
+            await new Promise(resolve => setImmediate(resolve));
+            if (uploadFails) throw new Error('Synthetic S3 failure');
+            return { Location: 'https://synthetic.invalid/' + this.params.Key };
+        } finally { active--; }
+    }
 } });
 stub('../../src/db/Sequelize.connection', {
     async transaction() { return { async commit() {}, async rollback() {} }; },

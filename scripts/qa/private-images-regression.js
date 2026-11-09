@@ -131,5 +131,24 @@ dao.get=async()=>({status:200,success:true,data:{logoUrl:rows[0]?.logo_url}});
  assert.equal(url.searchParams.get('X-Amz-Expires'),'300');
  assert.equal(url.searchParams.get('response-cache-control'),'private, no-store');
  assert.match(url.hostname,/s3\.us-east-2\.amazonaws\.com$/);
+ const { Readable } = require('node:stream');
+ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+ const send = S3Client.prototype.send;
+ try {
+  S3Client.prototype.send = async command => {
+   assert.ok(command instanceof GetObjectCommand);
+   assert.deepEqual(command.input, { Bucket: 'qa-private', Key: logo.Key });
+   return { Body: Readable.from([Buffer.from('synthetic'), Buffer.from(' image')]), ContentType: 'image/png' };
+  };
+  const streamed = await adapter.readObject('qa-private', logo.Key);
+  assert.deepEqual(streamed.Body, Buffer.from('synthetic image'));
+  assert.equal(streamed.ContentType, 'image/png');
+  const oversized = Readable.from([Buffer.alloc(require('../../src/util/file/image').maxImageBytes + 1)]);
+  S3Client.prototype.send = async () => ({ Body: oversized });
+  await assert.rejects(adapter.readObject('qa-private', logo.Key), /Imagen privada inválida/);
+  assert.equal(oversized.destroyed, true);
+ } finally {
+  S3Client.prototype.send = send;
+ }
  console.log('PASS private images: tenant isolation, opaque immutable keys, 300s previews, image validation, durable snapshot bytes, replace/delete ordering, rollback and unknown commit recovery. AWS and SQL mocked.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

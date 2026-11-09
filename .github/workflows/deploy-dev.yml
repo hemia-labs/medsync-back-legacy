@@ -1,34 +1,33 @@
-name: Deploy medsync-back-legacy to Contabo dev
+name: Deploy MedSync QA to Hemia VPS DEV
 
 on:
-  pull_request:
-    branches:
-      - develop
   push:
-    branches:
-      - develop
+    branches: [develop]
+  pull_request:
+    branches: [develop]
   workflow_dispatch:
-
-# DEV_* secrets are separate from prod. NODE_ENV=production is intentional.
-env:
-  VPS_HOST: 185.187.235.117
-  NODE_VERSION: 22
-  APP_NAME: medsync-back-legacy
+    inputs:
+      operation:
+        description: QA operation
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
 
 permissions:
   contents: read
 
 concurrency:
-  group: development-deploy
+  group: medsync-qa-registry
   cancel-in-progress: false
 
 jobs:
-  isolated-regressions:
-    runs-on: ubuntu-latest
+  test:
+    if: inputs.operation != 'rollback'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -36,49 +35,74 @@ jobs:
       - run: npm ci
       - run: npm run qa:isolated
 
-  build-and-deploy:
-    needs: isolated-regressions
-    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    environment: dev
-
+  deploy:
+    needs: test
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/develop' &&
+      (needs.test.result == 'success' || inputs.operation == 'rollback') }}
+    environment: qa-registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
-
-      # No hay paso de "build": el proyecto es JavaScript plano (CommonJS).
-      # El artefacto de despliegue es src/ + package.json + package-lock.json
-      # + ecosystem.config.cjs. El archivo de entorno reside en el VPS.
-
-      - name: Validate deployment configuration
+          persist-credentials: false
+      - name: Build, push and report digest
+        id: image
+        if: inputs.operation != 'rollback'
         env:
-          VPS_HOST: ${{ env.VPS_HOST }}
-          VPS_USER: ${{ secrets.DEV_VPS_USER }}
-          VPS_SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
-          VPS_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
-          VPS_APP_DIR: ${{ secrets.DEV_VPS_APP_DIR }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        shell: bash
         run: |
-          node <<'NODE'
-          const requiredKeys = ['VPS_HOST', 'VPS_USER', 'VPS_SSH_KEY', 'VPS_KNOWN_HOSTS', 'VPS_APP_DIR'];
-          const missingKeys = requiredKeys.filter((key) => !process.env[key]);
+          set -euo pipefail
+          : "${REGISTRY_USERNAME:?Missing REGISTRY_USERNAME}" "${REGISTRY_PASSWORD:?Missing REGISTRY_PASSWORD}"
+          registry=registry.hemia.cloud
+          image="$registry/medsync/qa-backend"
+          tag="qa-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DOCKER_CONFIG="$(mktemp -d "$RUNNER_TEMP/medsync-registry.XXXXXX")"
+          trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry" \
+            --username "$REGISTRY_USERNAME" --password-stdin
+          unset REGISTRY_PASSWORD
 
-          if (missingKeys.length > 0) {
-            console.error(`Missing GitHub secrets: ${missingKeys.map(key => 'DEV_' + key).join(', ')}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Transfer and activate with verified OpenSSH
+          metadata="$DOCKER_CONFIG/build-metadata.json"
+          docker buildx build --platform linux/amd64 --provenance=false --push \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "$image:$tag" --metadata-file "$metadata" .
+          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' "$metadata")"
+          printf 'QA image: `%s@%s`\n' "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Deploy or roll back QA on port 3009
         env:
-          VPS_HOST: ${{ env.VPS_HOST }}
-          VPS_USER: ${{ secrets.DEV_VPS_USER }}
-          VPS_SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
-          VPS_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
-          VPS_PORT: ${{ secrets.DEV_VPS_PORT || '22' }}
-          VPS_APP_DIR: ${{ secrets.DEV_VPS_APP_DIR }}
-          RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          APP_PORT: ${{ secrets.DEV_APP_PORT || '3009' }}
-          RELEASE_ENV_SOURCE: server
-        run: bash scripts/ops/upload-release.sh
+          QA_SSH_KEY: ${{ secrets.QA_SSH_KEY }}
+          QA_KNOWN_HOSTS: ${{ secrets.QA_KNOWN_HOSTS }}
+          QA_OPERATION: ${{ inputs.operation || 'deploy' }}
+          QA_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${QA_SSH_KEY:?Missing QA_SSH_KEY}" "${QA_KNOWN_HOSTS:?Missing QA_KNOWN_HOSTS}"
+          umask 077
+          auth_dir="$(mktemp -d "$RUNNER_TEMP/medsync-ssh.XXXXXX")"
+          trap 'rm -rf -- "$auth_dir"' EXIT
+          printf '%s\n' "$QA_SSH_KEY" > "$auth_dir/key"
+          printf '%s\n' "$QA_KNOWN_HOSTS" > "$auth_dir/known_hosts"
+          unset QA_SSH_KEY QA_KNOWN_HOSTS
+          if [[ "$QA_OPERATION" == rollback ]]; then
+            command=rollback
+          else
+            [[ "$QA_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+            command="deploy $QA_DIGEST"
+          fi
+          ssh -n -i "$auth_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$auth_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            root@185.187.235.117 "$command" | tee "$auth_dir/result"
+          image="$(sed -n 's/^QA_RESULT_IMAGE=//p' "$auth_dir/result")"
+          [[ "$image" =~ ^registry\.hemia\.cloud/medsync/qa-backend@sha256:[a-f0-9]{64}$ ]]
+          if [[ "$QA_OPERATION" != rollback ]]; then [[ "$image" == *"@$QA_DIGEST" ]]; fi
+          curl --fail --silent --show-error --retry 4 --retry-delay 2 --max-time 8 \
+            https://api-test.medsync.mx/readyz |
+            jq -e --arg image "$image" '.ready == true and .release == $image'
+          printf 'QA active: `%s` on port 3009.\n' "$image" >> "$GITHUB_STEP_SUMMARY"
