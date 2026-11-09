@@ -1,0 +1,48 @@
+name: Build MedSync production image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: medsync-prod-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    environment: prod
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:isolated
+      - name: Publish image and report its digest
+        env:
+          REGISTRY_USERNAME: ${{ vars.PROD_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.PROD_REGISTRY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_USERNAME:?Missing PROD_REGISTRY_USERNAME}" "${REGISTRY_PASSWORD:?Missing PROD_REGISTRY_PASSWORD}"
+          registry=registry.hemia.cloud
+          image="$registry/medsync/prod-backend"
+          export DOCKER_CONFIG="$(mktemp -d "$RUNNER_TEMP/medsync-prod-registry.XXXXXX")"
+          trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin
+          unset REGISTRY_PASSWORD
+          docker buildx build --platform linux/amd64 --provenance=false --push \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "$image:prod-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --metadata-file "$DOCKER_CONFIG/metadata.json" .
+          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' "$DOCKER_CONFIG/metadata.json")"
+          printf 'Production image: `%s@%s`\n' "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
