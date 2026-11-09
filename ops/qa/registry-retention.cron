@@ -1,0 +1,2 @@
+# Informe semanal de MedSync QA, domingos a las 03:00 (hora del VPS).
+0 3 * * 0 root /usr/bin/python3 /srv/medsync-qa/ci/registry-retention-report.py 2>&1 | /usr/bin/logger -t medsync-qa-registry-retention
