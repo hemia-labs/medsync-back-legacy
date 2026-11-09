@@ -35,10 +35,11 @@ compose() {
         --project-name medsync-prod --file "$(dirname "$0")/compose.yml" "$@"
 }
 pm2() {
-    local binary
-    binary="$(find /home/medsync-deploy/.nvm/versions/node -path '*/v22.*/bin/pm2' -print | sort -V | tail -1)"
-    [[ -x "$binary" && -x "${binary%/*}/node" ]] || return 1
-    runuser -u medsync-deploy -- env PATH="${binary%/*}:/usr/bin:/bin" "$binary" "$@"
+    local node bin
+    node="$(find /home/medsync-deploy/.nvm/versions/node -maxdepth 3 -path '*/v22.*/bin/node' -print | sort -V | tail -1)"
+    bin="${node%/*}"
+    [[ -x "$node" && -x "$bin/pm2" ]] || return 1
+    runuser -u medsync-deploy -- env PATH="$bin:/usr/bin:/bin" "$bin/pm2" "$@"
 }
 ready() {
     local release="${1#pm2:}" url
