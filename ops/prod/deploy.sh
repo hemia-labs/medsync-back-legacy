@@ -90,12 +90,13 @@ else
     [[ "$directory" == "$legacy/releases/"* && -f "$directory/ecosystem.config.cjs" ]] || exit 1
     current="pm2:${directory##*/}"
 fi
-valid_release "$current" && ready "$current" || { echo 'The recorded production release is not healthy.' >&2; exit 1; }
-if is_pm2 "$current"; then pm2 describe medsync-back-legacy >/dev/null; fi
+valid_release "$current" || { echo 'Invalid active release in production history.' >&2; exit 1; }
 
 case "${1:-}" in
     preflight|deploy)
         [[ "$#" == 2 ]] && valid_digest "$2" || { echo 'Expected sha256:<digest>.' >&2; exit 2; }
+        ready "$current" || { echo 'The recorded production release is not healthy.' >&2; exit 1; }
+        if is_pm2 "$current"; then pm2 describe medsync-back-legacy >/dev/null; fi
         candidate="$repository@$2"
         compose "$candidate" config --quiet
         docker image inspect "$candidate" >/dev/null 2>&1 || docker pull "$candidate"
@@ -109,7 +110,7 @@ case "${1:-}" in
     *) echo 'Usage: deploy.sh {preflight|deploy} sha256:<digest> | rollback' >&2; exit 2 ;;
 esac
 if [[ "$candidate" == "$current" ]]; then printf 'PROD_ACTIVE_RELEASE=%s\n' "$current"; exit 0; fi
-if ! is_pm2 "$current"; then docker image inspect "$current" >/dev/null; fi
+if [[ "$1" == deploy ]] && ! is_pm2 "$current"; then docker image inspect "$current" >/dev/null; fi
 printf '%s\n%s\n' "$candidate" "$current" > "$pending"
 
 restore() {
