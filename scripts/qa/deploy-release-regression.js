@@ -11,14 +11,24 @@ const shellPath = value => process.platform === 'win32' ? value.replaceAll('\\',
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'medsync-deploy-'));
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, { mode: 0o700 }); };
 try {
-    for (const phase of ['install-failure', 'start-failure', 'readiness-failure', 'success']) {
+    const phases = ['install-failure', 'start-failure', 'readiness-failure', 'success'];
+    if (process.platform === 'linux') phases.push('server-success', 'server-missing-env', 'server-readable-env');
+    for (const phase of phases) {
+        const serverEnv = phase.startsWith('server-');
+        const success = phase === 'success' || phase === 'server-success';
+        const failsBeforeStart = phase === 'install-failure' || (serverEnv && !success);
         const root = path.join(scratch, phase), candidate = path.join(root, 'releases/100-1'), bin = path.join(root, 'fake-bin');
         write(path.join(root, 'ecosystem.config.cjs'), 'legacy-release');
         write(path.join(root, '.env'), 'SYNTHETIC_PREVIOUS=1');
         write(path.join(root, 'src/tempFolder/kept'), 'persistent-temp');
         write(path.join(root, 'logs/kept'), 'persistent-logs');
         write(path.join(candidate, 'ecosystem.config.cjs'), 'candidate');
-        write(path.join(candidate, '.env'), 'SYNTHETIC_CANDIDATE=1');
+        if (!serverEnv) write(path.join(candidate, '.env'), 'SYNTHETIC_CANDIDATE=1');
+        if (serverEnv && phase !== 'server-missing-env') {
+            const env = path.join(root, 'shared/qa.env');
+            write(env, 'SYNTHETIC_SERVER=1');
+            fs.chmodSync(env, success ? 0o600 : 0o644);
+        }
         write(path.join(candidate, 'src/index.js'), 'candidate');
         write(path.join(root, 'nvm/nvm.sh'), 'nvm() { return 0; }\n');
         write(path.join(bin, 'npm'), '#!/usr/bin/env bash\n[[ "$QA_PHASE" != install-failure ]]\n');
@@ -36,28 +46,32 @@ try {
         const result = spawnSync(bash, ['-c', 'export PATH="$QA_BIN:$PATH"; bash "$QA_SCRIPT"'], {
             encoding: 'utf8', timeout: 20000,
             env: { ...process.env, MSYS: 'winsymlinks:nativestrict', VPS_APP_DIR: shellPath(root), RELEASE_ID: '100-1', APP_PORT: '1',
+                RELEASE_ENV_SOURCE: serverEnv ? 'server' : 'bundle',
                 NVM_DIR: shellPath(path.join(root, 'nvm')), QA_BIN: shellPath(bin), QA_SCRIPT: shellPath(path.resolve(__dirname, '../ops/activate-release.sh')),
                 QA_JUNCTION: shellPath(path.join(root, 'junction.cjs')), QA_PHASE: phase, QA_RECORD: shellPath(path.join(root, 'pm2-record')) }
         });
-        assert.equal(result.status, phase === 'success' ? 0 : 1, result.stdout + result.stderr);
+        assert.equal(result.status, success ? 0 : 1, result.stdout + result.stderr);
         assert.equal(fs.readFileSync(path.join(root, '.env'), 'utf8'), 'SYNTHETIC_PREVIOUS=1');
         assert.equal(fs.readFileSync(path.join(root, 'src/tempFolder/kept'), 'utf8'), 'persistent-temp');
-        if (phase === 'install-failure') {
+        if (failsBeforeStart) {
             assert.equal(fs.existsSync(path.join(root, 'current')), false);
             assert.equal(fs.existsSync(path.join(root, 'pm2-record')), false, 'Installation failure cannot restart the active app');
         } else {
             const commands = fs.readFileSync(path.join(root, 'pm2-record'), 'utf8').trim().split('\n');
             const starts = commands.filter(line => line.endsWith(':start ecosystem.config.cjs --update-env'));
             assert.equal(starts[0], shellPath(candidate) + ':start ecosystem.config.cjs --update-env');
-            assert.equal(starts.length, phase === 'success' ? 1 : 2);
-            if (phase !== 'success') assert.equal(starts[1], shellPath(root) + ':start ecosystem.config.cjs --update-env');
+            assert.equal(starts.length, success ? 1 : 2);
+            if (!success) assert.equal(starts[1], shellPath(root) + ':start ecosystem.config.cjs --update-env');
             for (const start of starts) {
                 const index = commands.indexOf(start);
                 assert.equal(commands[index - 1], start.split(':start ')[0] + ':delete medsync-back-legacy');
             }
             assert.ok(commands.every(line => !line.includes('startOrReload')), 'Never reuse stale PM2 script/cwd');
             assert.ok(fs.existsSync(path.join(root, 'current')), result.stdout + result.stderr);
-            assert.equal(fs.realpathSync(path.join(root, 'current')), fs.realpathSync(phase === 'success' ? candidate : root));
+            assert.equal(fs.realpathSync(path.join(root, 'current')), fs.realpathSync(success ? candidate : root));
+            if (serverEnv) {
+                assert.equal(fs.readlinkSync(path.join(candidate, '.env')), fs.realpathSync(path.join(root, 'shared/qa.env')));
+            }
             assert.equal(fs.readFileSync(path.join(root, 'shared/logs/kept'), 'utf8'), 'persistent-logs');
             assert.equal(fs.readFileSync(path.join(candidate, 'src/tempFolder/kept'), 'utf8'), 'persistent-temp');
         }
