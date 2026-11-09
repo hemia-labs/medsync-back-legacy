@@ -40,7 +40,7 @@ Comprobar que la imagen elegida arranca contra la base recuperada. Verificar cit
 | Artefacto | Política inicial para QA |
 | --- | --- |
 | Imágenes del host | Activa y dos anteriores sanas. El script elimina las que salen del historial solo tras validar la nueva imagen. |
-| Registry privado | Revisar semanalmente las etiquetas de más de 30 días y conservar como mínimo las últimas 10 versiones sanas. Proteger los digests desplegados, el historial de rollback y las versiones fijadas para recuperación. La limpieza del servidor queda a cargo del operador del registry después de verificar esas referencias y el mecanismo de borrado de su instalación. |
+| Registry privado | Conservar como mínimo las últimas 10 versiones sanas, los digests desplegados, el historial de rollback y las versiones fijadas para recuperación. El cron de MedSync QA registra cada domingo a las 03:00 (hora del VPS) las etiquetas de CI de más de 30 días que están fuera del historial del host. Consultar con `journalctl -t medsync-qa-registry-retention`. El informe es de solo lectura. Antes de borrar, hay que acreditar las 10 versiones sanas y aislar el almacenamiento de MedSync QA para que la recolección de capas se limite a este repositorio. |
 | MySQL y adjuntos | Mantener 30 días recuperables fuera del VPS. Conservar el último backup base anterior al inicio de la ventana y los binlogs consecutivos desde ese backup. Ampliar la retención si faltan backups verificados. Conservar los adjuntos y sus versiones durante la misma ventana. Ensayar una restauración cada mes. |
 | Logs | Docker rota stdout y stderr con hasta tres archivos de 10 MB por contenedor. Si la aplicación escribe archivos en el volumen de logs, configurar su rotación en el host. |
 
