@@ -2,8 +2,7 @@ services:
   api:
     image: ${MEDSYNC_QA_IMAGE:?missing image digest}
     env_file:
-      - path: ${MEDSYNC_QA_ENV_FILE:?missing QA environment file}
-        format: raw
+      - ${MEDSYNC_QA_ENV_FILE:?missing QA environment file}
     environment:
       NODE_ENV: production
       APP_RELEASE_ID: ${MEDSYNC_QA_IMAGE}
