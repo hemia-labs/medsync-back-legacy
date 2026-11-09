@@ -9,6 +9,7 @@ const REGISTRATION_PATH = /^\/api\/(?:auth\/register|account\/(?:contact-verific
 // Large bodies are deferred to route middleware, AFTER authentication, CSRF
 // and tenant checks. Public signing has its own rate/token gate before parsing.
 const LARGE_BODY_POLICIES = Object.freeze([
+    { method: 'PUT', path: /^\/api\/business\/current\/logo\/?$/i, bytes: 8 * MB },
     { method: 'POST', path: /^\/api\/file\/px\/upload-file\/?$/i, bytes: 16 * MB },
     { method: 'POST', path: /^\/api\/file\/px\/upload-profile\/?$/i, bytes: 4 * MB },
     { method: 'POST', path: /^\/api\/config\/login-image\/save\/?$/i, bytes: 4 * MB },
@@ -69,7 +70,7 @@ function parse(req, res, next, bytes) {
 function defaultBodyParser(req, res, next) {
     if (policyFor(req)) return next();
     const path = String(req.originalUrl || req.url || '').split('?')[0];
-    if (REGISTRATION_PATH.test(path)) {
+    if (REGISTRATION_PATH.test(path) || /^\/api\/saas-legal\/central\/accept\/?$/i.test(path)) {
         return parse(req, res, next, 8 * 1024);
     }
     return parse(req, res, next, /^\/api\/auth(?:\/|$)/i.test(path) ? AUTH_LIMIT : GENERAL_LIMIT);

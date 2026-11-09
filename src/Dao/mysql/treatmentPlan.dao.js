@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
@@ -163,6 +164,7 @@ class TreatmentPlanDao {
                 WHERE ${eq('dt.id_business', ':business')} AND dt.template_type = 'TREATMENT_PLAN_CONSENT' AND dt.active = 1 AND dt.is_active = 1
                 ORDER BY dt.created_at DESC LIMIT 1`, this.keys(body));
             const legacy = templates.length ? [] : await this.query(`SELECT state, consent FROM signature_consent WHERE ${eq('id_business', ':business')} AND active = 1 ORDER BY created_at DESC LIMIT 1`, this.keys(body));
+            for (const doctor of rows) doctor.signature_image = await privateImages.signedImage(doctor.signature_image, body.id_business);
             return response.success({ doctors: rows, template: templates[0] ? safeDocumentForDisplay(templates[0]) : null, legacyText: legacy[0] || {} }, 'Contexto del consentimiento disponible.');
         } catch (error) { return SequelizeException(error, 'No se pudieron consultar los doctores.'); }
     }

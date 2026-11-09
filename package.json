@@ -4,6 +4,8 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
+    "changeset": "changeset",
+    "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts --offline --no-audit --no-fund",
     "qa:platform-sso": "node --test scripts/qa/platform-sso.test.js",
     "dev": "npm run dev:d2",
     "dev:d2": "node scripts/dev-auth-mode.js d2",
@@ -16,6 +18,8 @@
     "qa:super-admin-dashboard": "node scripts/qa/super-admin-dashboard-regression.js",
     "migration:auth-password-change": "node scripts/migrations/apply-auth-password-change-tokens.js",
     "qa:isolated": "node scripts/qa/run-isolated-regressions.js",
+    "qa:registration-legal": "bash scripts/qa/registration-legal.docker.sh",
+    "qa:registration-http": "bash scripts/qa/registration-http.docker.sh",
     "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js"
   },
   "engines": {
@@ -26,8 +30,11 @@
     "heroku"
   ],
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1116.0",
     "@aws-sdk/client-sesv2": "3.1116.0",
-    "aws-sdk": "2.1693.0",
+    "@aws-sdk/lib-storage": "3.1116.0",
+    "@aws-sdk/s3-request-presigner": "3.1116.0",
+    "@hemia/legal": "0.1.0",
     "axios": "1.20.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "~1.4.4",
@@ -51,12 +58,10 @@
     "uuid": "11.1.1"
   },
   "devDependencies": {
+    "@changesets/cli": "2.31.1",
     "nodemon": "3.1.14"
   },
   "overrides": {
-    "aws-sdk": {
-      "uuid": "$uuid"
-    },
     "sequelize": {
       "uuid": "$uuid"
     }

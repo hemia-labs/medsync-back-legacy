@@ -1,18 +1,57 @@
 'use strict';
 const {QueryTypes}=require('sequelize');
+const {v5:uuid}=require('uuid');
 const {RegistrationError}=require('./errors');
 const {exact}=require('./registrationSecurity');
 const commercial=require('./commercialAdapter');
-const enabled=()=>process.env.REGISTRATION_ACTIVATION_ENABLED==='true';
+const {isBusinessOperational}=require('../../util/businessOperational');
+const {getSaasPlan}=require('../../config/saasPlans');
+// Email verification now activates self-registration, including its trial.
+const enabled=()=>process.env.REGISTRATION_IDENTITY_ENABLED==='true';
+function isActivationConfirmed(row) {
+    const plan=getSaasPlan(row.plan);
+    return row.active===1 && row.status==='active' && isBusinessOperational(row).allowed
+        && (row.subscription_status==='active' ? Boolean(plan) : row.subscription_status==='trial' && plan?.code==='pro')
+        && Boolean(row.activation_completed_at) && Boolean(row.email_verified);
+}
 class AccountActivationService {
     constructor(db,preparation) {
         this.db=db;
         this.preparation=preparation || ((business,login)=>require('../../Dao/mysql/preparation.dao').current(business,login));
     }
     query(sql,replacements,transaction) {return this.db.query(sql,{replacements,transaction,type:/^\s*SELECT/i.test(sql)?QueryTypes.SELECT:QueryTypes.RAW});}
+    async activateVerifiedEmail(idLogin,transaction) {
+        if(!transaction) throw new Error('ACTIVATION_TRANSACTION_REQUIRED');
+        const [account]=await this.query(`SELECT l.id_login,l.id_business
+            FROM login l JOIN business b ON b.id_business=l.id_business
+            JOIN rol r ON r.id_rol=l.id_rol
+            JOIN auth_identity i ON i.id_login=l.id_login AND i.kind='email' AND i.normalized_value=l.email
+            LEFT JOIN registration_account a ON a.id_login=l.id_login AND a.id_business=l.id_business
+            WHERE l.id_login=:login AND l.active=1 AND b.active=1 AND b.status='active'
+                AND r.active=1 AND r.code='admin' AND l.created_by=l.id_login AND b.created_by=l.id_login
+                AND b.subscription_status='pending_activation' AND b.trial_starts_at IS NULL AND b.trial_ends_at IS NULL
+                AND a.activation_completed_at IS NULL
+                AND i.reservation_status='verified' AND i.verified_at IS NOT NULL AND i.expires_at IS NULL
+            LIMIT 1 FOR UPDATE`,{login:idLogin},transaction);
+        if(!account) return false;
+        await this.query(`UPDATE business SET subscription_status='trial',plan='pro',
+            trial_starts_at=NOW(),trial_ends_at=DATE_ADD(NOW(),INTERVAL 15 DAY)
+            WHERE id_business=:business AND subscription_status='pending_activation'`,
+        {business:account.id_business},transaction);
+        await this.query(`INSERT INTO registration_account(id_login,id_business,activation_completed_at)
+            VALUES (:login,:business,NOW(3)) ON DUPLICATE KEY UPDATE
+            activation_completed_at=COALESCE(activation_completed_at,VALUES(activation_completed_at))`,
+        {login:account.id_login,business:account.id_business},transaction);
+        const eventId=uuid('medsync:trial-welcome:'+account.id_business,uuid.URL);
+        await this.query(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at)
+            VALUES(:eventId,:eventId,'registration.trial_welcome',:login,:business,UTC_TIMESTAMP(3))
+            ON DUPLICATE KEY UPDATE event_id=event_id`,
+        {eventId,login:account.id_login,business:account.id_business},transaction);
+        return true;
+    }
     async account(actor,transaction) {
         if(!enabled() || !actor?.id_login || !actor?.id_business) throw new RegistrationError('ACTIVATION_FORBIDDEN',403);
-        const [row]=await this.query(`SELECT a.*,b.subscription_status,b.status,b.active,b.plan,
+        const [row]=await this.query(`SELECT a.*,b.subscription_status,b.status,b.active,b.plan,b.trial_starts_at,b.trial_ends_at,
             EXISTS(SELECT 1 FROM auth_identity i WHERE i.kind='email' AND i.normalized_value=l.email
                 AND i.id_login=l.id_login AND i.reservation_status='verified' AND i.verified_at IS NOT NULL AND i.expires_at IS NULL) email_verified
             FROM registration_account a JOIN login l ON l.id_login=a.id_login AND l.id_business=a.id_business
@@ -22,16 +61,16 @@ class AccountActivationService {
         if(!row) throw new RegistrationError('ACTIVATION_FORBIDDEN',403);
         return row;
     }
-    confirmed(row) {return row.active===1 && row.status==='active' && row.subscription_status==='active'
-        && row.plan==='professional' && Boolean(row.activation_completed_at) && Boolean(row.email_verified);}
+    confirmed(row) {return isActivationConfirmed(row);}
     async status(actor) {
         const row=await this.account(actor);
         const result={accountId:row.id_login,businessId:row.id_business,subscriptionStatus:row.subscription_status,
             contact:{telephoneVerified:false,emailVerified:Boolean(row.email_verified),requiredChannels:['email']},
             commercialState:'unavailable',nextAction:'unavailable',welcomePending:!row.setup_welcome_acknowledged_at,
             activationCompletedAt:row.activation_completed_at,setupWelcomeAcknowledgedAt:row.setup_welcome_acknowledged_at,
-            destination:null,planId:'professional'};
-        if(row.active!==1 || row.status!=='active' || !['pending_activation','active'].includes(row.subscription_status)) {
+            destination:null,planId:getSaasPlan(row.plan)?.code||'professional',trialStartsAt:row.trial_starts_at,trialEndsAt:row.trial_ends_at};
+        if(row.active!==1 || row.status!=='active' || !['pending_activation','trial','active'].includes(row.subscription_status)
+            || (row.subscription_status==='trial' && !isBusinessOperational(row).allowed)) {
             return {...result,nextAction:'restricted',destination:'restricted'};
         }
         if(!row.email_verified) return {...result,nextAction:'verify_contacts'};
@@ -73,4 +112,4 @@ class AccountActivationService {
         } catch(error) {if(!tx.finished)await tx.rollback();throw error;}
     }
 }
-module.exports={AccountActivationService,enabled};
+module.exports={AccountActivationService,enabled,isActivationConfirmed};

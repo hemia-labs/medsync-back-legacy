@@ -41,7 +41,7 @@ module.exports = {
     AWS_REGION : process.env.AWS_REGION || '',
     AWS_ACCESS_KEY : process.env.AWS_ACCESS_KEY_ID || '',
     AWS_SECRET_KEY : process.env.AWS_SECRET_ACCESS_KEY || '',
-    AWS_API_VERSION : process.env.AWS_API_VERSION || '',
+    S3_PRIVATE_BUCKET: process.env.S3_PRIVATE_BUCKET || '',
 
     /**Repositorios ya existentes en el AWS S3 */
     BUCKETS:{

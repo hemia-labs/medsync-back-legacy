@@ -1,5 +1,7 @@
 'use strict';
 
+const { slogan, logoHtml } = require('../emailBrand');
+
 function escapeHtml(value) {
     return String(value === undefined || value === null ? '' : value)
         .replace(/&/g, '&amp;')
@@ -17,6 +19,7 @@ function passwordChangeCodeEmailTemplate({ code, ttlMinutes = 10 } = {}) {
     const subject = 'Codigo para cambiar tu contrasena de MedSync';
     const text = [
         'MedSync',
+        slogan,
         '',
         `Tu codigo para confirmar el cambio de contrasena es: ${code || ''}`,
         `Este codigo vence en ${ttl} minutos y solo se puede usar una vez.`,
@@ -39,7 +42,7 @@ function passwordChangeCodeEmailTemplate({ code, ttlMinutes = 10 } = {}) {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce8e6;border-radius:12px;overflow:hidden;">
             <tr>
               <td style="padding:24px 28px;border-bottom:1px solid #e5efed;">
-                <strong style="font-size:26px;color:#1b6b6f;">MedSync</strong>
+                ${logoHtml}
               </td>
             </tr>
             <tr>

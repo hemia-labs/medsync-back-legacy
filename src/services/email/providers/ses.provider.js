@@ -3,13 +3,14 @@
 require('../../../config/env');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const { validatedAwsRegion } = require('../../../config/aws/region');
-const renderTransactionalEmail = require('../transactionalEmail.renderer');
 const { logEmailError } = require('../emailErrorDiagnostics');
+const { isEmailUrl } = require('../emailUrls');
 const ROUTES = Object.freeze({
     'registration-contact-code': ['EMAIL_REGISTRATION_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
+    'registration-welcome': ['EMAIL_REGISTRATION_WELCOME_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-reset-code': ['EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
-    'password-change-code': [null, 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
-    'password-changed': [null, 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
+    'password-change-code': ['EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
+    'password-changed': ['EMAIL_PASSWORD_CHANGED_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'document-signature': ['EMAIL_DOCUMENT_SIGNATURE_TEMPLATE', 'EMAIL_FROM_NOTIFICATIONS', 'EMAIL_CONFIGURATION_SET_TRANSACTIONAL']
 });
 const EMAIL = /^[^\s@<>";,]+@[^\s@<>";,]+\.[^\s@<>";,]+$/;
@@ -26,16 +27,26 @@ function emailAddress(value) { return typeof value === 'string' && value.length 
 function escapeHtml(value) {
     return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
-function httpsUrl(value) {
-    if (CONTROLS.test(value)) return false;
-    try { const url = new URL(value); return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password; }
-    catch (_) { return false; }
-}
 function templateData(type, input = {}) {
-    if (type === 'password-changed') return {};
     const variables = input || {};
     let data;
-    if (type === 'password-reset-code' || type === 'password-change-code' || type === 'registration-contact-code') {
+    if (type === 'password-changed') {
+        const date = variables.changedAt ? new Date(variables.changedAt) : null;
+        const recovery = variables.changeMethod === 'recovery';
+        const settings = variables.changeMethod === 'settings';
+        data = {
+            accountEmail: variables.accountEmail || '',
+            changedAtLabel: date && Number.isFinite(date.getTime())
+                ? `${new Intl.DateTimeFormat('es-MX', {
+                    timeZone: 'America/Mexico_City', day: '2-digit', month: 'short', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+                }).format(date)} (Ciudad de México)` : '',
+            changeOrigin: recovery ? 'Recuperación de contraseña' : settings ? 'Configuración de tu cuenta' : '',
+            sessionNotice: recovery ? 'Todas las sesiones se cerraron. Inicia sesión con tu nueva contraseña.'
+                : settings ? 'Las demás sesiones se cerraron. Tu sesión actual sigue abierta.' : '',
+            supportUrl: emailAddress(variables.supportEmail) ? `mailto:${encodeURIComponent(variables.supportEmail)}` : ''
+        };
+    } else if (type === 'password-reset-code' || type === 'password-change-code' || type === 'registration-contact-code') {
         if (type === 'registration-contact-code' && !/^[0-9]{6}$/.test(variables.code || '')) {
             throw invalid('El codigo de verificacion debe tener seis digitos.', 'EMAIL_SES_MESSAGE_INVALID');
         }
@@ -43,7 +54,15 @@ function templateData(type, input = {}) {
             throw invalid('El código de verificación debe ser una cadena no vacía.', 'EMAIL_SES_MESSAGE_INVALID');
         }
         const ttl = Number(variables.ttlMinutes);
-        data = { code: variables.code, ttlMinutes: Number.isFinite(ttl) && ttl > 0 ? ttl : 10 };
+        const validTtl = Number.isFinite(ttl) && ttl > 0 ? ttl : 10;
+        data = { code: variables.code, ttlMinutes: type === 'password-change-code' ? Math.min(validTtl, 10) : validTtl };
+    } else if (type === 'registration-welcome') {
+        const {firstName, clinicName, trialDurationLabel, trialEndsAtLabel, loginUrl} = variables;
+        if (![firstName, clinicName, trialDurationLabel, trialEndsAtLabel, loginUrl].every(value => typeof value === 'string' && value.trim() && !CONTROLS.test(value))
+            || !isEmailUrl(loginUrl, { allowLocalApp: true })) {
+            throw invalid('Los datos del correo de bienvenida no son válidos.', 'EMAIL_SES_MESSAGE_INVALID');
+        }
+        data = {firstName, clinicName, trialDurationLabel, trialEndsAtLabel, loginUrl};
     } else {
         const text = (value, fallback = '') => String(value ?? '').trim() || fallback;
         data = {
@@ -55,16 +74,24 @@ function templateData(type, input = {}) {
             expiresAt: text(variables.expiresAt, 'la fecha indicada'),
             publicUrl: text(variables.publicUrl)
         };
-        if (!httpsUrl(data.publicUrl)) throw invalid('El enlace de firma debe ser una URL HTTPS sin credenciales.', 'EMAIL_SES_MESSAGE_INVALID');
-        if (data.clinicLogoUrl && !httpsUrl(data.clinicLogoUrl)) data.clinicLogoUrl = '';
+        if (!isEmailUrl(data.publicUrl, { allowLocalApp: true })) throw invalid('El enlace de firma debe apuntar a una URL válida de MedSync.', 'EMAIL_SES_MESSAGE_INVALID');
+        if (data.clinicLogoUrl && !isEmailUrl(data.clinicLogoUrl)) data.clinicLogoUrl = '';
     }
     return { ...data, html: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, escapeHtml(value)])) };
 }
 function config() {
-    const region = required('AWS_REGION');
-    try { validatedAwsRegion(region); } catch (_) { throw invalid('Revisa la configuración de AWS_REGION.'); }
-    const credentials = { accessKeyId: required('AWS_ACCESS_KEY_ID'), secretAccessKey: required('AWS_SECRET_ACCESS_KEY') };
-    if (process.env.AWS_SESSION_TOKEN) credentials.sessionToken = required('AWS_SESSION_TOKEN');
+    const regionKey = process.env.EMAIL_AWS_REGION !== undefined ? 'EMAIL_AWS_REGION' : 'AWS_REGION';
+    const region = required(regionKey);
+    try { validatedAwsRegion(region); } catch (_) { throw invalid(`Revisa la configuración de ${regionKey}.`); }
+    const hasEmailCredentials = ['EMAIL_AWS_ACCESS_KEY_ID', 'EMAIL_AWS_SECRET_ACCESS_KEY', 'EMAIL_AWS_SESSION_TOKEN']
+        .some(key => process.env[key] !== undefined);
+    const prefix = hasEmailCredentials ? 'EMAIL_AWS_' : 'AWS_';
+    const credentials = {
+        accessKeyId: required(`${prefix}ACCESS_KEY_ID`),
+        secretAccessKey: required(`${prefix}SECRET_ACCESS_KEY`)
+    };
+    const tokenKey = `${prefix}SESSION_TOKEN`;
+    if (process.env[tokenKey]) credentials.sessionToken = required(tokenKey);
     const fromName = required('EMAIL_FROM_NAME');
     if (/[<>"\\]/.test(fromName)) throw invalid('Revisa la configuración de EMAIL_FROM_NAME.');
     const replyTo = required('EMAIL_REPLY_TO');
@@ -72,7 +99,7 @@ function config() {
     const routes = {};
     for (const [type, [templateKey, fromKey, setKey]] of Object.entries(ROUTES)) {
         // Optional new capability must not break existing transactional templates.
-        if (type === 'registration-contact-code' && !process.env[templateKey]) continue;
+        if (['registration-contact-code','registration-welcome'].includes(type) && !process.env[templateKey]) continue;
         const template = templateKey ? required(templateKey) : null;
         const from = required(fromKey), configurationSet = required(setKey);
         if (template && !/^[A-Za-z0-9_-]{1,64}$/.test(template)) throw invalid(`Revisa la configuración de ${templateKey}.`);
@@ -98,24 +125,12 @@ class SesProvider {
     async send({ type, to, variables } = {}) {
         if (typeof type !== 'string' || !Object.hasOwn(ROUTES, type)) throw invalid('Selecciona un tipo de correo transaccional permitido.', 'EMAIL_SES_MESSAGE_INVALID');
         if (!emailAddress(to)) throw invalid('El destinatario del correo no es válido.', 'EMAIL_SES_MESSAGE_INVALID');
-        const data = templateData(type, variables);
+        const data = templateData(type, type === 'password-changed'
+            ? { ...variables, accountEmail: to, supportEmail: required('EMAIL_REPLY_TO') } : variables);
         this.initialize();
         const route = this.config.routes[type];
-        if (!route) throw invalid('La plantilla de verificacion no esta configurada.', 'EMAIL_SES_CONFIG_INVALID');
-        const content = type === 'password-change-code' || type === 'password-changed'
-            ? (() => {
-                const email = renderTransactionalEmail(type, variables);
-                return {
-                    Simple: {
-                        Subject: { Data: email.subject, Charset: 'UTF-8' },
-                        Body: {
-                            Text: { Data: email.text, Charset: 'UTF-8' },
-                            Html: { Data: email.html, Charset: 'UTF-8' }
-                        }
-                    }
-                };
-            })()
-            : { Template: { TemplateName: route.template, TemplateData: JSON.stringify(data) } };
+        if (!route) throw invalid('La plantilla del correo no está configurada.', 'EMAIL_SES_CONFIG_INVALID');
+        const content = { Template: { TemplateName: route.template, TemplateData: JSON.stringify(data) } };
         try {
             const result = await this.client.send(new SendEmailCommand({
                 FromEmailAddress: `${this.config.fromName} <${route.from}>`,

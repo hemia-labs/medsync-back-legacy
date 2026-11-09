@@ -139,6 +139,8 @@ const server = app.listen(app.get('port'), () => {
     console.log("Autenticacion correcta a mysql");
     startSaasTrialLifecycleJob();
     startBusinessPulseJob();
+    require('./services/registration/legalRegistration.service').startLegalEvidenceJob(Sequelize);
+    require('./services/registration/registrationWelcome.service').startRegistrationWelcomeJob(Sequelize);
     require('./services/pulse/runtime').startMetricsLogging();
   }).catch(async () => {
     console.error('[STARTUP_DATABASE_UNAVAILABLE]');

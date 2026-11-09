@@ -111,7 +111,7 @@ async function run() {
         // Route wiring is security-relevant: every deferred private parser must
         // follow Auth, CSRF and tenant gates, and precede handlers/body validators.
         const root = path.resolve(__dirname, '../../src/routes/mysql');
-        const files = ['file.js', 'config.js', 'user.js', 'prescription.js', 'document.js', 'treatment.js', 'px.js'];
+        const files = ['file.js', 'config.js', 'user.js', 'prescription.js', 'document.js', 'treatment.js', 'px.js', 'business.js'];
         let wired = 0;
         for (const file of files) {
             for (const line of fs.readFileSync(path.join(root, file), 'utf8').split('\n')) {
@@ -126,7 +126,7 @@ async function run() {
                 wired++;
             }
         }
-        assert.strictEqual(wired, 13);
+        assert.strictEqual(wired, 14);
         console.log(JSON.stringify({ ok: true, httpChecks: checks, protectedRoutesChecked: wired, dbAccess: false }));
     } finally {
         await new Promise(resolve => server.close(resolve));

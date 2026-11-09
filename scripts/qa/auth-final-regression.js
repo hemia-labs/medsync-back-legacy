@@ -246,7 +246,7 @@ async function resetAuthState(transaction = null) {
     await sequelize.query(
       `DELETE FROM auth_password_reset_tokens
         WHERE id_login IN (:ids)
-           OR phone_normalized IN (:phones)`,
+           OR identifier_normalized IN (:phones)`,
       { replacements: { ids: fixtureIds(), phones: fixturePhones() }, type: QueryTypes.DELETE, transaction }
     );
   }
@@ -284,7 +284,7 @@ async function sessionRows(idLogin) {
 
 async function resetRowsForUser(userId) {
   return sequelize.query(
-    `SELECT id, id_login, phone_normalized, code_hash, code_fingerprint, status,
+    `SELECT id, id_login, identifier_normalized, code_hash, code_fingerprint, status,
             attempts, max_attempts, expires_at, verified_at, used_at, revoked_at,
             locked_at, expired_at
        FROM auth_password_reset_tokens
@@ -295,14 +295,14 @@ async function resetRowsForUser(userId) {
 }
 
 async function insertChallenge(user, options = {}) {
-  const tokenRecord = PasswordResetTokenService.buildCodeRecord(user.phone);
+  const tokenRecord = PasswordResetTokenService.buildCodeRecord(user.email);
   const ttlSql = options.expired
     ? 'DATE_SUB(NOW(), INTERVAL 1 MINUTE)'
     : 'DATE_ADD(NOW(), INTERVAL :ttlMinutes MINUTE)';
 
   await sequelize.query(
     `INSERT INTO auth_password_reset_tokens (
-        id_login, phone_normalized, destination_email_fingerprint, code_hash,
+        id_login, identifier_normalized, destination_email_fingerprint, code_hash,
         code_fingerprint, purpose, status, attempts, max_attempts, issued_at,
         expires_at, requested_ip, requested_user_agent, created_at, updated_at
       ) VALUES (
@@ -313,7 +313,7 @@ async function insertChallenge(user, options = {}) {
     {
       replacements: {
         idLogin: user.id,
-        phone: user.phone,
+        phone: user.email,
         emailFingerprint: PasswordResetTokenService.fingerprintEmail(user.email),
         codeHash: tokenRecord.code_hash,
         codeFingerprint: tokenRecord.code_fingerprint,
@@ -582,7 +582,7 @@ async function status() {
     `SELECT status, COUNT(*) AS total
        FROM auth_password_reset_tokens
       WHERE id_login IN (:ids)
-         OR phone_normalized IN (:phones)
+         OR identifier_normalized IN (:phones)
       GROUP BY status
       ORDER BY status`,
     { replacements: { ids: fixtureIds(), phones: fixturePhones() }, type: QueryTypes.SELECT }
@@ -797,29 +797,29 @@ async function validate() {
   const beforeResetLogin = await login(USERS.userA, oldPassword, true);
   const beforeResetDecoded = decodeAccessToken(beforeResetLogin);
   const beforeResetRefresh = beforeResetLogin && beforeResetLogin.data ? beforeResetLogin.data.refresh_token : null;
-  const knownRecovery = await AuthDao.sendOtpRecoverPassword(USERS.userA.phone, {
+  const knownRecovery = await AuthDao.sendOtpRecoverPassword(USERS.userA.email, {
     ip: '127.0.0.1',
     userAgent: QA_USER_AGENT
   });
   const knownRows = await resetRowsForUser(USERS.userA.id);
-  const unknownRecovery = await AuthDao.sendOtpRecoverPassword('9993999999', {
+  const unknownRecovery = await AuthDao.sendOtpRecoverPassword('missing@example.test', {
     ip: '127.0.0.1',
     userAgent: QA_USER_AGENT
   });
-  await AuthDao.sendOtpRecoverPassword(USERS.userB.phone, {
+  await AuthDao.sendOtpRecoverPassword(USERS.userB.email, {
     ip: '127.0.0.1',
     userAgent: QA_USER_AGENT
   });
   const maxAttempts = SecurityConfig.getPasswordResetMaxAttempts();
   let wrongCodeResponse = null;
   for (let index = 0; index < maxAttempts; index += 1) {
-    wrongCodeResponse = await AuthDao.validateOtp({ telephone: USERS.userB.phone, code: '000000' });
+    wrongCodeResponse = await AuthDao.validateOtp({ email: USERS.userB.email, code: '000000' });
   }
   const userBRows = await resetRowsForUser(USERS.userB.id);
   const controlled = await insertChallenge(USERS.userA, { status: 'pending' });
-  const validCodeResponse = await AuthDao.validateOtp({ telephone: USERS.userA.phone, code: controlled.code });
+  const validCodeResponse = await AuthDao.validateOtp({ email: USERS.userA.email, code: controlled.code });
   const resetResponse = await AuthDao.reseetPassword({
-    phone: USERS.userA.phone,
+    email: USERS.userA.email,
     otp: controlled.code,
     password: newPassword,
     confirmPassword: newPassword
@@ -830,7 +830,7 @@ async function validate() {
   const oldPasswordLogin = await login(USERS.userA, oldPassword, false);
   const newPasswordLogin = await login(USERS.userA, newPassword, false);
   const expired = await insertChallenge(USERS.userB, { expired: true });
-  const expiredResponse = await AuthDao.validateOtp({ telephone: USERS.userB.phone, code: expired.code });
+  const expiredResponse = await AuthDao.validateOtp({ email: USERS.userB.email, code: expired.code });
   const expiredRows = await resetRowsForUser(USERS.userB.id);
   results.forgotPassword = {
     sendOtpKnown: safeResponse(knownRecovery),
@@ -874,9 +874,9 @@ async function validate() {
 async function security() {
   await assertNotProduction();
   const badLoginDao = await login(USERS.userA, '__qa_bad_password__', false);
-  const wrongCodeDao = await AuthDao.validateOtp({ telephone: USERS.userA.phone, code: '000000' });
+  const wrongCodeDao = await AuthDao.validateOtp({ email: USERS.userA.email, code: '000000' });
   const resetNoChallengeDao = await AuthDao.reseetPassword({
-    phone: USERS.userA.phone,
+    email: USERS.userA.email,
     otp: '000000',
     password: 'Password123'
   });
@@ -891,7 +891,7 @@ async function security() {
     payloadType: 'validateOtp',
     rateType: 'validateOtp',
     handler: 'validateOtp',
-    body: { telephone: USERS.userA.phone, code: '000000' },
+    body: { email: USERS.userA.email, code: '000000' },
     url: '/api/auth/validateOtp'
   });
   const resetNoChallengePublic = await runAuthRoute({
@@ -899,7 +899,7 @@ async function security() {
     rateType: 'resetPassword',
     handler: 'ressetPassword',
     method: 'PUT',
-    body: { phone: USERS.userA.phone, otp: '000000', password: 'Password123' },
+    body: { email: USERS.userA.email, otp: '000000', password: 'Password123' },
     url: '/api/auth/resetPassword'
   });
   const sanitized = SecurityLogger.sanitizeMetadata({
@@ -975,10 +975,10 @@ function injectionPayloadCases() {
     { endpoint: 'login', field: 'pwd', category: 'xss_like', body: { param: USERS.userA.phone, pwd: '<script>alert(1)</script>', refresh: false } },
     { endpoint: 'sendOtp', field: 'phone', category: 'object_type', body: { phone: { value: USERS.userA.phone } } },
     { endpoint: 'sendOtp', field: 'phone', category: 'long_string', body: { phone: '9'.repeat(520) } },
-    { endpoint: 'validateOtp', field: 'code', category: 'xss_like', body: { telephone: USERS.userA.phone, code: '<img src=x onerror=alert(1)>' } },
-    { endpoint: 'validateOtp', field: 'code', category: 'malformed_code', body: { telephone: USERS.userA.phone, code: '@@@@' } },
-    { endpoint: 'resetPassword', field: 'password', category: 'confirm_mismatch', body: { phone: USERS.userA.phone, otp: '123456', password: 'Password123', confirmPassword: 'Password124' } },
-    { endpoint: 'resetPassword', field: 'password', category: 'weak_password', body: { phone: USERS.userA.phone, otp: '123456', password: 'weak' } },
+    { endpoint: 'validateOtp', field: 'code', category: 'xss_like', body: { email: USERS.userA.email, code: '<img src=x onerror=alert(1)>' } },
+    { endpoint: 'validateOtp', field: 'code', category: 'malformed_code', body: { email: USERS.userA.email, code: '@@@@' } },
+    { endpoint: 'resetPassword', field: 'password', category: 'confirm_mismatch', body: { email: USERS.userA.email, otp: '123456', password: 'Password123', confirmPassword: 'Password124' } },
+    { endpoint: 'resetPassword', field: 'password', category: 'weak_password', body: { email: USERS.userA.email, otp: '123456', password: 'weak' } },
     { endpoint: 'resetPassword', field: 'phone', category: 'unicode_edge', body: { phone: '９９９３０００００１', otp: '123456', password: 'Password123' } }
   ];
 }
