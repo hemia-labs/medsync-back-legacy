@@ -12,7 +12,7 @@ sudo bash /srv/medsync-prod/ci/deploy.sh deploy sha256:<digest>
 sudo bash /srv/medsync-prod/ci/deploy.sh rollback
 ```
 
-`preflight` comprueba la versión activa, valida Compose y descarga la imagen sin sustituir el proceso activo. El primer `deploy` requiere una ventana de cambio porque PM2 y Docker usan el mismo puerto. Antes de ese corte, coordinar la desactivación del despliegue automático de PM2 desde GitHub para que otro run no vuelva a ocupar el puerto.
+`preflight` comprueba la versión activa, valida Compose y descarga la imagen sin sustituir el proceso activo. El primer `deploy` requiere una ventana de cambio porque PM2 y Docker usan el mismo puerto. El workflow de PM2 solo despliega por ejecución manual. Tras el corte, usar `deploy.sh rollback` para volver a PM2 si corresponde.
 
 Si el despliegue falla, el script intenta restaurar la versión anterior. Conserva el release de PM2 para el primer rollback y después conserva el digest anterior en el VPS. `rollback` puede restaurar esa versión aunque la activa falle en `/readyz`. Antes de guardar un cambio, el script comprueba la salud y el identificador de la versión que arrancó en el puerto local y por el proxy HTTPS. Las migraciones y escrituras de MySQL requieren su propio procedimiento de recuperación.
 
