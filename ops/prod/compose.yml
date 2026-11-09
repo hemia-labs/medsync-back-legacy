@@ -1,0 +1,43 @@
+services:
+  api:
+    image: ${MEDSYNC_PROD_IMAGE:?production image required}
+    env_file: ${MEDSYNC_PROD_ENV_FILE:?production environment required}
+    environment:
+      NODE_ENV: production
+      PORT: '3009'
+      APP_RELEASE_ID: ${MEDSYNC_PROD_IMAGE}
+    network_mode: host
+    user: '1001:1001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /srv/medsync/backend/shared/tempFolder:/app/src/tempFolder
+      - /srv/medsync/backend/shared/logs:/app/logs
+      - type: bind
+        source: /srv/medsync-prod/security
+        target: /app/config/security
+        read_only: true
+        bind:
+          create_host_path: false
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          fetch('http://127.0.0.1:3009/readyz', {signal: AbortSignal.timeout(3500)})
+            .then(async response => {
+              const body = await response.json();
+              if (!response.ok || !body.ready || body.release !== process.env.APP_RELEASE_ID) process.exit(1);
+            })
+            .catch(() => process.exit(1));
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 10s
+    logging:
+      options:
+        max-size: '10m'
+        max-file: '3'
