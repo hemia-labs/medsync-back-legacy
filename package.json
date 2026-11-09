@@ -4,6 +4,8 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
+    "changeset": "changeset",
+    "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts --offline --no-audit --no-fund",
     "qa:platform-sso": "node --test scripts/qa/platform-sso.test.js",
     "dev": "npm run dev:d2",
     "dev:d2": "node scripts/dev-auth-mode.js d2",
@@ -56,6 +58,7 @@
     "uuid": "11.1.1"
   },
   "devDependencies": {
+    "@changesets/cli": "2.31.1",
     "nodemon": "3.1.14"
   },
   "overrides": {
