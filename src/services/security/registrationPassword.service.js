@@ -30,7 +30,7 @@ const derive = (password, salt) => limited(() => new Promise((resolve, reject) =
 function normalizePassword(password) {
     if (typeof password !== 'string' || !password.isWellFormed()) throw new RegistrationError('PASSWORD_INVALID');
     const value = password.normalize('NFC');
-    if ([...value].length < 15 || [...value].length > 128 || Buffer.byteLength(value,'utf8') > 512) throw new RegistrationError('PASSWORD_INVALID');
+    if ([...value].length < 8 || [...value].length > 128 || Buffer.byteLength(value,'utf8') > 512) throw new RegistrationError('PASSWORD_INVALID');
     return value;
 }
 

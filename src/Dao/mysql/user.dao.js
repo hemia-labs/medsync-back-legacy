@@ -1,4 +1,6 @@
+const { userNames } = require('../../util/userNames');
 const { beginLicenseMutation } = require('../../util/licenseMutation');
+const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { seedTracingPermissions } = require('../../util/tracingPermissions');
 const { seedDashboardPermissions } = require('../../util/dashboardAccess');
@@ -41,6 +43,17 @@ function pickValue(value, fallback) {
     return value === undefined || value === null ? fallback : value;
 }
 
+async function addUserNames(rows, business, superAdmin) {
+    const ids = rows.map(row => row.id_login).filter(Boolean);
+    if (!ids.length) return rows;
+    const names = await sequelize.query(
+        'SELECT id_login,first_name,last_name FROM login WHERE id_login IN (:ids) AND (:superAdmin=1 OR id_business=:business)',
+        { replacements: { ids, superAdmin: superAdmin ? 1 : 0, business: business || null }, type: QueryTypes.SELECT }
+    );
+    const byId = new Map(names.map(row => [row.id_login, row]));
+    return rows.map(row => ({ ...row, first_name: byId.get(row.id_login)?.first_name || row.name || '', last_name: byId.get(row.id_login)?.last_name || '' }));
+}
+
 /**
  * Clase principal
  */
@@ -54,6 +67,8 @@ class UserDao{
     let transaction = null;
     let response;        
     try {
+        const names = userNames(body);
+        if (!names) return responseData.bad_request('Escribe nombre y apellidos válidos, hasta 200 caracteres en total.');
         const existingUser = await sequelize.query(
             'SELECT id_login FROM login WHERE (telephone = :_telephone OR email = :_email) AND active = 1 LIMIT 1',
             {
@@ -102,6 +117,8 @@ class UserDao{
                 id_login,
                 id_rol,
                 name,
+                first_name,
+                last_name,
                 email,
                 telephone,
                 password,
@@ -116,6 +133,8 @@ class UserDao{
                 :_id_login,
                 :_id_rol,
                 :_name,
+                :_first_name,
+                :_last_name,
                 :_email,
                 :_telephone,
                 :_password,
@@ -131,7 +150,9 @@ class UserDao{
                 replacements: {
                     _id_login: idLogin,
                     _id_rol: body.id_rol,
-                    _name: body.name,
+                    _name: names.name,
+                    _first_name: names.first_name,
+                    _last_name: names.last_name,
                     _email: body.email,
                     _telephone: body.phone,
                     _password: pwd,
@@ -150,6 +171,8 @@ class UserDao{
                 l.id_login,
                 l.id_rol,
                 l.name,
+                l.first_name,
+                l.last_name,
                 l.email,
                 l.telephone AS phone,
                 l.active
@@ -197,6 +220,8 @@ async updateUser(body,id_login) {
             return responseData.bad_request('Usuario invalido para este negocio.');
         }
 
+        const names = userNames(body, currentState);
+        if (!names) return responseData.bad_request('Escribe nombre y apellidos válidos, hasta 200 caracteres en total.');
         const nextRoleId = pickValue(body.id_rol, currentState.id_rol);
         const nextRole = nextRoleId === currentState.id_rol
             ? { id_rol: currentState.id_rol, code: currentState.roleCode }
@@ -235,14 +260,16 @@ async updateUser(body,id_login) {
             return licenseValidation;
         }
 
-        let result = await sequelize.query(`UPDATE login SET id_rol = :_id_rol, name = :_name, email = :_email,
+        let result = await sequelize.query(`UPDATE login SET id_rol = :_id_rol, name = :_name, first_name = :_first_name, last_name = :_last_name, email = :_email,
             telephone = :_telephone, active = :_active, updated_at = NOW(), updated_by = :_actor
             WHERE id_login = :_id_login AND id_business = :_id_business`, {
             replacements: {
                 _actor: body.id_login,
                 _id_login : id_login,
                 _id_rol : nextRoleId,
-                _name : pickValue(body.name, currentState.name),
+                _name : names.name,
+                _first_name: names.first_name,
+                _last_name: names.last_name,
                 _email : pickValue(body.email, currentState.email),
                 _telephone : pickValue(body.phone || body.telephone, currentState.telephone),
                 _active : nextActive ? 1 : 0,
@@ -256,7 +283,7 @@ async updateUser(body,id_login) {
         if (!result || !Number(result[1])) return responseData.notSuccess('Usuario no disponible.');
         await seedDashboardPermissions(targetBusiness, id_login, transaction);
         await seedTracingPermissions(targetBusiness, id_login, transaction);
-        const rows = await sequelize.query('SELECT id_login, id_rol, name, email, telephone, id_business FROM login WHERE id_login = :login AND id_business = :business', {
+        const rows = await sequelize.query('SELECT id_login, id_rol, name, first_name, last_name, email, telephone, id_business FROM login WHERE id_login = :login AND id_business = :business', {
             replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
         });
         response = responseData.success(rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
@@ -289,7 +316,7 @@ async list(id_business, is_super_admin = false) {
 
         if(result){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result, Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
+            response =  !SQLValid.hasError ? responseData.success(await addUserNames(result, id_business, is_super_admin), Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
         else{/* regresamos una excepción controlada al no obtener una respuesta */
             response = responseData.notSuccess(Messages.DATA_SAVE_ERROR)    
@@ -318,9 +345,9 @@ async getbyId(id, id_business, is_super_admin = false) {
             plain: true
         });
 
-        if(result){/*Validamos si existe un registro de salida */
+        if(result && result[0]){/*Validamos si existe un registro de salida */
             let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
+            response =  !SQLValid.hasError ? responseData.success((await addUserNames([result[0]], id_business, is_super_admin))[0], Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(Messages.DATA_GET_ERROR);
         }
         else{/* regresamos una excepción controlada al no obtener una respuesta */
             response = responseData.notSuccess(Messages.DATA_SAVE_ERROR)    
@@ -369,7 +396,7 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null, transaction
 }
 
 async saveProfessionalProfile(body) {
-    let transaction = null;
+    let transaction = null, uploaded, previousSignature, committed = false, commitAttempted = false;
     try {
         const targetLogin = body.target_id_login || body.id_user || body.id_login;
         if (!targetLogin || !body.id_business) {
@@ -458,6 +485,17 @@ async saveProfessionalProfile(body) {
             }
         }
 
+        previousSignature = currentFlags.signature_image;
+        let signature = profileField('signature_image');
+        if (signature !== (previousSignature || null)) {
+            if (signature && !String(signature).startsWith('data:image/')) return responseData.bad_request('Captura una firma nueva o conserva la firma actual.');
+            if (signature) {
+                const validation = require('../../services/documentSignature/signatureImage.service').validateSignatureImage(signature);
+                if (validation.error) return validation.error;
+                uploaded = await privateImages.upload(validation.image, body.id_business, targetLogin);
+                signature = uploaded.Key;
+            }
+        }
         const replacements = {
             _id_doctor_professional_profile: existing[0] ? existing[0].id_doctor_professional_profile : uuidv4(),
             _id_business: body.id_business,
@@ -468,7 +506,7 @@ async saveProfessionalProfile(body) {
             _specialty: profileField('specialty'),
             _specialty_license: profileField('specialty_license'),
             _professional_phone: hasProfessionalPhone ? professionalPhone.value || null : currentFlags.professional_phone || null,
-            _signature_image: profileField('signature_image'),
+            _signature_image: signature,
             _can_issue_prescriptions: preserveAdminControlledFlags ? (currentFlags.can_issue_prescriptions || 0) : (body.can_issue_prescriptions === false ? 0 : 1),
             _can_sign_documents: preserveAdminControlledFlags ? (currentFlags.can_sign_documents || 0) : (body.can_sign_documents === true ? 1 : 0),
             _is_active: preserveAdminControlledFlags ? (existing[0] ? (currentProfileActive ? 1 : 0) : 1) : (nextProfileActive ? 1 : 0),
@@ -515,13 +553,19 @@ async saveProfessionalProfile(body) {
         await seedTracingPermissions(body.id_business, targetLogin, transaction);
         const result = await this.getProfessionalProfile(targetLogin, body.id_business, body.id_login, transaction);
         if (result.status !== 200) return result;
+        commitAttempted = true;
         await transaction.commit();
-        transaction = null;
+        transaction = null; committed = true;
+        if (previousSignature !== signature) await privateImages.remove(previousSignature, body.id_business);
         return result;
     } catch (error) {
         return SequelizeException(error, Messages.DATA_SAVE_ERROR);
     } finally {
         if (transaction && !transaction.finished) await transaction.rollback();
+        if (uploaded && !committed) {
+            if (commitAttempted) await privateImages.pending(uploaded);
+            else await privateImages.remove(uploaded.Key, body.id_business);
+        }
     }
 }
 

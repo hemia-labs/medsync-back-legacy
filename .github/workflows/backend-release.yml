@@ -1,0 +1,56 @@
+name: MedSync backend releases
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  stable:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    concurrency: medsync-backend-stable
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Publish stable release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-backend.sh
+      - name: Check whether this run can update the version PR
+        if: hashFiles('.changeset/*.md', '!.changeset/README.md') != ''
+        id: head
+        run: |
+          if [[ "$GITHUB_SHA" == "$(git rev-parse origin/main)" ]]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.head.outputs.current == 'true'
+        run: npm ci --ignore-scripts
+      - name: Create a hemia-ci installation token
+        if: steps.head.outputs.current == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Prepare the stable version PR
+        if: steps.head.outputs.current == 'true'
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          commitMode: github-api
+          version: npm run version-packages
+          title: "Release: versionar backend"
+          commit: "Release: versionar backend"

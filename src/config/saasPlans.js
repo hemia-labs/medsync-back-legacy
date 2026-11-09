@@ -115,7 +115,9 @@ const SAAS_PLANS = {
 const SAAS_PLAN_CODES = Object.freeze(Object.keys(SAAS_PLANS));
 
 function normalizePlanCode(planCode) {
-    return String(planCode || '').trim().toLowerCase();
+    const code = String(planCode || '').trim().toLowerCase();
+    // Compatibility for trials created before the canonical local code was corrected.
+    return code === 'professional' ? 'pro' : code;
 }
 
 function clonePlan(plan) {

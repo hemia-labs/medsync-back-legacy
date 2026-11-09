@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const { snapshotPatient, withPatientIdentity } = require('../../domain/prescriptions/patientIdentity');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
@@ -788,6 +789,7 @@ class PrescriptionDao {
                 }
             );
 
+            for (const doctor of result) doctor.signature_image = await privateImages.signedImage(doctor.signature_image, id_business);
             return responseData.success(result, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
@@ -1060,6 +1062,7 @@ class PrescriptionDao {
             }
         );
 
+        if (result[0]) result[0].signature_image = await privateImages.inlineImage(result[0].signature_image, idBusiness);
         return result[0] || null;
     }
 

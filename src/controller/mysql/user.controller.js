@@ -1,3 +1,4 @@
+const privateImages = require('../../services/aws/privateImages');
 const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
@@ -101,6 +102,13 @@ class UserController extends httpResponseHelper{
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
+        if (response?.status === 200 && response.data) {
+            try {
+                response.data.signature_url = await privateImages.signedImage(response.data.signature_image, getBusinessIdFromToken(req.tokenDecode));
+                response.data.signature_digest = privateImages.digest(response.data.signature_image);
+            } catch (_) { response = { status: 500, success: false, message: 'No se pudo consultar la imagen privada.' }; }
+        }
+        res.set('Cache-Control', 'no-store');
         res.status(response.status).send(response);
     }
 
@@ -113,6 +121,13 @@ class UserController extends httpResponseHelper{
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }
+        if (response?.status === 200 && response.data) {
+            try {
+                response.data.signature_url = await privateImages.signedImage(response.data.signature_image, getBusinessIdFromToken(req.tokenDecode));
+                response.data.signature_digest = privateImages.digest(response.data.signature_image);
+            } catch (_) { response = { status: 500, success: false, message: 'No se pudo consultar la imagen privada.' }; }
+        }
+        res.set('Cache-Control', 'no-store');
         res.status(response.status).send(response);
     }
 

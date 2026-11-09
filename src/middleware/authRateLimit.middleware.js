@@ -171,6 +171,7 @@ function sendLimited(res, retryAfterSeconds) {
         status: 429,
         success: false,
         code: 'AUTH_RATE_LIMITED',
+        retryAfterSeconds: Number(retryAfterSeconds) || 0,
         data: null,
         message: RATE_LIMIT_ERROR
     });
@@ -192,8 +193,8 @@ function authRateLimit(type) {
 
         const endpoint = config.endpoint;
         const ip = getClientIp(req);
-        let identity = req.authIdentity && (req.authIdentity.phone || req.authIdentity.loginId)
-            ? (req.authIdentity.phone || req.authIdentity.loginId)
+        let identity = req.authIdentity && (req.authIdentity.email || req.authIdentity.phone || req.authIdentity.loginId)
+            ? (req.authIdentity.email || req.authIdentity.phone || req.authIdentity.loginId)
             : null;
         // S24 resolves local/+52 variants to one account. Share only the quota
         // key; keep request bodies and existing recovery-code hashes unchanged.

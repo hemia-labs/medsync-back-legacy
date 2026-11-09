@@ -24,7 +24,7 @@ async function activePrincipal(claims) {
     if (current.subscription_status === 'pending_activation') {
         const reservations = await sequelize.query(`SELECT i.id_login FROM auth_identity i
             INNER JOIN login l ON l.id_login=i.id_login
-            WHERE l.id_login=:login AND i.kind='phone' AND i.normalized_value=s24_phone(l.telephone)
+            WHERE l.id_login=:login AND i.kind='email' AND i.normalized_value=s24_email(l.email)
               AND ((i.reservation_status IN ('legacy','verified','reserved') AND i.expires_at IS NULL)
                 OR (i.reservation_status='pending' AND i.expires_at>NOW(3))) LIMIT 1`, {
             replacements: { login: current.id_login }, type: QueryTypes.SELECT

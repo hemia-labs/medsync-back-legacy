@@ -32,8 +32,9 @@ class BusinessProvisioning {
         return { themeCreated: themes.length > 0 };
     }
     async administrator(values, transaction) {
-        await this.query(`INSERT INTO login (id_login,id_business,id_rol,name,email,telephone,password,locked,active,created_at,created_by)
-            VALUES (:_id_login,:_id_business,:_id_rol,:_name,:_email,:_telephone,:_password,0,1,NOW(),:_created_by)`, values, transaction);
+        const names = { _first_name: values._first_name === undefined ? values._name : values._first_name, _last_name: values._last_name || '' };
+        await this.query(`INSERT INTO login (id_login,id_business,id_rol,name,first_name,last_name,email,telephone,password,locked,active,created_at,created_by)
+            VALUES (:_id_login,:_id_business,:_id_rol,:_name,:_first_name,:_last_name,:_email,:_telephone,:_password,0,1,NOW(),:_created_by)`, {...values,...names}, transaction);
         await seedDashboardPermissions(values._id_business, values._id_login, transaction, this.db);
         await seedTracingPermissions(values._id_business, values._id_login, transaction, this.db);
     }

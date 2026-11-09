@@ -9,6 +9,8 @@ Auth.init({
         primaryKey: true,
         type: DataTypes.STRING
     },
+    first_name: { type: DataTypes.STRING(500), allowNull: false, defaultValue: '' },
+    last_name: { type: DataTypes.STRING(500), allowNull: false, defaultValue: '' },
     email: {
         type: DataTypes.STRING,
         allowNull: false

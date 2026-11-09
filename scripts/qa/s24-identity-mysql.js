@@ -134,10 +134,10 @@ async function run() {
             const claims={id_login:'pending-new',id_business:'pending',id_session:'session-new'};
             assert.equal((await activePrincipal(claims)).subscription_status,'pending_activation');
             assert.equal(await activePrincipal({...claims,id_business:'another'}),null);
-            assert.equal(await activePrincipal({id_login:'pending-old',id_business:'pending',id_session:'session-old'}),null);
-            await db.query("UPDATE auth_identity SET expires_at=DATE_SUB(NOW(3),INTERVAL 1 SECOND) WHERE id_login='pending-new' AND kind='phone'");
+            assert.ok(await activePrincipal({id_login:'pending-old',id_business:'pending',id_session:'session-old'}), 'An unrelated reclaimed phone no longer invalidates the owned email');
+            await db.query("UPDATE auth_identity SET expires_at=DATE_SUB(NOW(3),INTERVAL 1 SECOND) WHERE id_login='pending-new' AND kind='email'");
             assert.equal(await activePrincipal(claims),null);
-            await db.query("UPDATE auth_identity SET reservation_status='verified',expires_at=NULL,verified_at=NOW(3) WHERE id_login='pending-new' AND kind='phone'");
+            await db.query("UPDATE auth_identity SET reservation_status='verified',expires_at=NULL,verified_at=NOW(3) WHERE id_login='pending-new' AND kind='email'");
             assert.ok(await activePrincipal(claims));
             await db.query("UPDATE session SET active=0 WHERE id_session='session-new'");
             assert.equal(await activePrincipal(claims),null);

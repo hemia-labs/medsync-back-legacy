@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
@@ -37,7 +34,7 @@ jobs:
 
   build-and-deploy:
     needs: isolated-regressions
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prod
 
@@ -49,7 +46,7 @@ jobs:
 
       # No hay paso de "build": el proyecto es JavaScript plano (CommonJS).
       # El artefacto de despliegue es src/ + package.json + package-lock.json
-      # + ecosystem.config.cjs + .env. Las dependencias se instalan en el VPS.
+      # + ecosystem.config.cjs. El VPS aporta el entorno e instala las dependencias.
 
       - name: Validate deployment configuration
         env:
@@ -69,54 +66,6 @@ jobs:
           }
           NODE
 
-      - name: Create production environment file
-        env:
-          # Guarda el .env de PRODUCCIÓN completo en un único secret (ENV_FILE).
-          # Debe ser una versión "production" del .env.local:
-          #   - NODE_ENV=production (y APP_ENV/ENVIRONMENT=production)
-          #   - REQUIRE_ACTIVE_SESSION=true
-          #   - JWT_SECRET / REFRESH_TOKEN_SECRET / PASSWORD_RESET_CODE_SECRET
-          #     / SIGNATURE_LINK_TOKEN_SECRET / CSRF_TOKEN_SECRET FUERTES (>=32 chars)
-          #   - CORS_ALLOWED_ORIGINS / CORS_ORIGIN con orígenes HTTPS explícitos
-          #     (sin http://localhost, sin wildcard) o validateStartupConfig aborta
-          #   - AUTH_COOKIE_SECURE=true y nombres de cookie de producción
-          ENV_FILE: ${{ secrets.ENV_FILE }}
-        run: |
-          if [ -z "$ENV_FILE" ]; then
-            echo "Missing GitHub secret: ENV_FILE"
-            exit 1
-          fi
-
-          printf '%s\n' "$ENV_FILE" > .env
-          chmod 600 .env
-
-          # Validación mínima: claves que validateStartupConfig exige en producción.
-          node <<'NODE'
-          const fs = require('node:fs');
-          const content = fs.readFileSync('.env', 'utf8');
-          const has = (k) => new RegExp(`^${k}=.+`, 'm').test(content);
-
-          const required = [
-            'NODE_ENV',
-            'PORT',
-            'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
-            'JWT_SECRET',
-            'REFRESH_TOKEN_SECRET',
-            'PASSWORD_RESET_CODE_SECRET',
-            'CORS_ALLOWED_ORIGINS',
-          ];
-          const missing = required.filter((k) => !has(k));
-          if (missing.length > 0) {
-            console.error(`ENV_FILE is missing required keys: ${missing.join(', ')}`);
-            process.exit(1);
-          }
-
-          if (!/^NODE_ENV=production\s*$/m.test(content)) {
-            console.error('ENV_FILE must set NODE_ENV=production');
-            process.exit(1);
-          }
-          NODE
-
       - name: Transfer and activate with verified OpenSSH
         env:
           VPS_HOST: ${{ env.VPS_HOST }}
@@ -127,4 +76,5 @@ jobs:
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
           RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           APP_PORT: ${{ secrets.APP_PORT || '3009' }}
+          RELEASE_ENV_SOURCE: production
         run: bash scripts/ops/upload-release.sh
