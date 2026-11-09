@@ -7,6 +7,6 @@ Agrega un Changeset con `npm run changeset` a los PR que deban aparecer en las n
 
 Mantén `CHANGELOG.md` generado por Changesets. La release estable usa el commit de `main` que introdujo esa versión en `package.json` y toma las notas del mismo commit. Los tags y releases existentes se conservan.
 
-Para el PR automático, habilita **Allow GitHub Actions to create and approve pull requests** en la configuración de Actions del repositorio, o configura `CHANGESETS_TOKEN` con permisos de escritura en Contents y Pull requests. Con el token predeterminado, GitHub puede pedir que se apruebe la ejecución del CI del PR automático.
+La GitHub App `hemia-ci` crea o actualiza `changeset-release/main` y abre el PR de versión hacia `main`. La instalación de la app debe incluir este repositorio. El workflow usa `RELEASE_APP_CLIENT_ID` y `RELEASE_APP_PRIVATE_KEY` de la organización para generar un token temporal limitado a este repositorio, con permisos de escritura en Contents y Pull requests.
 
 GitHub Releases contiene las notas y los archivos fuente que GitHub genera. El flujo de versiones no adjunta imágenes, no publica en npm y no controla los despliegues de QA o producción.
