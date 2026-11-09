@@ -14,6 +14,12 @@ services:
     volumes:
       - /srv/medsync/backend/shared/tempFolder:/app/src/tempFolder
       - /srv/medsync/backend/shared/logs:/app/logs
+      - type: bind
+        source: /srv/medsync/backend/shared/security
+        target: /app/config/security
+        read_only: true
+        bind:
+          create_host_path: false
     restart: unless-stopped
     init: true
     healthcheck:
