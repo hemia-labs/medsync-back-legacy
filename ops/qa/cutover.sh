@@ -5,8 +5,8 @@ image="$1"
 baseline='registry.hemia.cloud/medsync/qa-backend@sha256:eb4d37be8930c1719e73c2ad1f394229e4d4df331cdcb65043b0cf32a33f95a8'
 legacy="$(realpath /srv/medsync/backend/current)"
 name=medsync-back-legacy
-pm2_bin="$(find /home/medsync-deploy/.nvm/versions/node -path '*/bin/pm2' -print | sort -V | tail -1)"
-[[ -x "$pm2_bin" && "$legacy" == /srv/medsync/backend/releases/* && -r "$legacy/ecosystem.config.cjs" ]]
+pm2_bin="$(find /home/medsync-deploy/.nvm/versions/node -mindepth 3 -maxdepth 3 -path '*/v22.*/bin/pm2' -print | sort -V | tail -1)"
+[[ -x "$pm2_bin" && -x "${pm2_bin%/*}/node" && "$legacy" == /srv/medsync/backend/releases/* && -r "$legacy/ecosystem.config.cjs" ]]
 
 pm2_qa() {
     runuser -u medsync-deploy -- env PATH="$(dirname "$pm2_bin"):/usr/bin:/bin" \
