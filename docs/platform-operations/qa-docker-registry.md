@@ -12,6 +12,8 @@ Docker escucha en el puerto `3009` usando la red del host para conservar el acce
 
 Para revertir desde GitHub Actions, seleccionar `develop` y la operación `rollback` en el workflow. El host conserva los tres digests sanos más recientes y verifica la imagen restaurada por el puerto local y por HTTPS. Si un proceso termina abruptamente y deja el directorio vacío `deploy.lock`, comprobar primero que no hay un despliegue en curso. Aplicar migraciones compatibles con ambas imágenes para conservar las escrituras entre versiones. Si una migración impide ejecutar la imagen anterior, seguir el procedimiento MySQL.
 
+Antes de instalar el archivo Compose, provisionar `/srv/medsync/backend/shared/security` como directorio de root legible por el contenedor y copiar allí `config/security/registration-password-blocklist.json`. Compose monta el directorio en `/app/config/security` en solo lectura. En `qa.env`, configurar `REGISTRATION_PASSWORD_BLOCKLIST_PATH=/app/config/security/registration-password-blocklist.json` y `REGISTRATION_PASSWORD_BLOCKLIST_SHA256` con el SHA-256 del archivo instalado. Actualizar el archivo y su checksum juntos al cambiar la versión de la lista.
+
 ## Recuperar MySQL
 
 1. Usar archivos MySQL `[client]` distintos para origen y destino, con permisos 0600. Usar un esquema dedicado, tablas InnoDB, binlogs activos y un usuario con los permisos de lectura, rutinas y coordenadas que exige `mysqldump --source-data=2`. Evitar DDL durante el backup. Programar el backup diario y generar otro antes de migraciones de riesgo. Guardar el digest y la versión de esquema junto al ID del backup.
