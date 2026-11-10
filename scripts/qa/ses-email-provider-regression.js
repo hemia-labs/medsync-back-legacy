@@ -22,7 +22,7 @@ const base = {
     SMTP_HOST:'relay.qa.invalid',SMTP_PORT:'2525',SMTP_SECURE:'false',SMTP_USER:'synthetic-smtp-user',SMTP_PASSWORD:'synthetic-smtp-password',EMAIL_FROM:'legacy@example.test'
 };
 const envKeys=[...Object.keys(base),'AWS_SESSION_TOKEN','SMTP_PASS','PUBLIC_APP_URL','EMAIL_REGISTRATION_CODE_TEMPLATE','EMAIL_REGISTRATION_WELCOME_TEMPLATE',
-    'EMAIL_AWS_REGION','EMAIL_AWS_ACCESS_KEY_ID','EMAIL_AWS_SECRET_ACCESS_KEY','EMAIL_AWS_SESSION_TOKEN'];
+    'EMAIL_AWS_REGION','EMAIL_AWS_ACCESS_KEY_ID','EMAIL_AWS_SECRET_ACCESS_KEY','EMAIL_AWS_SESSION_TOKEN','EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS'];
 const originalEnv=new Map(envKeys.map(key=>[key,process.env[key]]));
 const originalLoad=Module._load;
 const originalConsole={log:console.log,warn:console.warn,error:console.error};
@@ -131,12 +131,20 @@ async function credentials(config) {return typeof config.credentials==='function
         assertTemplateOnly(input());assert.deepEqual(input().Destination.ToAddresses,['patient@example.test']);
         assert.match(input().FromEmailAddress,/auth@example\.test/);assert.ok(input().FromEmailAddress.includes('MedSync QA'));assert.doesNotMatch(input().FromEmailAddress,/attacker/);
         assert.deepEqual(input().ReplyToAddresses,['support@example.test']);assert.equal(input().ConfigurationSetName,'qa-auth-set');assert.equal(input().Content.Template.TemplateName,'Exact-Reset-Template-QA');
+        assert.equal(input().FeedbackForwardingEmailAddress,undefined);
         assert.deepEqual(data(),{code:'004200',ttlMinutes:15,html:{code:'004200',ttlMinutes:'15'}});
         for(const invalidTtl of [0,-1,'bad',null,Infinity]) {
             assert.equal((await service.sendTransactionalEmail({type:'password-reset-code',to:'patient@example.test',variables:{code:'123456',ttlMinutes:invalidTtl}})).success,true);
             assert.deepEqual(data(),{code:'123456',ttlMinutes:10,html:{code:'123456',ttlMinutes:'10'}});
         }
         assertNoSecretLogs();
+    });
+    await check('SES sends feedback to the configured mailbox independently of Reply-To',async()=>{
+        const service=configure({EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS:' feedback@example.test '});
+        const result=await service.sendTransactionalEmail({type:'password-reset-code',to:'patient@example.test',variables:{code:'004200'}});
+        assert.equal(result.success,true);
+        assert.equal(input().FeedbackForwardingEmailAddress,'feedback@example.test');
+        assert.deepEqual(input().ReplyToAddresses,['support@example.test']);
     });
     await check('password change code uses only the configured SES template with leading zeroes and capped TTL',async()=>{
         const service=configure();const mail=require(mailPath);
@@ -210,6 +218,7 @@ async function credentials(config) {return typeof config.credentials==='function
             {EMAIL_FROM_AUTH:undefined},{EMAIL_FROM_NOTIFICATIONS:undefined},{EMAIL_FROM_AUTH:'not-an-email'},{EMAIL_FROM_NOTIFICATIONS:'x@example.test\r\nBcc: injected@example.test'},
             {EMAIL_FROM_AUTH:'auth@example.test\r\n'},{EMAIL_FROM_NOTIFICATIONS:'\r\nnotifications@example.test'},
             {EMAIL_FROM_NAME:'MedSync\r\nInjectedHeader'},{EMAIL_FROM_NAME:'MedSync\r\n'},{EMAIL_REPLY_TO:'support@example.test\r\nInjectedHeader'},{EMAIL_REPLY_TO:'support@example.test\r\n'},
+            {EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS:'invalid'},{EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS:'feedback@example.test\r\n'},
             {EMAIL_CONFIGURATION_SET_AUTH:undefined},{EMAIL_CONFIGURATION_SET_TRANSACTIONAL:undefined},
             {EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:undefined},{EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE:'Change\r\nInjectedHeader'},{EMAIL_PASSWORD_CHANGED_TEMPLATE:undefined},{EMAIL_PASSWORD_CHANGED_TEMPLATE:'Changed\r\nInjectedHeader'},{EMAIL_CONFIGURATION_SET_AUTH:'auth\r\nInjectedHeader'},{EMAIL_PASSWORD_RESET_TEMPLATE:undefined},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:undefined},
             {EMAIL_PASSWORD_RESET_TEMPLATE:'Reset\r\nInjectedHeader'},{EMAIL_DOCUMENT_SIGNATURE_TEMPLATE:'Exact-Signature-Template-QA\r\n'},{EMAIL_CONFIGURATION_SET_AUTH:'qa-auth-set\r\n'}
