@@ -7,11 +7,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: medsync-backend-stable
+  cancel-in-progress: false
+  queue: max
+
 jobs:
-  stable:
-    if: github.ref == 'refs/heads/main'
+  classify:
+    if: github.repository == 'hemia-labs/medsync-back-legacy'
     runs-on: ubuntu-24.04
-    concurrency: medsync-backend-stable
+    outputs:
+      release: ${{ steps.batch.outputs.release }}
+      tag: ${{ steps.batch.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identify a Changesets version merge
+        id: batch
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: node scripts/ops/classify-prod-release.js "$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+  version-pr:
+    needs: classify
+    if: needs.classify.outputs.release == 'false'
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -23,10 +45,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Publish stable release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release-backend.sh
       - name: Check whether this run can update the version PR
         if: hashFiles('.changeset/*.md', '!.changeset/README.md') != ''
         id: head
@@ -54,3 +72,12 @@ jobs:
           version: npm run version-packages
           title: "Release: versionar backend"
           commit: "Release: versionar backend"
+
+  publish:
+    needs: classify
+    if: needs.classify.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-prod-image.yml
+    with:
+      release_tag: ${{ needs.classify.outputs.tag }}

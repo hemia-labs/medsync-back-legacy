@@ -1,24 +1,25 @@
-name: Build MedSync production image
+name: Publish MedSync production image and release
 
 on:
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
 
 permissions:
-  contents: read
-
-concurrency:
-  group: medsync-prod-image
-  cancel-in-progress: false
+  contents: write
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'hemia-labs/medsync-back-legacy' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment: prod
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -26,8 +27,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run qa:isolated
-      - name: Publish image and report its digest
+      - name: Publish or recover the image for this version
         env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
           REGISTRY_USERNAME: ${{ vars.PROD_REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.PROD_REGISTRY_PASSWORD }}
         shell: bash
@@ -36,13 +38,32 @@ jobs:
           : "${REGISTRY_USERNAME:?Missing PROD_REGISTRY_USERNAME}" "${REGISTRY_PASSWORD:?Missing PROD_REGISTRY_PASSWORD}"
           registry=registry.hemia.cloud
           image="$registry/medsync/prod-backend"
+          [[ "$RELEASE_TAG" == "v$(node -p "require('./package.json').version")" ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           export DOCKER_CONFIG="$(mktemp -d "$RUNNER_TEMP/medsync-prod-registry.XXXXXX")"
           trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin
           unset REGISTRY_PASSWORD
-          docker buildx build --platform linux/amd64 --provenance=false --push \
-            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            --tag "$image:prod-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-            --metadata-file "$DOCKER_CONFIG/metadata.json" .
-          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' "$DOCKER_CONFIG/metadata.json")"
+          ref="$image:$RELEASE_TAG"
+          if docker pull "$ref" >"$DOCKER_CONFIG/pull.log" 2>&1; then
+            [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" == "$GITHUB_SHA" ]]
+            digest="$(docker image inspect --format '{{json .RepoDigests}}' "$ref" |
+              jq -er --arg prefix "$image@" 'map(select(startswith($prefix))) | select(length == 1) | .[0] | ltrimstr($prefix)')"
+          elif grep -Eqi 'manifest unknown|no such manifest' "$DOCKER_CONFIG/pull.log"; then
+            docker buildx build --platform linux/amd64 --provenance=false --push \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --tag "$ref" --metadata-file "$DOCKER_CONFIG/metadata.json" .
+            digest="$(jq -er '."containerimage.digest"' "$DOCKER_CONFIG/metadata.json")"
+          else
+            cat "$DOCKER_CONFIG/pull.log" >&2
+            exit 1
+          fi
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          jq -n --arg tag "$RELEASE_TAG" --arg revision "$GITHUB_SHA" --arg image "$image@$digest" \
+            '{tag: $tag, revision: $revision, image: $image}' > "$RUNNER_TEMP/medsync-image.json"
           printf 'Production image: `%s@%s`\n' "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish the stable release with its exact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST: ${{ runner.temp }}/medsync-image.json
+        run: bash scripts/release-backend.sh
