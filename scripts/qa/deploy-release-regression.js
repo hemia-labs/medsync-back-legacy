@@ -81,11 +81,11 @@ try {
         }
     }
     const workflow = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/deploy.yml'), 'utf8');
-    assert.match(workflow, /needs: isolated-regressions/);
-    assert.match(workflow, /if: github.ref == 'refs\/heads\/main'/);
+    assert.match(workflow, /pull_request:/);
+    assert.match(workflow, /isolated-regressions:/);
     assert.match(workflow, /npm run qa:isolated/);
     for (const match of workflow.matchAll(/uses: ([^\s]+)/g)) assert.match(match[1], /@[a-f0-9]{40}$/);
-    assert.doesNotMatch(workflow, /rm -rf|pm2 logs|appleboy/);
+    assert.doesNotMatch(workflow, /workflow_dispatch|upload-release|rm -rf|pm2 logs|appleboy/);
     const upload = fs.readFileSync(path.resolve(__dirname, '../ops/upload-release.sh'), 'utf8');
     assert.match(upload, /StrictHostKeyChecking=yes/);
     assert.match(upload, /VPS_KNOWN_HOSTS/);
