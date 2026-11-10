@@ -16,4 +16,6 @@ sudo bash /srv/medsync-prod/ci/deploy.sh rollback
 
 Si el despliegue falla, el script intenta restaurar la versión anterior. Conserva el release de PM2 para el primer rollback y después conserva el digest anterior en el VPS. `rollback` puede restaurar esa versión aunque la activa falle en `/readyz`. Antes de guardar un cambio, el script comprueba la salud y el identificador de la versión que arrancó en el puerto local y por el proxy HTTPS. Las migraciones y escrituras de MySQL requieren su propio procedimiento de recuperación.
 
+Para que Amazon SES entregue los avisos de rebotes y quejas al buzón de soporte, configura `EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS=soporte@medsync.mx` en `.env.production`. Conserva el reenvío de retroalimentación habilitado en la identidad `medsync.mx`. Esta variable es opcional y se configura por separado de `EMAIL_REPLY_TO`, que recibe las respuestas de los usuarios. Verifica la entrega de los avisos con el simulador de SES.
+
 Para versionar el backend, los tags de QA en el registry identifican imágenes de CI. Los tags Git y GitHub Releases pueden llevar versiones y notas de Changesets en un flujo separado. El paquete es privado y puede versionarse sin publicarlo en npm. Las imágenes permanecen en el registry, y el digest aprobado identifica qué artefacto se promueve a producción.

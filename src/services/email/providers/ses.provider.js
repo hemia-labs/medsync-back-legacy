@@ -96,6 +96,11 @@ function config() {
     if (/[<>"\\]/.test(fromName)) throw invalid('Revisa la configuración de EMAIL_FROM_NAME.');
     const replyTo = required('EMAIL_REPLY_TO');
     if (!emailAddress(replyTo)) throw invalid('Revisa la configuración de EMAIL_REPLY_TO.');
+    const feedbackKey = 'EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS';
+    const feedbackAddress = process.env[feedbackKey] === undefined ? undefined : required(feedbackKey);
+    if (feedbackAddress !== undefined && !emailAddress(feedbackAddress)) {
+        throw invalid(`Revisa la configuración de ${feedbackKey}.`);
+    }
     const routes = {};
     for (const [type, [templateKey, fromKey, setKey]] of Object.entries(ROUTES)) {
         // Optional new capability must not break existing transactional templates.
@@ -107,7 +112,7 @@ function config() {
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(configurationSet)) throw invalid(`Revisa la configuración de ${setKey}.`);
         routes[type] = { template, from, configurationSet };
     }
-    return { region, credentials, fromName, replyTo, routes };
+    return { region, credentials, fromName, replyTo, feedbackAddress, routes };
 }
 
 class SesProvider {
@@ -135,6 +140,7 @@ class SesProvider {
             const result = await this.client.send(new SendEmailCommand({
                 FromEmailAddress: `${this.config.fromName} <${route.from}>`,
                 Destination: { ToAddresses: [to] }, ReplyToAddresses: [this.config.replyTo],
+                FeedbackForwardingEmailAddress: this.config.feedbackAddress,
                 ConfigurationSetName: route.configurationSet,
                 Content: content
             }));
