@@ -1,4 +1,4 @@
-# medicapp-core-back
+# medsync-back
 
 ## 0.0.2
 
