@@ -1,0 +1,70 @@
+name: Deploy published MedSync release
+run-name: Deploy MedSync ${{ inputs.release_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Approved stable release, for example v0.0.3'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: medsync-prod-docker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'hemia-labs/medsync-back-legacy' && github.ref == 'refs/heads/main'
+    environment: prod-deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve and validate the approved release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,tagName |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and (.isDraft or .isPrerelease | not)' >/dev/null
+          revision="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          git merge-base --is-ancestor "$revision" HEAD
+          image="$(gh release download "$RELEASE_TAG" --pattern medsync-image.json --output - |
+            jq -er --arg tag "$RELEASE_TAG" --arg revision "$revision" '
+              select(.tag == $tag and .revision == $revision) |
+              .image | select(test("^registry\\.hemia\\.cloud/medsync/prod-backend@sha256:[a-f0-9]{64}$"))
+            ')"
+          printf 'image=%s\nrevision=%s\n' "$image" "$revision" >> "$GITHUB_OUTPUT"
+      - name: Deploy the digest and verify public readiness
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          REVISION: ${{ steps.release.outputs.revision }}
+          PROD_DOCKER_SSH_KEY: ${{ secrets.PROD_DOCKER_SSH_KEY }}
+          PROD_DOCKER_KNOWN_HOSTS: ${{ secrets.PROD_DOCKER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${PROD_DOCKER_SSH_KEY:?Missing deployment key}" "${PROD_DOCKER_KNOWN_HOSTS:?Missing pinned host key}"
+          umask 077
+          auth_dir="$(mktemp -d "$RUNNER_TEMP/medsync-prod-ssh.XXXXXX")"
+          trap 'rm -rf -- "$auth_dir"' EXIT
+          printf '%s\n' "$PROD_DOCKER_SSH_KEY" > "$auth_dir/key"
+          printf '%s\n' "$PROD_DOCKER_KNOWN_HOSTS" > "$auth_dir/known_hosts"
+          unset PROD_DOCKER_SSH_KEY PROD_DOCKER_KNOWN_HOSTS
+          digest="${IMAGE#*@}"
+          ssh -n -i "$auth_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$auth_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            root@195.26.247.210 "deploy $digest $REVISION"
+          curl -fsS --max-time 10 --retry 3 https://api.medsync.mx/readyz |
+            jq -e --arg image "$IMAGE" '.ready == true and .release == $image'
+          printf 'Active production image: %s\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

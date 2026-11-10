@@ -14,7 +14,7 @@ const tests = [
     'prescription-issue-regression', 'prescription-output-regression',
     'prescription-filter-validation-regression', 's19-prescription-save-regression',
     'email-document-dispatch-regression', 'po13-image-upload-regression',
-    'ses-email-provider-regression', 's16-patient-safety-regression',
+    'ses-email-provider-regression', 'prod-release-gate-regression', 's16-patient-safety-regression',
     's16-history-integrity-regression', 's19-history-finalize-authorization-regression',
     'allergy-status-regression', 'clinical-history-usability-regression',
     'clinical-template-permission-status-regression', 'ux13-professional-phone-regression',

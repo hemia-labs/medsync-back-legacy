@@ -3,6 +3,7 @@ set -euo pipefail
 
 version="$(node -p "require('./package.json').version")"
 flags=(--latest)
+assets=()
 
 case "$GITHUB_REF_NAME" in
   develop)
@@ -18,10 +19,15 @@ case "$GITHUB_REF_NAME" in
     flags=(--prerelease --latest=false)
     ;;
   main)
-    [[ -f CHANGELOG.md ]] || exit 0
+    : "${RELEASE_MANIFEST:?The production image manifest is required.}"
+    [[ -f "$RELEASE_MANIFEST" ]]
     tag="v${version}"
-    # Busca el commit que introdujo la versión en main, incluso al reintentar después.
-    target="$(git log --first-parent -1 --format=%H -S "\"version\": \"$version\"" -- package.json)"
+    target="$GITHUB_SHA"
+    assets=("$RELEASE_MANIFEST")
+    jq -e --arg tag "$tag" --arg revision "$target" '
+      .tag == $tag and .revision == $revision and
+      (.image | test("^registry\\.hemia\\.cloud/medsync/prod-backend@sha256:[a-f0-9]{64}$"))
+    ' "$RELEASE_MANIFEST" >/dev/null
     ;;
   *)
     echo "Rama de release inválida: $GITHUB_REF_NAME" >&2
@@ -40,6 +46,9 @@ if existing="$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")"; then
     exit 1
   fi
   if gh release view "$tag" >/dev/null; then
+    if [[ "$GITHUB_REF_NAME" == main ]]; then
+      gh release download "$tag" --pattern medsync-image.json --output - | cmp -s "$RELEASE_MANIFEST" -
+    fi
     echo "La release $tag ya existe."
     exit 0
   fi
@@ -61,4 +70,4 @@ if ! grep -q '[^[:space:]]' "$notes"; then
   exit 1
 fi
 
-gh release create "$tag" --target "$target" --title "$tag" --notes-file "$notes" "${flags[@]}"
+gh release create "$tag" "${assets[@]}" --target "$target" --title "$tag" --notes-file "$notes" "${flags[@]}"
