@@ -5,7 +5,7 @@
 | main | prod-deploy | deploy-prod-docker.yml | 195.26.247.210 |
 | develop | qa-registry | deploy-dev.yml | 185.187.235.117 |
 
-Pull requests run checks. Pushes to `develop` deploy QA automatically. Production requires a published stable release and a manual deployment from `main`.
+Pull requests run checks. Pushes to `develop` deploy QA automatically. Merging the Changesets version PR into `main` publishes and deploys the stable release automatically.
 
 ## QA
 
@@ -13,7 +13,7 @@ QA deploys with Docker by digest. Use the [QA Docker runbook](platform-operation
 
 ## Production
 
-Production deploys with Docker by digest. Merging the Changesets version PR publishes the release image. To activate it, use **Deploy published MedSync release** with its stable tag.
+Production deploys with Docker by digest. The release workflow activates the image after publication. Use **Deploy published MedSync release** with a stable tag to redeploy a published image.
 
 Keep the production environment at `/srv/medsync/backend/shared/.env.production` as a regular file owned by `medsync-deploy` with mode `0600`. Keep a protected backup when updating it and restore the backup separately if a configuration change needs to be reverted.
 

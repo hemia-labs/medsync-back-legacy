@@ -2,10 +2,20 @@ name: Deploy published MedSync release
 run-name: Deploy MedSync ${{ inputs.release_tag }}
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+    secrets:
+      PROD_DOCKER_SSH_KEY:
+        required: false
+      PROD_DOCKER_KNOWN_HOSTS:
+        required: false
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Approved stable release, for example v0.0.3'
+        description: 'Published stable release to redeploy, for example v0.0.3'
         required: true
         type: string
 
@@ -15,6 +25,7 @@ permissions:
 concurrency:
   group: medsync-prod-docker
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy:
@@ -27,7 +38,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve and validate the approved release
+      - name: Resolve and validate the published release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,6 +50,10 @@ jobs:
             jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and (.isDraft or .isPrerelease | not)' >/dev/null
           revision="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
           git merge-base --is-ancestor "$revision" HEAD
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch && "$revision" != "$GITHUB_SHA" ]]; then
+            echo 'The stable release must point to the commit that triggered this deployment.' >&2
+            exit 1
+          fi
           image="$(gh release download "$RELEASE_TAG" --pattern medsync-image.json --output - |
             jq -er --arg tag "$RELEASE_TAG" --arg revision "$revision" '
               select(.tag == $tag and .revision == $revision) |
