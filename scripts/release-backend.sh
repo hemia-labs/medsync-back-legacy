@@ -3,7 +3,7 @@ set -euo pipefail
 
 version="$(node -p "require('./package.json').version")"
 flags=(--latest)
-assets=()
+set --
 
 case "$GITHUB_REF_NAME" in
   develop)
@@ -23,7 +23,7 @@ case "$GITHUB_REF_NAME" in
     [[ -f "$RELEASE_MANIFEST" ]]
     tag="v${version}"
     target="$GITHUB_SHA"
-    assets=("$RELEASE_MANIFEST")
+    set -- "$RELEASE_MANIFEST"
     jq -e --arg tag "$tag" --arg revision "$target" '
       .tag == $tag and .revision == $revision and
       (.image | test("^registry\\.hemia\\.cloud/medsync/prod-backend@sha256:[a-f0-9]{64}$"))
@@ -70,4 +70,4 @@ if ! grep -q '[^[:space:]]' "$notes"; then
   exit 1
 fi
 
-gh release create "$tag" "${assets[@]}" --target "$target" --title "$tag" --notes-file "$notes" "${flags[@]}"
+gh release create "$tag" "$@" --target "$target" --title "$tag" --notes-file "$notes" "${flags[@]}"
