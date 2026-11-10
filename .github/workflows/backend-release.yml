@@ -81,3 +81,15 @@ jobs:
     uses: ./.github/workflows/build-prod-image.yml
     with:
       release_tag: ${{ needs.classify.outputs.tag }}
+    secrets:
+      PROD_REGISTRY_PASSWORD: ${{ secrets.PROD_REGISTRY_PASSWORD }}
+
+  deploy:
+    needs: [classify, publish]
+    if: needs.classify.outputs.release == 'true' && needs.publish.result == 'success'
+    uses: ./.github/workflows/deploy-prod-docker.yml
+    with:
+      release_tag: ${{ needs.classify.outputs.tag }}
+    secrets:
+      PROD_DOCKER_SSH_KEY: ${{ secrets.PROD_DOCKER_SSH_KEY }}
+      PROD_DOCKER_KNOWN_HOSTS: ${{ secrets.PROD_DOCKER_KNOWN_HOSTS }}

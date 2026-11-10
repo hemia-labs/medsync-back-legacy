@@ -8,7 +8,7 @@ Instala `ops/prod/deploy.sh`, `ops/prod/compose.yml` y `ops/prod/host-ci.sh` com
 
 PM2 y Docker leen `/srv/medsync/backend/shared/.env.production`, un archivo regular de `medsync-deploy` con modo `0600`. El script de Docker lee el archivo como ese usuario y le entrega a Compose una copia temporal privada. El contenedor usa UID/GID 1001, el mismo puerto 3009 de PM2 y los directorios compartidos de archivos temporales y logs. Antes de habilitar el registro, configurar en `.env.production` la ruta `/srv/medsync-prod/security/registration-password-blocklist.json` y su SHA-256. Docker monta ese directorio en la misma ruta y en solo lectura.
 
-Para aprobar una activación, ejecuta **Deploy published MedSync release** desde `main` con el tag estable. El workflow verifica que el tag y el commit del manifiesto coincidan, activa el digest y comprueba que `/readyz` reporte la misma imagen. Para reintentar o volver a una release anterior que ya tenga manifiesto, ejecuta el mismo workflow con el tag correspondiente. Para recuperar una imagen anterior a este flujo, usa el procedimiento por SSH.
+Fusionar el PR de versión autoriza la activación. Una vez publicada la release, el workflow verifica que el tag y el commit del manifiesto coincidan con el commit que se fusionó, activa el digest y comprueba que `/readyz` reporte la misma imagen. Si solo falla el despliegue, reintenta ese job. Para volver a una release anterior que ya tenga manifiesto, ejecuta **Deploy published MedSync release** desde `main` con el tag correspondiente. Para recuperar una imagen anterior a este flujo, usa el procedimiento por SSH.
 
 ```sh
 sudo bash /srv/medsync-prod/ci/deploy.sh preflight sha256:<digest>
@@ -22,4 +22,4 @@ Si el despliegue falla, el script intenta restaurar la versión anterior. Conser
 
 Para que Amazon SES entregue los avisos de rebotes y quejas al buzón de soporte, configura `EMAIL_SES_FEEDBACK_FORWARDING_ADDRESS=soporte@medsync.mx` en `.env.production`. Conserva el reenvío de retroalimentación habilitado en la identidad `medsync.mx`. Esta variable es opcional y se configura por separado de `EMAIL_REPLY_TO`, que recibe las respuestas de los usuarios. Verifica la entrega de los avisos con el simulador de SES.
 
-Para versionar el backend, los tags de QA en el registry identifican imágenes de CI. Los tags Git y GitHub Releases pueden llevar versiones y notas de Changesets en un flujo separado. El paquete es privado y puede versionarse sin publicarlo en npm. Las imágenes permanecen en el registry, y el digest aprobado identifica qué artefacto se promueve a producción.
+Los tags de QA en el registry identifican imágenes de CI. Las releases estables vinculan el tag de Git con el digest que se promueve a producción. El paquete es privado y sus versiones se registran en GitHub Releases.
