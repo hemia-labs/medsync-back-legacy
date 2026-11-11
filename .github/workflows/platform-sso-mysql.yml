@@ -1,0 +1,43 @@
+name: Platform SSO MySQL regression
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - src/auth/platformSso*.js
+      - scripts/qa/platform-sso*.js
+      - .github/workflows/platform-sso-mysql.yml
+      - package.json
+      - package-lock.json
+  push:
+    branches: [develop]
+    paths:
+      - src/auth/platformSso*.js
+      - scripts/qa/platform-sso*.js
+      - .github/workflows/platform-sso-mysql.yml
+permissions:
+  contents: read
+jobs:
+  mysql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      mysql:
+        image: mysql:8.0.46
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 33306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run qa:platform-sso-mysql
+        env:
+          QA_SSO_MYSQL_PORT: '33306'

@@ -7,6 +7,7 @@
     "changeset": "changeset",
     "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts --offline --no-audit --no-fund",
     "qa:platform-sso": "node --test scripts/qa/platform-sso.test.js",
+    "qa:platform-sso-mysql": "node --test scripts/qa/platform-sso-mysql.test.js",
     "dev": "npm run dev:d2",
     "dev:d2": "node scripts/dev-auth-mode.js d2",
     "dev:legacy": "node scripts/dev-auth-mode.js legacy",
