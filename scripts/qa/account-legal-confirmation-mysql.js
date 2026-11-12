@@ -32,8 +32,11 @@ async function run(){
     };
     central.read=async(route,owner)=>{
         assert.equal(owner.id_login,actor.id_login);assert.equal(owner.id_business,actor.id_business);
-        return route==='evidence/history'?{items:received,nextCursor:null}:{documentSetKey:'registration',revision:manifest.revision,
-            pendingDocuments:manifest.documents.filter(d=>!received.some(r=>r.confirmations.some(c=>c.documentVersionId===d.documentVersionId)))};
+        if(route==='evidence/history')return {items:received,nextCursor:null};
+        const pendingDocuments=manifest.documents.filter(d=>!received.some(r=>r.confirmations.some(c=>c.documentVersionId===d.documentVersionId)));
+        if(route==='pending/prepare')return {...manifest,documentSetKey:'registration',documents:pendingDocuments};
+        assert.equal(route,'pending/evaluate');
+        return {documentSetKey:'registration',revision:manifest.revision,pendingDocuments};
     };
     let server;
     const checks=[],pass=name=>{checks.push(name);console.log('PASS '+name);};
@@ -109,6 +112,7 @@ async function run(){
         pass('provider outage/retry and expired committed replay preserve payload; confirmed receipt appears in history after delivery');
         manifest.expiresAt=new Date(now+3600000).toISOString();manifest.snapshotToken=randomUUID();manifest.documents[0]={...manifest.documents[0],documentVersionId:randomUUID(),version:'2.0.0'};
         const next=await context(),nextBody=input(next);
+        assert.deepEqual(next.legalDocuments.map(d=>d.versionId),[manifest.documents[0].documentVersionId]);
         assert.equal((await http('POST','/central/accept',{...nextBody,idempotencyKey:body.idempotencyKey})).body.code,'LEGAL_IDEMPOTENCY_CONFLICT');
         const transaction=db.transaction.bind(db);db.transaction=async(...args)=>{const tx=await transaction(...args);const commit=tx.commit.bind(tx);tx.commit=async()=>{await tx.rollback();throw Error('synthetic commit failure');};return tx;};
         assert.equal((await http('POST','/central/accept',nextBody)).status,500);db.transaction=transaction;
@@ -118,7 +122,7 @@ async function run(){
         assert.equal((await http('POST','/central/accept',nextBody)).status,202);
         const [saved]=await q('SELECT legal_evidence_payload FROM registration_outbox WHERE event_id=:id',{id:nextBody.idempotencyKey});
         const sent=typeof saved.legal_evidence_payload==='string'?JSON.parse(saved.legal_evidence_payload):saved.legal_evidence_payload;
-        assert.ok(sent.confirmations.some(c=>c.documentVersionId===displayedVersion));assert.ok(!sent.confirmations.some(c=>c.documentVersionId===manifest.documents[0].documentVersionId));
+        assert.deepEqual(sent.confirmations.map(c=>c.documentVersionId),[displayedVersion]);
         assert.equal(received.length,1,'A failed commit or a later publication never records an undisplayed version');
         await q('UPDATE login SET active=0 WHERE id_login=:id',{id:actor.id_login});assert.equal((await http('POST','/central/accept',nextBody)).status,401);
         pass('immutable displayed versions, conflicting key, SQL rollback/retry and revoked account; no configured DB or live Legal writes');

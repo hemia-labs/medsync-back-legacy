@@ -14,7 +14,7 @@ async function run({useInstalledSdk=true}={}){
         documents:[doc],confirmations:[{documentVersionId:doc.documentVersionId,contentHash:doc.contentHash,action:'accept',confirmed:true}]};
     const manifest={applicationId:randomUUID(),documentSetKey:'registration',revision:randomUUID(),snapshotToken:randomUUID(),expiresAt:new Date(Date.now()+600000).toISOString(),
         documents:[{...doc,artifacts:{html:{url:'https://files.example/terms',expiresAt:new Date(Date.now()+600000).toISOString(),contentType:'text/html',size:21,sha256:doc.contentHash}}}]};
-    let synced=true,outage=false,denied=false,pending=false,html='<p>Original terms</p>',historyItems=[receipt],nextCursor=null;
+    let synced=true,outage=false,denied=false,pending=false,reviewDocs=null,html='<p>Original terms</p>',historyItems=[receipt],nextCursor=null;
     const events=new Map();
     const db={async query(sql,options){
         const params=options.replacements;
@@ -65,6 +65,7 @@ async function run({useInstalledSdk=true}={}){
             if(outage)return Response.json({private:'not forwarded'},{status:503});
             if(denied)return Response.json({},{status:403});
             if(url.endsWith('/evidence/history')){historyCalls++;return Response.json({items:historyItems,nextCursor});}
+            if(url.endsWith('/pending/prepare'))return Response.json({...manifest,documents:reviewDocs??(pending?manifest.documents:[])});
             assert.ok(url.endsWith('/pending/evaluate'),'Only read-only Legal operations are called');
             return Response.json({documentSetKey:'registration',revision:manifest.revision,pendingDocuments:pending?[doc]:[],allowed:!pending});
         }
@@ -142,7 +143,14 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.history(actor)).data.acceptances[0].id_acceptance,'old-receipt');
         assert.equal((await dao.centralDocument(actor,doc.documentVersionId)).status,200);
         assert.equal((await dao.accept(actor,{id_version:'terms_conditions-v1',acknowledged:true})).code,'LEGAL_CENTRAL_REQUIRED');
+        assert.equal((await dao.centralContext(actor)).data.legalDocuments.length,1);
+        historyItems=[receipt];pending=false;
+        assert.equal((await dao.centralContext(actor)).code,'LEGAL_VERSION_STALE');
+        manifest.documents.push(privacy);reviewDocs=[privacy];
+        const publicSnapshotsBeforeReview=snapshotCalls;
         const review=await dao.centralContext(actor);assert.equal(review.status,200);
+        assert.deepEqual(review.data.legalDocuments.map(d=>d.documentKey),['aviso_de_privacidad']);
+        assert.equal(snapshotCalls,publicSnapshotsBeforeReview,'Account review never uses the full registration snapshot');
         const input={legalContext:review.data.legalContext,idempotencyKey:randomUUID(),
             legalAcceptances:review.data.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))};
         assert.equal((await dao.acceptCentral({...actor,id_business:'other'},input)).status,403);
@@ -150,6 +158,7 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.acceptCentral(actor,input)).status,202);assert.equal(events.size,1);
         const evidence=JSON.parse(events.get(input.idempotencyKey).legal_evidence_payload);
         assert.equal(evidence.subjectId,actor.id_login);assert.equal(evidence.organizationId,actor.id_business);
+        assert.deepEqual(evidence.confirmations.map(c=>[c.documentVersionId,c.action]),[[privacy.documentVersionId,'acknowledge']]);
         assert.equal((await dao.centralContext(actor)).code,'LEGAL_SYNC_PENDING');
         assert.equal((await dao.history(actor)).data.central_sync_pending,true);
         assert.equal((await dao.current(actor)).data.pending_count,1,'The local licence remains pending while personal evidence is queued');

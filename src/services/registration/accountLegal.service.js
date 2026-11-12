@@ -33,9 +33,11 @@ class AccountLegalService {
     }
     async review(actor) {
         const owner=this.owner(actor);
-        // The public snapshot does not authorize this organization for evidence.
-        await this.pending(actor);
-        return this.legal.context(owner);
+        const snapshot=await this.read('pending/prepare',actor);
+        if(snapshot?.documentSetKey!=='registration'||!Array.isArray(snapshot.documents)
+            ||!snapshot.documents.every(validDoc))throw unavailable();
+        if(!snapshot.documents.length)throw new RegistrationError('LEGAL_VERSION_STALE',409);
+        return this.legal.contextFromSnapshot(owner,snapshot);
     }
     async enqueue(actor,source,transaction) {
         if(!transaction)throw Error('LEGAL_TRANSACTION_REQUIRED');
