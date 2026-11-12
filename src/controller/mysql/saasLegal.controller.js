@@ -4,8 +4,9 @@ const context = req => ({ id_login: req.tokenDecode && req.tokenDecode.id_login,
     id_session: req.tokenDecode && req.tokenDecode.id_session, id_business: req.tokenDecode && req.tokenDecode.id_business, rol: req.tokenDecode && req.tokenDecode.rol });
 const send = (res, response) => res.status(response.status).send(response);
 module.exports = {
-    publicDocument: async (req, res) => send(res, await dao.publicDocument(req.params.documentKey)),
+    publicDocument: async (req, res) => send(res.set('Cache-Control', 'no-store'), await dao.publicDocument(req.params.documentKey)),
     current: async (req, res) => send(res, await dao.current(context(req))),
+    notice: async (req, res) => send(res.set('Cache-Control', 'no-store'), await dao.notice(context(req))),
     history: async (req, res) => send(res, await dao.history(context(req), req.query.cursor)),
     centralContext: async (req, res) => send(res, await dao.centralContext(context(req))),
     acceptCentral: async (req, res) => send(res, await dao.acceptCentral(context(req), req.body)),

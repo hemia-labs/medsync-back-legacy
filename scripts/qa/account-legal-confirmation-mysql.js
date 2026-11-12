@@ -41,9 +41,8 @@ async function run(){
         await q("INSERT INTO business(id_business,name,status,subscription_status,active) VALUES(:business,'QA','active','active',1)",{business:actor.id_business});
         await q("INSERT INTO login(id_login,id_business,id_rol,name,email,active) VALUES(:login,:business,'admin','QA','legal-qa@example.test',1)",{login:actor.id_login,business:actor.id_business});
         await q('INSERT INTO `session`(id_session,id_login,active,`last`) VALUES(:session,:login,1,1)',{session:actor.id_session,login:actor.id_login});
-        const original=randomUUID();
-        await q(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at,processed_at,legal_evidence_payload)
-            VALUES(:id,:id,'registration.created',:login,:business,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'{}')`,{id:original,login:actor.id_login,business:actor.id_business});
+        // Existing account without a registration.created event or central evidence.
+        assert.equal((await q('SELECT COUNT(*) n FROM registration_outbox'))[0].n,0);
         const app=express();app.use(cookies());app.use(require('../../src/middleware/requestBody.middleware').defaultBodyParser);
         app.use('/api/saas-legal',require('../../src/routes/mysql/saas-legal'));
         app.use((error,req,res,next)=>res.status(500).json({code:'QA_UNEXPECTED_ERROR'}));
@@ -62,6 +61,10 @@ async function run(){
         const context=async()=>{const res=await http('GET','/central/context');assert.equal(res.status,200,JSON.stringify(res.body));return res.body.data;};
         const input=ctx=>({legalContext:ctx.legalContext,idempotencyKey:randomUUID(),legalAcceptances:ctx.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))});
         assert.equal((await http('GET','/central/context',undefined,{anonymous:true})).status,401);
+        assert.equal((await http('GET','/notice',undefined,{anonymous:true})).status,401);
+        const initialNotice=await http('GET','/notice');
+        assert.equal(initialNotice.status,200);
+        assert.deepEqual(initialNotice.body.data,{pending_count:2,business_pending:false,central_sync_pending:false,pending_unknown:false});
         const review=await context(),body=input(review);
         assert.equal((await http('POST','/central/accept',body,{noCsrf:true})).status,403);
         assert.equal((await http('POST','/central/accept',body,{origin:'https://evil.invalid'})).status,403);
@@ -88,6 +91,7 @@ async function run(){
         assert.equal((await http('GET','/central/context')).body.code,'LEGAL_SYNC_PENDING');
         assert.equal((await http('POST','/central/accept',{...body,idempotencyKey:randomUUID()})).body.code,'LEGAL_SYNC_PENDING');
         const pending=await http('GET','/');assert.equal(pending.body.data.central_sync_pending,true);
+        assert.deepEqual((await http('GET','/notice')).body.data,{pending_count:0,business_pending:false,central_sync_pending:true,pending_unknown:false});
         assert.equal(pending.body.data.pending_count,0);assert.equal(pending.body.data.documents.filter(d=>d.source==='central').length,2);assert.ok(pending.body.data.documents.filter(d=>d.source==='central').every(d=>d.sync_pending&&!d.accepted));
         pass('concurrent same-key sends commit one event; pending updates suppress reacceptance without inventing a central receipt');
         failDelivery=true;await legal.flush();
