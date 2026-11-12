@@ -2,7 +2,7 @@ const { QueryTypes } = require('sequelize');
 const { v4: uuid } = require('uuid');
 const { createHash } = require('node:crypto');
 const { RegistrationError } = require('../../services/registration/errors');
-const { AccountLegalService } = require('../../services/registration/accountLegal.service');
+const { AccountLegalService, canRepresent, setKeyPattern } = require('../../services/registration/accountLegal.service');
 const sequelize = require('../../db/Sequelize.connection');
 const { DOCUMENT_SCOPES, isDocumentKey, validateDraft, validatePublish, validateAcceptance, meaningfulDocumentContent } = require('../../validators/saasLegal.validator');
 
@@ -102,15 +102,16 @@ class SaasLegalDao {
                     AND a.subject_key='business'
                 )`, { key: localLicenseKey, business: actor.id_business });
             const syncPending = centralConfigured && await this.central.syncPending(actor);
-            let centralCount = 0, pendingUnknown = false;
+            let centralCount = 0, centralBusinessPending = false, pendingUnknown = false;
             if(centralConfigured) {
                 try {
-                    const pending = await this.central.pending(actor);
-                    if(!syncPending) centralCount = pending.pendingDocuments.length;
+                    const pending = await this.central.notice(actor);
+                    if(!syncPending) centralCount = pending.count;
+                    centralBusinessPending = pending.businessPending;
                 } catch(_) { pendingUnknown = true; }
             }
             return ok({ pending_count: local.filter(row => asBoolean(row.required)).length + centralCount,
-                business_pending: local.length > 0,
+                business_pending: local.length > 0 || centralBusinessPending,
                 central_sync_pending: syncPending, pending_unknown: pendingUnknown });
         } catch(_) { return unavailable(); }
     }
@@ -137,7 +138,7 @@ class SaasLegalDao {
             }
             let centralAvailable = true;
             if(centralConfigured) {
-                try { documents.push(...(await this.central.current(actor)).map(doc => syncPending
+                try { documents.push(...(await this.central.current(actor)).map(doc => syncPending && doc.pending
                     ? {...doc, pending:false, sync_pending:true} : doc)); }
                 catch(_) { centralAvailable = false; }
             }
@@ -163,9 +164,8 @@ class SaasLegalDao {
             let centralAvailable = true, nextCursor = null;
             if(centralConfigured) {
                 try {
-                    const history = await this.central.history(actor, cursor);
-                    for(const item of history.items) for(const doc of item.documents)
-                        acceptances.push({...this.central.receipt(item, doc, actor), history_cursor: cursor || null});
+                    const history = await this.central.accountHistory(actor, cursor);
+                    acceptances.push(...history.items);
                     nextCursor = history.nextCursor;
                 } catch(_) { centralAvailable = false; }
             }
@@ -174,24 +174,46 @@ class SaasLegalDao {
                 central_sync_pending: syncPending });
         } catch(_) { return unavailable(); }
     }
-    async centralDocument(context, versionId, cursor) {
+    async centralDocument(context, versionId, cursor, key) {
         try {
             const actor = await this.actor(context);
             if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay una cuenta activa en el consultorio.');
             if(!this.central.configured()) return fail(503, 'LEGAL_SERVICE_UNAVAILABLE', 'Legal central no está configurado.');
-            return ok({version: await this.central.document(actor, versionId, cursor)});
+            return ok({version: await this.central.document(actor, versionId, cursor, key)});
         } catch(_) { return fail(503, 'LEGAL_SERVICE_UNAVAILABLE', 'No se pudo consultar esta versión en Legal central. El comprobante se conserva.'); }
     }
-    async centralContext(context) {
+    async centralContext(context,key) {
         try {
             const actor=await this.actor(context);
             if(!actor)return fail(403,'LEGAL_CONTEXT_FORBIDDEN','No hay una cuenta activa en el consultorio.');
             if(!this.central.configured())return fail(503,'LEGAL_SERVICE_UNAVAILABLE','Legal central no está configurado.');
             if(await this.central.syncPending(actor))return fail(409,'LEGAL_SYNC_PENDING','Tus confirmaciones ya están pendientes de sincronizar. Actualiza los documentos.');
-            return ok(await this.central.review(actor));
+            return ok(await this.central.review(actor,key));
         }catch(error) {
             if(error instanceof RegistrationError)return fail(error.status,error.code,'No se pudo preparar la revisión. Actualiza los documentos y reintenta.');
             return fail(503,'LEGAL_SERVICE_UNAVAILABLE','No se pudo cargar la revisión en Legal central. Reintenta.');
+        }
+    }
+    async representativeContext(authorization,input) {
+        const denied=()=>fail(403,'LEGAL_CONTEXT_FORBIDDEN','No se autorizó el contexto de firma.');
+        try {
+            if(!await this.central.authorizeContext(authorization))return denied();
+            const {subjectId,organizationId,sessionId,documentSetKey,purpose,operation}=input||{};
+            const id=(value,max)=>typeof value==='string'&&value.length>0&&value.length<=max;
+            if(!id(subjectId,160)||!id(organizationId,120)||!id(sessionId,160)||!id(documentSetKey,80)
+                ||!setKeyPattern.test(documentSetKey)||purpose!=='document_acceptance'||!['record','validate'].includes(operation))return denied();
+            const actor=await this.actor({id_login:subjectId,id_business:organizationId,id_session:sessionId});
+            if(!actor)return denied();
+            const [session]=await this.query('SELECT id_session FROM `session` WHERE id_session=:session AND id_login=:login AND active=1 AND `last`=1 LIMIT 1',
+                {session:sessionId,login:actor.id_login});
+            if(!session)return denied();
+            const set=await this.central.accountSet(actor,documentSetKey);
+            if(set.verification!=='verified_session'||(set.evidenceScope==='organization'&&!canRepresent(actor)))return denied();
+            return {status:200,success:true,data:{subjectId:actor.id_login,organizationId:actor.id_business,sessionId:actor.id_session,
+                canAcceptDocuments:true,authenticationMethod:'medsync_session',mfaVerified:false}};
+        }catch(error){
+            if(error instanceof RegistrationError&&error.status===403)return denied();
+            return fail(503,'LEGAL_SERVICE_UNAVAILABLE','No se pudo verificar el contexto de firma.');
         }
     }
     async acceptCentral(context,source) {

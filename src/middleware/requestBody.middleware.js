@@ -70,7 +70,7 @@ function parse(req, res, next, bytes) {
 function defaultBodyParser(req, res, next) {
     if (policyFor(req)) return next();
     const path = String(req.originalUrl || req.url || '').split('?')[0];
-    if (REGISTRATION_PATH.test(path) || /^\/api\/saas-legal\/central\/accept\/?$/i.test(path)) {
+    if (REGISTRATION_PATH.test(path) || /^\/api\/saas-legal\/(?:central\/accept|integration\/context)\/?$/i.test(path)) {
         return parse(req, res, next, 8 * 1024);
     }
     return parse(req, res, next, /^\/api\/auth(?:\/|$)/i.test(path) ? AUTH_LIMIT : GENERAL_LIMIT);

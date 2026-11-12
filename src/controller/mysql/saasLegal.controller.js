@@ -8,9 +8,13 @@ module.exports = {
     current: async (req, res) => send(res, await dao.current(context(req))),
     notice: async (req, res) => send(res.set('Cache-Control', 'no-store'), await dao.notice(context(req))),
     history: async (req, res) => send(res, await dao.history(context(req), req.query.cursor)),
-    centralContext: async (req, res) => send(res, await dao.centralContext(context(req))),
+    centralContext: async (req, res) => send(res, await dao.centralContext(context(req),req.query.documentSetKey)),
+    representativeContext: async (req, res) => {
+        const response=await dao.representativeContext(req.get('authorization'),req.body);
+        return res.set('Cache-Control','no-store').status(response.status).send(response.success?response.data:response);
+    },
     acceptCentral: async (req, res) => send(res, await dao.acceptCentral(context(req), req.body)),
-    centralDocument: async (req, res) => send(res, await dao.centralDocument(context(req), req.params.versionId, req.query.cursor)),
+    centralDocument: async (req, res) => send(res, await dao.centralDocument(context(req), req.params.versionId, req.query.cursor, req.query.documentSetKey)),
     accept: async (req, res) => send(res, await dao.accept(context(req), { id_version: req.body && req.body.id_version, acknowledged: req.body && req.body.acknowledged })),
     adminList: async (req, res) => send(res, await dao.adminList(context(req))),
     saveDraft: async (req, res) => send(res, await dao.saveDraft(context(req), req.params.documentKey, req.body)),
