@@ -1,5 +1,23 @@
 # Registro y acceso por correo
 
+## Administración del contrato y documentos centrales · 2026-11-12
+
+El catálogo local de Super Admin y los pendientes locales muestran únicamente el contrato de licencia. Guardar, publicar o registrar una nueva aceptación local de términos o privacidad devuelve `409 LEGAL_CENTRAL_REQUIRED`, incluso si la instalación carece de aplicación central asignada. El contrato conserva su publicación local y aceptación por un administrador del consultorio. Los comprobantes y versiones históricas de términos y privacidad se conservan. En instalaciones sin aplicación central asignada, las publicaciones públicas anteriores siguen disponibles en lectura.
+
+## Cuenta y legal para cuentas existentes · 2026-11-12
+
+Con `LEGAL_APPLICATION_ID` configurado, Cuenta y legal usa el conjunto central `registration` para términos y privacidad de cualquier cuenta activa autorizada de un consultorio. El usuario y consultorio proceden de la sesión revalidada. La existencia de un evento `registration.created` deja de ser una condición para consultar o confirmar. El historial local y el contrato por consultorio siguen disponibles.
+
+Antes de firmar el contexto de revisión, MedSync llama a `pending/evaluate` con el usuario y consultorio de la sesión para que Hemia valide el acceso a la integración. El contexto sigue ligado a la sesión. Para detectar confirmaciones en cola, MedSync consulta los eventos de evidencia sin procesar por usuario y consultorio, incluidos los eventos `registration.legal_updated` de una cuenta sin alta central.
+
+Esta sección actualiza el criterio de acceso descrito en las notas del 5 de noviembre.
+
+## Banner y lectura pública · 2026-11-12
+
+El banner consulta `GET /api/saas-legal/notice` con la sesión autenticada. La respuesta incluye el total de pendientes, si hay un pendiente del consultorio, si hay evidencia en cola y si el estado central es desconocido. Para calcularla se consultan metadatos locales, la cola y `pending/evaluate`. El historial detallado se carga desde Cuenta y legal. Publicar el backend antes del frontend habilita el resumen y conserva el endpoint anterior para los clientes existentes.
+
+`GET /api/saas-legal/public/:documentKey` es público. Con una aplicación central asignada, se selecciona el documento vigente en el conjunto `registration`, idioma `es-MX`. Se admiten `terms_conditions` o `terminos_y_condiciones` para términos y `privacy_notice` o `aviso_de_privacidad` para privacidad. Una selección ambigua devuelve error. MedSync lee esa versión exacta, comprueba el origen HTTPS y verifica el SHA-256 del HTML. La indisponibilidad central se muestra como error temporal. Las instalaciones sin aplicación central asignada conservan la lectura local.
+
 ## Correo de bienvenida al iniciar la prueba
 
 La primera activación de la prueba Profesional registra `registration.trial_welcome` en `registration_outbox` dentro de la misma transacción, tanto al verificar el correo como al completar la recuperación de una cuenta pendiente. La clave por consultorio evita eventos duplicados y la cola existente no requiere otra migración. El proceso comprueba que la prueba sigue vigente y que el destinatario corresponde al correo verificado de la cuenta.

@@ -5,7 +5,7 @@
 const routes = new Set([
     'GET /api/registration/context', 'POST /api/auth/register',
     'GET /api/auth/csrf', 'GET /api/auth/session', 'POST /api/auth/refreshToken', 'PUT /api/auth/close',
-    'GET /api/saas-legal', 'GET /api/saas-legal/history', 'POST /api/saas-legal/accept',
+    'GET /api/saas-legal', 'GET /api/saas-legal/notice', 'GET /api/saas-legal/history', 'POST /api/saas-legal/accept',
     'GET /api/account/activation', 'GET /api/account/activation/plans',
     'PATCH /api/account/activation/contact', 'POST /api/account/contact-verifications',
     'POST /api/account/contact-verifications/confirm', 'POST /api/account/activation/checkout',

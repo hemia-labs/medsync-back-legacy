@@ -12,23 +12,30 @@ const validDoc=d=>d&&uuid.test(d.documentId||'')&&uuid.test(d.documentVersionId|
     &&typeof d.title==='string'&&typeof d.version==='string'&&/^[a-f0-9]{64}$/.test(d.contentHash||'')
     &&['accept','acknowledge','consent'].includes(d.requiredAction);
 const unavailable=()=>new Error('CENTRAL_LEGAL_UNAVAILABLE');
+const publicDocumentKeys={
+    terms_conditions:['terms_conditions','terminos_y_condiciones'],
+    privacy_notice:['privacy_notice','aviso_de_privacidad'],
+};
 class AccountLegalService {
     constructor(db,options={}) {this.db=db;this.legal=options.legal||new LegalRegistrationService(db,{requestTimeoutMs:20000});this.machine=options.machine||null;}
-    async origin(actor,transaction=null) {
-        const [event]=await this.db.query(`SELECT event_id,processed_at,legal_evidence_id,
-            EXISTS(SELECT 1 FROM registration_outbox pending WHERE pending.id_login=:login AND pending.id_business=:business
-                AND pending.legal_evidence_payload IS NOT NULL AND pending.processed_at IS NULL) AS sync_pending FROM registration_outbox
-            WHERE id_login=:login AND id_business=:business AND event_type='registration.created'
-                AND legal_evidence_payload IS NOT NULL LIMIT 1`,
+    configured() {
+        return Boolean(this.legal.env.LEGAL_APPLICATION_ID?.trim());
+    }
+    async syncPending(actor,transaction=null) {
+        const [event]=await this.db.query(`SELECT event_id FROM registration_outbox WHERE id_login=:login AND id_business=:business
+            AND legal_evidence_payload IS NOT NULL AND processed_at IS NULL LIMIT 1`,
         {replacements:{login:actor.id_login,business:actor.id_business},transaction,type:QueryTypes.SELECT});
-        return event||null;
+        return Boolean(event);
     }
     owner(actor) {
         if(!actor.id_session)throw new RegistrationError('LEGAL_CONTEXT_FORBIDDEN',403);
         return security.mac('legal-account-review-v1',JSON.stringify([actor.id_login,actor.id_business,actor.id_session]));
     }
     async review(actor) {
-        return this.legal.context(this.owner(actor));
+        const owner=this.owner(actor);
+        // The public snapshot does not authorize this organization for evidence.
+        await this.pending(actor);
+        return this.legal.context(owner);
     }
     async enqueue(actor,source,transaction) {
         if(!transaction)throw Error('LEGAL_TRANSACTION_REQUIRED');
@@ -51,10 +58,7 @@ class AccountLegalService {
                 throw new RegistrationError('LEGAL_IDEMPOTENCY_CONFLICT',409);
             return {eventId:existing.event_id,queued:!existing.processed_at,evidenceId:existing.legal_evidence_id||null};
         }
-        const [pending]=await this.db.query(`SELECT event_id FROM registration_outbox WHERE id_login=:login AND id_business=:business
-            AND legal_evidence_payload IS NOT NULL AND processed_at IS NULL LIMIT 1`,
-        {transaction,type:QueryTypes.SELECT,replacements:{login:actor.id_login,business:actor.id_business}});
-        if(pending)throw new RegistrationError('LEGAL_SYNC_PENDING',409);
+        if(await this.syncPending(actor,transaction))throw new RegistrationError('LEGAL_SYNC_PENDING',409);
         const payload={...prepared,idempotencyKey:source.idempotencyKey,subjectId:actor.id_login,organizationId:actor.id_business};
         await this.db.query(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at,legal_evidence_payload)
             VALUES(:id,:id,'registration.legal_updated',:login,:business,UTC_TIMESTAMP(3),:payload)`,
@@ -88,6 +92,12 @@ class AccountLegalService {
         }
         return value;
     }
+    async pending(actor) {
+        const value=await this.read('pending/evaluate',actor);
+        if(value.documentSetKey!=='registration'||!Array.isArray(value.pendingDocuments)
+            ||!value.pendingDocuments.every(validDoc))throw unavailable();
+        return value;
+    }
     receipt(item,doc,actor) {
         return {id_acceptance:'central:'+item.evidenceId+':'+doc.documentVersionId,id_version:doc.documentVersionId,
             id_document:'central:'+doc.documentId,document_key:doc.documentKey,title:doc.title,version_number:doc.version,
@@ -99,9 +109,8 @@ class AccountLegalService {
     async current(actor) {
         const config=this.legal.configuration();
         const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX'});
-        const pending=await this.read('pending/evaluate',actor);
-        if(pending.documentSetKey!=='registration'||pending.revision!==snapshot.revision||!Array.isArray(pending.pendingDocuments)
-            ||!pending.pendingDocuments.every(validDoc)||!snapshot.documents.every(validDoc)
+        const pending=await this.pending(actor);
+        if(pending.revision!==snapshot.revision||!snapshot.documents.every(validDoc)
             ||!pending.pendingDocuments.every(p=>snapshot.documents.some(d=>d.documentId===p.documentId
                 &&d.documentVersionId===p.documentVersionId&&d.contentHash===p.contentHash&&d.requiredAction===p.requiredAction)))throw unavailable();
         const history=await this.history(actor);
@@ -126,6 +135,21 @@ class AccountLegalService {
             doc=snapshot.documents.find(d=>d.documentVersionId===versionId);
         }
         if(!doc||!validDoc(doc))throw unavailable();
+        return this.publishedVersion(config,doc);
+    }
+    async publicCurrent(key) {
+        const config=this.legal.configuration();
+        const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX'});
+        const keys=publicDocumentKeys[key];
+        const matches=snapshot.documents.filter(doc=>keys.includes(doc.documentKey));
+        if(!matches.length)return null;
+        if(matches.length!==1||!validDoc(matches[0]))throw unavailable();
+        const [doc]=matches;
+        const version=await this.publishedVersion(config,doc);
+        return {id_document:doc.documentId,document_key:key,title:doc.title,
+            description:version.description,current_version:version};
+    }
+    async publishedVersion(config,doc) {
         const url=new URL(`v1/legal/public/${config.applicationId}/documents/${encodeURIComponent(doc.documentKey)}/versions/${encodeURIComponent(doc.version)}?locale=es-MX`,config.base.origin);
         const published=JSON.parse((await body(await this.legal.fetch(url,{redirect:'error',signal:AbortSignal.timeout(8000)}),1024*1024)).toString('utf8'));
         if(published.version?.id!==doc.documentVersionId||published.document?.id!==doc.documentId||published.contentHash!==doc.contentHash)throw unavailable();
@@ -135,6 +159,7 @@ class AccountLegalService {
         const html=await body(await this.legal.fetch(artifact,{redirect:'error',signal:AbortSignal.timeout(8000)}),512*1024);
         if(createHash('sha256').update(html).digest('hex')!==doc.contentHash)throw unavailable();
         return {id_version:doc.documentVersionId,version_number:doc.version,title:doc.title,content_hash:doc.contentHash,
+            description:typeof published.document.description==='string'?published.document.description:'',
             content_html:html.toString('utf8'),source:'central',acceptance_scope:'user',published_at:published.version.publishedAt||null};
     }
 }
