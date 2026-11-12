@@ -115,6 +115,7 @@ class LegalRegistrationService {
             for(let i=0;i<limit;i++) {
                 const event=await this.db.transaction(async transaction=>{
                     const rows=await this.db.query(`SELECT * FROM registration_outbox WHERE legal_evidence_payload IS NOT NULL AND processed_at IS NULL
+                        AND (legal_error_code IS NULL OR legal_error_code<>'LEGAL_REPRESENTATIVE_REJECTED')
                         AND (legal_retry_at IS NULL OR legal_retry_at<=UTC_TIMESTAMP(3)) AND (legal_lease_until IS NULL OR legal_lease_until<=UTC_TIMESTAMP(3))
                         ORDER BY created_at LIMIT 1 FOR UPDATE`,{transaction,type:QueryTypes.SELECT});
                     if(!rows[0])return null;
@@ -128,9 +129,12 @@ class LegalRegistrationService {
                     await this.db.query(`UPDATE registration_outbox SET legal_evidence_id=:evidence,processed_at=UTC_TIMESTAMP(3),legal_error_code=NULL,legal_lease_id=NULL,legal_lease_until=NULL
                         WHERE event_id=:id AND legal_lease_id=:lease`,{replacements:{evidence:receipt.evidenceId,id:event.event_id,lease:event.leaseId},type:QueryTypes.UPDATE});
                 }catch(error) {
+                    const payload=error.code==='LEGAL_HTTP_403' && (typeof event.legal_evidence_payload==='string'
+                        ? JSON.parse(event.legal_evidence_payload) : event.legal_evidence_payload);
+                    const rejected=event.event_type==='registration.legal_updated'&&payload?.sessionId;
                     const delay=Math.min(3600,15*2**Math.min(8,Number(event.legal_attempts)||0));
                     await this.db.query(`UPDATE registration_outbox SET legal_error_code=:code,legal_retry_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL :delay SECOND),legal_lease_id=NULL,legal_lease_until=NULL
-                        WHERE event_id=:id AND legal_lease_id=:lease`,{replacements:{code:/^LEGAL_[A-Z0-9_]{1,40}$/.test(error.code||'')?error.code:'LEGAL_UNAVAILABLE',delay,id:event.event_id,lease:event.leaseId},type:QueryTypes.UPDATE});
+                        WHERE event_id=:id AND legal_lease_id=:lease`,{replacements:{code:rejected?'LEGAL_REPRESENTATIVE_REJECTED':/^LEGAL_[A-Z0-9_]{1,40}$/.test(error.code||'')?error.code:'LEGAL_UNAVAILABLE',delay,id:event.event_id,lease:event.leaseId},type:QueryTypes.UPDATE});
                 }
             }
         }finally{this.running=false;}

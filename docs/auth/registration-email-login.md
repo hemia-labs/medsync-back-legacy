@@ -1,5 +1,13 @@
 # Registro y acceso por correo
 
+## Catálogo de Cuenta y legal
+
+Desplegar primero Legal con `account-catalog` y el alcance organizacional. El backend de MedSync consume los conjuntos de cuenta cuando `LEGAL_ACCOUNT_CATALOG_ENABLED=true`. El alta conserva `registration`. Los documentos de solo lectura no generan pendientes ni comprobantes.
+
+En Hemia Legal, configurar el servicio de verificación del sistema para llamar a `POST /api/saas-legal/integration/context` del entorno MedSync correspondiente. Registrar la audiencia y recurso de MedSync en Identity y habilitar `legal.consumer_context.read` al cliente de Legal. Configurar `LEGAL_CONTEXT_CALLER_ID` con ese cliente, `LEGAL_CONTEXT_AUDIENCE` con la audiencia del destino y `LEGAL_CONTEXT_INTROSPECTION_URL` con el endpoint de Identity del mismo origen que `HEMIA_ID_URL`. El cliente confidencial de MedSync necesita permiso para introspección. El callback comprueba el token técnico, el usuario, la sesión activa, la pertenencia al consultorio y el rol `admin` o `business_admin` para la firma organizacional. Actualmente informa `mfaVerified: false`; los conjuntos que exijan MFA necesitan una integración adicional.
+
+La cola conserva el contexto original. Si Legal devuelve 403 para una evidencia de sesión verificada, el evento queda registrado como rechazado y el usuario puede iniciar otra revisión. La consulta de versiones y comprobantes conserva la separación por conjunto. El editor y la aceptación local del contrato siguen activos durante la transición.
+
 ## Administración del contrato y documentos centrales · 2026-11-12
 
 El catálogo local de Super Admin y los pendientes locales muestran únicamente el contrato de licencia. Guardar, publicar o registrar una nueva aceptación local de términos o privacidad devuelve `409 LEGAL_CENTRAL_REQUIRED`, incluso si la instalación carece de aplicación central asignada. El contrato conserva su publicación local y aceptación por un administrador del consultorio. Los comprobantes y versiones históricas de términos y privacidad se conservan. En instalaciones sin aplicación central asignada, las publicaciones públicas anteriores siguen disponibles en lectura.

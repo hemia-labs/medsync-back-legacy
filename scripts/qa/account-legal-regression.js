@@ -18,6 +18,8 @@ async function run({useInstalledSdk=true}={}){
     const events=new Map();
     const db={async query(sql,options){
         const params=options.replacements;
+        if(sql.startsWith('SELECT id_session FROM'))return params.session===actor.id_session?[{id_session:actor.id_session}]:[];
+        if(sql.startsWith('SELECT id_login,name FROM login'))return [{id_login:'another-signer',name:'Previous administrator'}];
         if(sql.includes('FROM registration_outbox WHERE event_id='))return events.has(params.id)?[events.get(params.id)]:[];
         if(sql.includes('FROM registration_outbox')){
             assert.doesNotMatch(sql,/registration\.created/);
@@ -48,8 +50,10 @@ async function run({useInstalledSdk=true}={}){
     const oldFetch=global.fetch,oldEnv=process.env.NODE_ENV,oldKey=process.env.REGISTRATION_HMAC_KEY;
     process.env.NODE_ENV='test';process.env.REGISTRATION_HMAC_KEY='73'.repeat(32);
     let tokenCalls=0,readCalls=0,historyCalls=0,snapshotCalls=0,artifactCalls=0;
+    let sets=[],organizationHistory=[],organizationPending=[],machineClaims;
     global.fetch=async(url,options={})=>{
         url=String(url);
+        if(url.endsWith('/oauth/introspect'))return Response.json(machineClaims);
         if(url.endsWith('/oauth/token')){
             tokenCalls++;assert.equal(options.body.get('scope'),'legal.integration.acceptances.prepare');
             assert.equal(options.body.get('resource'),'http://localhost:3017');assert.equal(options.body.get('audience'),'legal-api');
@@ -60,10 +64,17 @@ async function run({useInstalledSdk=true}={}){
             readCalls++;assert.equal(new Headers(options.headers).get('authorization'),'Bearer synthetic-read-token');
             const input=JSON.parse(options.body);
             assert.equal(input.subjectId,actor.id_login);assert.equal(input.organizationId,actor.id_business);
-            assert.equal(input.documentSetKey,'registration');assert.equal(input.applicationId,manifest.applicationId);
+            assert.equal(input.applicationId,manifest.applicationId);
             assert.equal(options.redirect,'error');
             if(outage)return Response.json({private:'not forwarded'},{status:503});
             if(denied)return Response.json({},{status:403});
+            if(url.endsWith('/account-catalog')){assert.equal(input.documentSetKey,undefined);return Response.json({sets});}
+            if(input.documentSetKey==='account_contracts'){
+                if(url.endsWith('/pending/prepare')){assert.equal(input.sessionId,actor.id_session);return Response.json({...manifest,documentSetKey:input.documentSetKey,documents:organizationPending});}
+                if(url.endsWith('/evidence/history'))return Response.json({items:organizationHistory,nextCursor:null});
+                return Response.json({documentSetKey:input.documentSetKey,revision:manifest.revision,pendingDocuments:organizationPending});
+            }
+            assert.equal(input.documentSetKey,'registration');
             if(url.endsWith('/evidence/history')){historyCalls++;return Response.json({items:historyItems,nextCursor});}
             if(url.endsWith('/pending/prepare'))return Response.json({...manifest,documents:reviewDocs??(pending?manifest.documents:[])});
             assert.ok(url.endsWith('/pending/evaluate'),'Only read-only Legal operations are called');
@@ -164,12 +175,51 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.current(actor)).data.pending_count,1,'The local licence remains pending while personal evidence is queued');
         historyItems=[receipt];pending=false;synced=true;
         assert.equal((await dao.history(actor)).data.acceptances[0].evidence_id,receipt.evidenceId);
+        Object.assign(legal.env,{LEGAL_ACCOUNT_CATALOG_ENABLED:'true',LEGAL_CONTEXT_CALLER_ID:'legal-service',LEGAL_CONTEXT_AUDIENCE:'medsync-api',
+            LEGAL_CONTEXT_INTROSPECTION_URL:'http://localhost:4000/oauth/introspect'});
+        const contract={...privacy,documentKey:'agreement_qa',title:'Agreement',requiredAction:'accept'};
+        const info={...privacy,documentId:randomUUID(),documentVersionId:randomUUID(),documentKey:'read_only_qa',requiredAction:'informational'};
+        sets=[{documentSetKey:'account_contracts',name:'Contracts',revision:manifest.revision,evidenceScope:'organization',verification:'verified_session',documents:[contract,info]}];
+        organizationPending=[contract];
+        const account=await dao.current(actor);
+        assert.equal(account.data.documents.find(d=>d.document_key===contract.documentKey).central_can_review,true);
+        assert.equal(account.data.documents.find(d=>d.document_key===info.documentKey).informational,true);
+        assert.equal((await dao.notice(actor)).data.pending_count,2);
+        const organizationReview=await dao.centralContext(actor,'account_contracts');
+        assert.equal(organizationReview.data.acceptanceScope,'business');
+        const submission={...input,documentSetKey:'account_contracts',idempotencyKey:randomUUID(),legalContext:organizationReview.data.legalContext,
+            legalAcceptances:[{documentKey:contract.documentKey,versionId:contract.documentVersionId,acknowledged:true}]};
+        actor.role='assistant';
+        assert.equal((await dao.centralContext(actor,'account_contracts')).status,403);
+        assert.equal((await dao.acceptCentral(actor,submission)).status,403);
+        actor.role='admin';
+        assert.equal((await dao.acceptCentral(actor,{...submission,documentSetKey:'registration'})).code,'LEGAL_VERSION_STALE');
+        assert.equal((await dao.acceptCentral(actor,submission)).status,202);
+        const organizationEvidence=JSON.parse(events.get(submission.idempotencyKey).legal_evidence_payload);
+        assert.equal(organizationEvidence.sessionId,actor.id_session);
+        assert.equal(organizationEvidence.organizationId,actor.id_business);
+        machineClaims={active:true,exp:Date.now()/1000+60,aud:'medsync-api',client_id:'legal-service',scope:'legal.consumer_context.read'};
+        const context={subjectId:actor.id_login,organizationId:actor.id_business,sessionId:actor.id_session,documentSetKey:'account_contracts',
+            purpose:'document_acceptance',operation:'record'};
+        assert.equal((await dao.representativeContext('Bearer qa-token',context)).data.canAcceptDocuments,true);
+        assert.equal((await dao.representativeContext('Bearer qa-token',{...context,sessionId:'revoked'})).status,403);
+        machineClaims={...machineClaims,aud:'other-api'};
+        assert.equal((await dao.representativeContext('Bearer qa-token',context)).status,403);
+        organizationHistory=[{...receipt,evidenceId:randomUUID(),signerSubjectId:'another-signer',documents:[contract],
+            confirmations:[{documentVersionId:contract.documentVersionId,contentHash:contract.contentHash,action:'accept',confirmed:true}]}];
+        organizationPending=[];synced=true;
+        const shared=(await dao.history(actor)).data.acceptances.find(item=>item.document_set_key==='account_contracts');
+        assert.equal(shared.accepted_by_id,'another-signer');assert.equal(shared.accepted_by_name,'Previous administrator');
+        assert.equal(shared.acceptance_scope,'business');
+        events.get(submission.idempotencyKey).legal_error_code='LEGAL_REPRESENTATIVE_REJECTED';
+        assert.equal((await dao.acceptCentral(actor,submission)).code,'LEGAL_REPRESENTATIVE_REJECTED');
+        delete legal.env.LEGAL_ACCOUNT_CATALOG_ENABLED;
         delete legal.env.LEGAL_APPLICATION_ID;
         assert.deepEqual((await dao.current(actor)).data.documents.map(d=>d.document_key),['license_agreement'],
             'A service URL without an assigned application exposes only the local licence');
         assert.equal((await dao.history(actor)).data.acceptances.length,1);
         if(useInstalledSdk)assert.equal(tokenCalls,1,'Read tokens are reused, scoped and independent of recording tokens');
-        console.log('PASS account legal: first central confirmation, preserved local history/licence, scoped reads, outage/queue states, paging and version/hash validation.');
+        console.log('PASS account legal: personal and organization review, representative verification, preserved history/licence, scoped reads, queue states and exact versions.');
     }finally{
         global.fetch=oldFetch;
         if(oldEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldEnv;
