@@ -60,6 +60,9 @@ class LegalRegistrationService {
                 applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX',
             });
         } catch(_) {throw unavailable();}
+        return this.contextFromSnapshot(attemptSecret,snapshot);
+    }
+    async contextFromSnapshot(attemptSecret,snapshot) {
         if(!uuid.test(snapshot.snapshotToken||'')||!Number.isFinite(Date.parse(snapshot.expiresAt))
             ||Date.parse(snapshot.expiresAt)<=this.clock()||!Array.isArray(snapshot.documents)||!snapshot.documents.length||snapshot.documents.length>10) throw unavailable();
         const origins=(this.env.LEGAL_DOCUMENT_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean);
