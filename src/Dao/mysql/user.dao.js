@@ -47,7 +47,7 @@ async function addUserNames(rows, business, superAdmin) {
     const ids = rows.map(row => row.id_login).filter(Boolean);
     if (!ids.length) return rows;
     const names = await sequelize.query(
-        'SELECT id_login,first_name,last_name FROM login WHERE id_login IN (:ids) AND (:superAdmin=1 OR id_business=:business)',
+        'SELECT id_login,first_name,last_name FROM login WHERE id_login IN (:ids) AND (:superAdmin = 1 OR id_business=:business)',
         { replacements: { ids, superAdmin: superAdmin ? 1 : 0, business: business || null }, type: QueryTypes.SELECT }
     );
     const byId = new Map(names.map(row => [row.id_login, row]));
