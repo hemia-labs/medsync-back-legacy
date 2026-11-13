@@ -42,7 +42,6 @@ class MemoryDb {
         });
         if(sql.startsWith('SELECT * FROM saas_legal_documents')) {
             const rows = state.heads.filter(head => p.key ? head.document_key === p.key : p.document ? head.id_document === p.document : true).map(head => ({ ...head }));
-            if(this.afterHeadsRead && p.key === 'license_agreement') { const run = this.afterHeadsRead; this.afterHeadsRead = null; run(); }
             return rows;
         }
         if(sql.startsWith('SELECT * FROM saas_legal_versions')) return state.versions.filter(version => p.version ? version.id_version === p.version : version.id_document === p.document).sort((a, b) => b.version_number - a.version_number).map(version => ({ ...version }));
@@ -89,8 +88,7 @@ async function publish(key, html) {
     assert.equal(validateDraft('license_agreement', { ...draft(1), acceptance_scope: 'user' }).isValid, false);
     assert.equal(validateDraft('license_agreement', draft(1, '')).isValid, true, 'Blank drafts remain editable');
     assert.equal(validateAcceptance({ id_version: 'qa-version', acknowledged: 'true' }).isValid, false);
-    const empty = await dao.current(contexts.user); assert.equal(empty.data.documents.length, 1); assert.equal(empty.data.pending_count, 0);
-    assert.ok(empty.data.documents.every(document => !document.current_version && !document.can_accept && !document.pending));
+    const empty = await dao.current(contexts.user); assert.deepEqual(empty.data.documents, []); assert.equal(empty.data.pending_count, 0);
     assert.equal(db.calls.some(call => call.sql.startsWith('SELECT v.*')), false, 'No version lookup or empty IN clause for unpublished heads');
     assert.equal((await dao.publicDocument('terms_conditions')).status, 404);
     assert.equal((await dao.publicDocument('license_agreement')).status, 404);
@@ -131,9 +129,9 @@ async function publish(key, html) {
     assert.match(v1.content_hash, /^[a-f0-9]{64}$/); assert.equal(v1.published_at, '2026-10-17T15:30:00.000Z');
     const capturedHead = db.state.heads.find(row => row.document_key === 'license_agreement');
     assert.equal((await dao.publish(contexts.super, 'license_agreement', { expected_revision: capturedHead.draft_revision })).code, 'LEGAL_ALREADY_PUBLISHED');
-    const current = await dao.current(contexts.user); assert.equal(current.data.pending_count, 1); assert.equal(current.data.documents[0].can_accept, false);
+    const current = await dao.current(contexts.user); assert.equal(current.data.pending_count, 0); assert.deepEqual(current.data.documents, []);
     assert.deepEqual((await dao.notice(contexts.user)).data, {
-        pending_count: 1, business_pending: true, central_sync_pending: false, pending_unknown: false
+        pending_count: 0, business_pending: false, central_sync_pending: false, pending_unknown: false
     });
     assert.equal((await dao.accept(contexts.user, { id_version: v1.id_version, acknowledged: false })).status, 400);
     assert.equal((await dao.accept(contexts.user, { id_version: v1.id_version, acknowledged: true })).code, 'LEGAL_ADMIN_REQUIRED');
@@ -144,23 +142,14 @@ async function publish(key, html) {
     const afterConcurrentCommit = await dao.accept(contexts.admin, { id_version: v1.id_version, acknowledged: true });
     assert.equal(afterConcurrentCommit.success, true); assert.equal(afterConcurrentCommit.data.already_accepted, true, 'A locking acceptance lookup sees the concurrent commit despite an older read snapshot');
     db.staleAcceptanceSnapshot = false;
-    assert.equal((await dao.current(contexts.second)).data.pending_count, 0, 'A clinic member inherits the clinic licence acceptance');
-    assert.equal((await dao.history(contexts.second)).data.acceptances.length, 1);
+    assert.equal((await dao.history(contexts.second)).data.acceptances.length, 1, 'A clinic member sees the historical clinic licence acceptance');
     assert.equal((await dao.history(contexts.other)).data.acceptances.length, 0, 'A different tenant sees no acceptance');
     const prior = structuredClone(db.state.versions.find(row => row.id_version === v1.id_version));
     const v2 = await publish('license_agreement', '<p>Segundo texto QA revisado.</p>');
     assert.equal(v2.version_number, 2); assert.notEqual(v2.content_hash, v1.content_hash);
     assert.deepEqual(db.state.versions.find(row => row.id_version === v1.id_version), prior);
     assert.equal((await dao.accept(contexts.admin, { id_version: v1.id_version, acknowledged: true })).code, 'LEGAL_VERSION_STALE');
-    assert.equal((await dao.current(contexts.user)).data.pending_count, 1, 'A new version requires a fresh explicit acknowledgement');
-    db.afterHeadsRead = () => {
-        db.state.versions.push({ ...db.state.versions.find(row => row.id_version === v2.id_version), id_version: 'qa-interleaved-publication', version_number: 3 });
-        capturedHead.current_version_id = 'qa-interleaved-publication';
-    };
-    const interleavedCurrent = await dao.current(contexts.user);
-    assert.equal(interleavedCurrent.data.documents[0].current_version.id_version, v2.id_version, 'A publish between head/version reads returns the captured immutable version, never Sin publicar');
-    capturedHead.current_version_id = v2.id_version;
-    db.state.versions = db.state.versions.filter(row => row.id_version !== 'qa-interleaved-publication');
+    assert.deepEqual((await dao.current(contexts.user)).data.documents, [], 'A new local version does not appear in the account catalog');
     const history = await dao.history(contexts.user);
     assert.equal(history.data.acceptances[0].version.id_version, v1.id_version); assert.equal(history.data.acceptances[0].version.content_html, prior.content_html);
     assert.equal(history.data.acceptances[0].accepted_by_name, 'Nombre qa-admin');
@@ -215,5 +204,5 @@ async function publish(key, html) {
     assert.equal((sql.match(/CREATE TABLE IF NOT EXISTS/g) || []).length, 3);
     assert.match(sql, /UNIQUE KEY uq_saas_legal_version_subject/); assert.match(sql, /INSERT IGNORE INTO saas_legal_documents/);
     assert.equal((sql.match(/CREATE TRIGGER/g) || []).length, 4); assert.doesNotMatch(sql, /DROP TABLE|INSERT INTO saas_legal_versions|INSERT INTO saas_legal_acceptances/);
-    console.log('PASS SaaS legal: empty drafts/public isolation, sanitizer, revision conflicts, immutable publication/hash, captured-head publication interleaving, stale REPEATABLE READ acceptance snapshot/current locking lookup, explicit/idempotent acceptance, per-user/tenant scopes, actual admin/actor checks, frozen history, rollback/safe failures, restricted-tenant+CSRF+SuperAdmin routes, body injection defense and additive schema guards. In-memory only.');
+    console.log('PASS SaaS legal: central-only account catalog, public isolation, sanitizer, revision conflicts, immutable publication/hash, stale REPEATABLE READ acceptance snapshot/current locking lookup, explicit/idempotent acceptance, per-user/tenant scopes, actual admin/actor checks, frozen history, rollback/safe failures, restricted-tenant+CSRF+SuperAdmin routes, body injection defense and additive schema guards. In-memory only.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
