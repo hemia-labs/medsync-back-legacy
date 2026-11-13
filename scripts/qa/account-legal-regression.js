@@ -70,6 +70,12 @@ async function run({useInstalledSdk=true}={}){
             if(denied)return Response.json({},{status:403});
             if(url.endsWith('/account-catalog')){assert.equal(input.documentSetKey,undefined);return Response.json({sets});}
             if(input.documentSetKey==='account_contracts'){
+                if(url.endsWith('/account-document')){
+                    const item=sets[0].documents.find(doc=>doc.documentVersionId===input.documentVersionId);
+                    assert.ok(item);
+                    return Response.json({document:{id:item.documentId},version:{id:item.documentVersionId},contentHash:item.contentHash,
+                        artifacts:{html:{url:'https://files.example/terms'}}});
+                }
                 if(url.endsWith('/pending/prepare')){assert.equal(input.sessionId,actor.id_session);return Response.json({...manifest,documentSetKey:input.documentSetKey,documents:organizationPending});}
                 if(url.endsWith('/evidence/history'))return Response.json({items:organizationHistory,nextCursor:null});
                 return Response.json({documentSetKey:input.documentSetKey,revision:manifest.revision,pendingDocuments:organizationPending});
@@ -180,6 +186,9 @@ async function run({useInstalledSdk=true}={}){
         const contract={...privacy,documentKey:'agreement_qa',title:'Agreement',requiredAction:'accept'};
         const info={...privacy,documentId:randomUUID(),documentVersionId:randomUUID(),documentKey:'read_only_qa',requiredAction:'informational'};
         sets=[{documentSetKey:'account_contracts',name:'Contracts',revision:manifest.revision,evidenceScope:'organization',verification:'verified_session',documents:[contract,info]}];
+        const contractVersion=await central.document(actor,contract.documentVersionId,undefined,'account_contracts');
+        assert.equal(contractVersion.content_html,html);
+        assert.equal(contractVersion.acceptance_scope,'business');
         organizationPending=[contract];
         const account=await dao.current(actor);
         assert.equal(account.data.documents.find(d=>d.document_key===contract.documentKey).central_can_review,true);

@@ -115,7 +115,7 @@ class AccountLegalService {
         {transaction,type:QueryTypes.INSERT,replacements:{id:source.idempotencyKey,login:actor.id_login,business:actor.id_business,payload:JSON.stringify(payload)}});
         return {eventId:source.idempotencyKey,queued:true,evidenceId:null};
     }
-    async read(route,actor,cursor,key=registration,withSession=false) {
+    async read(route,actor,cursor,key=registration,withSession=false,documentVersionId) {
         const config=this.legal.configuration();
         if(!this.machine) {
             // Reuse the installed public MachineClient used by @hemia/legal 0.1.
@@ -127,7 +127,8 @@ class AccountLegalService {
         const response=await this.machine.request('legalRead','v1/legal/integrations/'+route,{method:'POST',
             headers:{accept:'application/json','content-type':'application/json'},
             body:JSON.stringify({applicationId:config.applicationId,...(key?{documentSetKey:key}:{}),subjectId:actor.id_login,
-                organizationId:actor.id_business,locale:'es-MX',...(cursor?{cursor}:{}),...(withSession?{sessionId:actor.id_session}:{})})});
+                organizationId:actor.id_business,locale:'es-MX',...(cursor?{cursor}:{}),...(withSession?{sessionId:actor.id_session}:{}),
+                ...(documentVersionId?{documentVersionId}:{})})});
         return JSON.parse((await body(response,2*1024*1024)).toString('utf8'));
     }
     async history(actor,cursor,key=registration) {
@@ -241,7 +242,9 @@ class AccountLegalService {
             doc=snapshot.documents.find(d=>d.documentVersionId===versionId);
         }
         if(!doc||!validDoc(doc)&&!(doc.requiredAction==='informational'&&validDoc({...doc,requiredAction:'acknowledge'})))throw unavailable();
-        return {...await this.publishedVersion(config,doc),acceptance_scope:set.evidenceScope==='organization'?'business':'user'};
+        const published=key===registration?undefined:await this.read('account-document',actor,cursor,key,false,versionId);
+        if(key!==registration&&!published)throw unavailable();
+        return {...await this.publishedVersion(config,doc,published),acceptance_scope:set.evidenceScope==='organization'?'business':'user'};
     }
     async publicCurrent(key) {
         const config=this.legal.configuration();
@@ -255,9 +258,9 @@ class AccountLegalService {
         return {id_document:doc.documentId,document_key:key,title:doc.title,
             description:version.description,current_version:version};
     }
-    async publishedVersion(config,doc) {
+    async publishedVersion(config,doc,published) {
         const url=new URL(`v1/legal/public/${config.applicationId}/documents/${encodeURIComponent(doc.documentKey)}/versions/${encodeURIComponent(doc.version)}?locale=es-MX`,config.base.origin);
-        const published=JSON.parse((await body(await this.legal.fetch(url,{redirect:'error',signal:AbortSignal.timeout(8000)}),1024*1024)).toString('utf8'));
+        published??=JSON.parse((await body(await this.legal.fetch(url,{redirect:'error',signal:AbortSignal.timeout(8000)}),1024*1024)).toString('utf8'));
         if(published.version?.id!==doc.documentVersionId||published.document?.id!==doc.documentId||published.contentHash!==doc.contentHash)throw unavailable();
         const artifact=new URL(published.artifacts?.html?.url);
         const origins=(this.legal.env.LEGAL_DOCUMENT_ORIGINS||'').split(',').map(v=>v.trim());
