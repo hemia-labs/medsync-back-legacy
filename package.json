@@ -22,7 +22,8 @@
     "qa:registration-legal": "bash scripts/qa/registration-legal.docker.sh",
     "qa:registration-http": "bash scripts/qa/registration-http.docker.sh",
     "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js",
-    "qa:nc4-catalogs": "node --test scripts/qa/nc4-catalogs.test.js"
+    "qa:nc4-catalogs": "node --test scripts/qa/nc4-catalogs.test.js",
+    "qa:nc4-catalogs-mysql": "bash scripts/qa/nc4-catalogs.docker.sh"
   },
   "engines": {
     "node": ">=22.12 <23"

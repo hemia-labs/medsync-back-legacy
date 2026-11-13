@@ -1,10 +1,12 @@
 'use strict';
 // NC4/L2: prepara un release "staged" a partir de un XLSX oficial ya descargado. Sin DB ni red.
+// Escribe <releaseId>.manifest.json, .entries.jsonl y .relations.jsonl, y comprueba la ida y vuelta.
+// No sobrescribe: si ya existe un release con ese id en --out, termina con CATALOG_STAGE_EXISTS.
 // Uso: node scripts/nc4/stage-catalog.js --file <xlsx> --family sis.diagnosis --release-id <id>
 //      --source-url <url> [--source-version <v>] [--valid-from YYYY-MM-DD --validity-basis publication_label] --out <dir>
 const fs = require('node:fs');
-const path = require('node:path');
 const { importXlsxRelease } = require('../../src/domain/sisCatalog/importer');
+const { writeStagedRelease, readStagedRelease } = require('../../src/domain/sisCatalog/stagedRelease');
 
 function args(argv) {
     const map = {};
@@ -30,11 +32,12 @@ function main() {
         validityBasis: a['valid-from'] ? (a['validity-basis'] || 'publication_label') : 'unknown',
         provenance: 'official'
     });
-    fs.mkdirSync(a.out, { recursive: true });
-    const base = path.join(a.out, release.manifest.releaseId);
-    fs.writeFileSync(base + '.manifest.json', JSON.stringify({ ...release.manifest, entryCount: release.entryCount, relationCount: release.pairs.size, issues }, null, 2) + '\n');
-    fs.writeFileSync(base + '.entries.jsonl', [...release.entries.values()].map(e => JSON.stringify(e)).join('\n') + '\n');
-    console.log(JSON.stringify({ releaseId: release.manifest.releaseId, family: release.manifest.family, sha256: release.manifest.sha256, entries: release.entryCount, relations: release.pairs.size, issues: issues.map(i => i.code) }));
+    writeStagedRelease(a.out, release, issues);
+    const back = readStagedRelease(a.out, release.manifest.releaseId).release;
+    console.log(JSON.stringify({
+        releaseId: release.manifest.releaseId, family: release.manifest.family, sha256: release.manifest.sha256,
+        contentSha256: back.contentSha256, entries: back.entryCount, relations: back.relationCount, issues: issues.map(i => i.code)
+    }));
 }
 
 if (require.main === module) {

@@ -78,12 +78,17 @@ function importXlsxRelease(buffer, meta) {
     const manifest = {
         sourceCatalogName: family.sourceCatalogName,
         encoding: 'xlsx/utf-8',
-        columnMapping: { sheet: cfg.sheet, code: cfg.code, label: cfg.label, attributes: cfg.attributes, relation: family.relation ? family.relation.sheet : null },
+        columnMapping: {
+            sheet: cfg.sheet, code: cfg.code, label: cfg.label, attributes: cfg.attributes,
+            relationSheet: family.relation ? family.relation.sheet : null,
+            relationLeftFamily: family.relation ? family.relation.leftFamily : null
+        },
         status: 'staged',
+        verifiedAt: null,
         ...meta,
         sha256: sha256(buffer)
     };
-    if (manifest.status !== 'staged') fail('Un import siempre produce un release staged; la verificación es un paso aparte.');
+    if (manifest.status !== 'staged' || manifest.verifiedAt !== null) fail('Un import siempre produce un release staged; la verificación es un paso aparte.');
     return { release: buildRelease(manifest, entries, { relations, sourceBuffer: buffer }), issues };
 }
 
