@@ -33,15 +33,8 @@ async function run({useInstalledSdk=true}={}){
             synced=false;
             return [];
         }
-        if(sql.startsWith('SELECT d.document_key,v.required')){
-            assert.equal(params.key,'license_agreement');
-            assert.doesNotMatch(sql,/content_html/);
-            return [{document_key:'license_agreement',required:1}];
-        }
         if(sql.startsWith('SELECT * FROM saas_legal_versions WHERE id_version='))return [{id_document:'terms_conditions',id_version:params.version}];
         if(sql.startsWith('SELECT * FROM saas_legal_documents WHERE id_document='))return [{document_key:'terms_conditions',current_version_id:'terms_conditions-v1'}];
-        if(sql.startsWith('SELECT * FROM saas_legal_documents WHERE document_key='))return [{id_document:params.key,document_key:params.key,current_version_id:params.key+'-v1'}];
-        if(sql.startsWith('SELECT v.*'))return [{id_document:params.document,id_version:params.version,title:params.document,version_number:1,required:1}];
         if(sql.startsWith('SELECT * FROM saas_legal_acceptances'))return [];
         if(sql.startsWith('SELECT a.*'))return [{id_acceptance:'old-receipt',id_version:'local-v1',id_document:'terms_conditions',document_key:'terms_conditions',
             title:'Old terms',version_number:1,acceptance_scope:'user',accepted_at:'2026-10-01T00:00:00Z',content_html:'<p>Old local terms</p>'}];
@@ -108,9 +101,9 @@ async function run({useInstalledSdk=true}={}){
     dao.actor=async context=>context.id_login===actor.id_login&&context.id_business===actor.id_business?actor:null;
     try{
         pending=true;
-        assert.deepEqual((await dao.notice(actor)).data,{pending_count:2,business_pending:true,central_sync_pending:false,pending_unknown:false});
+        assert.deepEqual((await dao.notice(actor)).data,{pending_count:1,business_pending:false,central_sync_pending:false,pending_unknown:false});
         assert.equal(snapshotCalls,0);assert.equal(historyCalls,0);assert.equal(artifactCalls,0);
-        synced=false;assert.equal((await dao.notice(actor)).data.pending_count,1);
+        synced=false;assert.equal((await dao.notice(actor)).data.pending_count,0);
         assert.equal((await dao.notice(actor)).data.central_sync_pending,true);synced=true;pending=false;
         outage=true;assert.equal((await dao.notice(actor)).data.pending_unknown,true);outage=false;
         const publicReads=readCalls;
@@ -127,10 +120,10 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.publicDocument('privacy_notice')).status,404);
         html='<p>tampered public copy</p>';assert.equal((await dao.publicDocument('terms_conditions')).status,503);html='<p>Original terms</p>';
         const result=await dao.current(actor);assert.equal(result.status,200);assert.equal(result.data.central_available,true);
-        assert.deepEqual(result.data.documents.map(d=>d.document_key),['license_agreement','terminos_y_condiciones']);
+        assert.deepEqual(result.data.documents.map(d=>d.document_key),['terminos_y_condiciones']);
         const current=result.data.documents.find(d=>d.source==='central');
         assert.equal(current.pending,false);assert.equal(current.can_accept,false);assert.equal(current.accepted.evidence_id,receipt.evidenceId);
-        assert.equal(result.data.pending_count,1,'The unrelated local licence remains pending');
+        assert.equal(result.data.pending_count,0);
         const history=await dao.history(actor);assert.equal(history.data.acceptances.length,2);
         assert.equal(history.data.acceptances[0].source,'central');assert.equal(history.data.acceptances[1].id_acceptance,'old-receipt');
         assert.equal((await dao.centralDocument(actor,doc.documentVersionId)).data.version.content_html,html);
@@ -144,9 +137,9 @@ async function run({useInstalledSdk=true}={}){
         assert.equal(snapshotCalls,beforeDenied,'Denied organizations cannot obtain an account review context');
         denied=false;
         outage=true;const failed=await dao.current(actor);assert.equal(failed.data.pending_unknown,true);assert.equal(failed.data.central_available,false);
-        assert.deepEqual(failed.data.documents.map(d=>d.document_key),['license_agreement']);
+        assert.deepEqual(failed.data.documents,[]);
         assert.equal((await dao.history(actor)).data.acceptances[0].id_acceptance,'old-receipt');outage=false;
-        pending=true;const update=await dao.current(actor);assert.equal(update.data.pending_count,2);
+        pending=true;const update=await dao.current(actor);assert.equal(update.data.pending_count,1);
         assert.equal(update.data.documents.find(d=>d.source==='central').accepted,null);
         synced=false;const waiting=await dao.current(actor);assert.equal(waiting.data.central_sync_pending,true);
         assert.equal(waiting.data.documents.find(d=>d.source==='central').pending,false);synced=true;pending=false;
@@ -156,7 +149,7 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.history(actor)).data.central_available,false,'Mismatched evidence must not be presented as accepted');historyItems=[receipt];
         historyItems=[];pending=true;
         const first=await dao.current(actor);
-        assert.equal(first.data.pending_count,2,'Account without any outbox events sees its first central pending document');
+        assert.equal(first.data.pending_count,1,'Account without any outbox events sees its first central pending document');
         assert.equal((await dao.history(actor)).data.acceptances[0].id_acceptance,'old-receipt');
         assert.equal((await dao.centralDocument(actor,doc.documentVersionId)).status,200);
         assert.equal((await dao.accept(actor,{id_version:'terms_conditions-v1',acknowledged:true})).code,'LEGAL_CENTRAL_REQUIRED');
@@ -178,7 +171,7 @@ async function run({useInstalledSdk=true}={}){
         assert.deepEqual(evidence.confirmations.map(c=>[c.documentVersionId,c.action]),[[privacy.documentVersionId,'acknowledge']]);
         assert.equal((await dao.centralContext(actor)).code,'LEGAL_SYNC_PENDING');
         assert.equal((await dao.history(actor)).data.central_sync_pending,true);
-        assert.equal((await dao.current(actor)).data.pending_count,1,'The local licence remains pending while personal evidence is queued');
+        assert.equal((await dao.current(actor)).data.pending_count,0,'Queued central evidence leaves no local pending licence');
         historyItems=[receipt];pending=false;synced=true;
         assert.equal((await dao.history(actor)).data.acceptances[0].evidence_id,receipt.evidenceId);
         Object.assign(legal.env,{LEGAL_ACCOUNT_CATALOG_ENABLED:'true',LEGAL_CONTEXT_CALLER_ID:'legal-service',LEGAL_CONTEXT_AUDIENCE:'medsync-api',
@@ -191,9 +184,10 @@ async function run({useInstalledSdk=true}={}){
         assert.equal(contractVersion.acceptance_scope,'business');
         organizationPending=[contract];
         const account=await dao.current(actor);
+        assert.equal(account.data.documents.some(d=>d.document_key==='license_agreement'),false);
         assert.equal(account.data.documents.find(d=>d.document_key===contract.documentKey).central_can_review,true);
         assert.equal(account.data.documents.find(d=>d.document_key===info.documentKey).informational,true);
-        assert.equal((await dao.notice(actor)).data.pending_count,2);
+        assert.equal((await dao.notice(actor)).data.pending_count,1);
         const organizationReview=await dao.centralContext(actor,'account_contracts');
         assert.equal(organizationReview.data.acceptanceScope,'business');
         const submission={...input,documentSetKey:'account_contracts',idempotencyKey:randomUUID(),legalContext:organizationReview.data.legalContext,
@@ -217,6 +211,7 @@ async function run({useInstalledSdk=true}={}){
         organizationHistory=[{...receipt,evidenceId:randomUUID(),signerSubjectId:'another-signer',documents:[contract],
             confirmations:[{documentVersionId:contract.documentVersionId,contentHash:contract.contentHash,action:'accept',confirmed:true}]}];
         organizationPending=[];synced=true;
+        assert.equal((await dao.notice(actor)).data.pending_count,0);
         const shared=(await dao.history(actor)).data.acceptances.find(item=>item.document_set_key==='account_contracts');
         assert.equal(shared.accepted_by_id,'another-signer');assert.equal(shared.accepted_by_name,'Previous administrator');
         assert.equal(shared.acceptance_scope,'business');
@@ -224,8 +219,9 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.acceptCentral(actor,submission)).code,'LEGAL_REPRESENTATIVE_REJECTED');
         delete legal.env.LEGAL_ACCOUNT_CATALOG_ENABLED;
         delete legal.env.LEGAL_APPLICATION_ID;
-        assert.deepEqual((await dao.current(actor)).data.documents.map(d=>d.document_key),['license_agreement'],
-            'A service URL without an assigned application exposes only the local licence');
+        assert.deepEqual((await dao.current(actor)).data.documents,[],
+            'A service URL without an assigned application does not expose a local licence');
+        assert.equal((await dao.notice(actor)).data.pending_count,0);
         assert.equal((await dao.history(actor)).data.acceptances.length,1);
         if(useInstalledSdk)assert.equal(tokenCalls,1,'Read tokens are reused, scoped and independent of recording tokens');
         console.log('PASS account legal: personal and organization review, representative verification, preserved history/licence, scoped reads, queue states and exact versions.');

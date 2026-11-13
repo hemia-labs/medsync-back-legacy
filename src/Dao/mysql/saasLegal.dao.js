@@ -94,13 +94,6 @@ class SaasLegalDao {
             const actor = await this.actor(context);
             if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay una cuenta activa en el consultorio.');
             const centralConfigured = this.central.configured();
-            const local = await this.query(`SELECT d.document_key,v.required FROM saas_legal_documents d
-                INNER JOIN saas_legal_versions v ON v.id_version=d.current_version_id AND v.id_document=d.id_document
-                WHERE d.document_key=:key AND NOT EXISTS (
-                    SELECT 1 FROM saas_legal_acceptances a WHERE a.id_version=v.id_version
-                    AND ${eq('a.id_business', ':business')}
-                    AND a.subject_key='business'
-                )`, { key: localLicenseKey, business: actor.id_business });
             const syncPending = centralConfigured && await this.central.syncPending(actor);
             let centralCount = 0, centralBusinessPending = false, pendingUnknown = false;
             if(centralConfigured) {
@@ -110,8 +103,7 @@ class SaasLegalDao {
                     centralBusinessPending = pending.businessPending;
                 } catch(_) { pendingUnknown = true; }
             }
-            return ok({ pending_count: local.filter(row => asBoolean(row.required)).length + centralCount,
-                business_pending: local.length > 0 || centralBusinessPending,
+            return ok({ pending_count: centralCount, business_pending: centralBusinessPending,
                 central_sync_pending: syncPending, pending_unknown: pendingUnknown });
         } catch(_) { return unavailable(); }
     }
@@ -121,25 +113,12 @@ class SaasLegalDao {
             if(!actor) return fail(403, 'LEGAL_CONTEXT_FORBIDDEN', 'No hay una cuenta activa en el consultorio para consultar estos documentos.');
             const centralConfigured = this.central.configured();
             const syncPending = centralConfigured && await this.central.syncPending(actor);
-            const documents = [];
-            const head = await this.head(localLicenseKey);
-            if(head) {
-                // Resolve the captured version even if publication advances the head.
-                const [current] = head.current_version_id ? await this.query(`SELECT v.* FROM saas_legal_versions v
-                    WHERE v.id_version=:version AND v.id_document=:document`, { version: head.current_version_id, document: head.id_document }) : [];
-                const [acceptance] = current ? await this.query(`SELECT * FROM saas_legal_acceptances WHERE id_version=:version
-                    AND ${eq('id_business', ':business')} AND subject_key=:subject`,
-                { version: current.id_version, business: actor.id_business, subject: 'business' }) : [];
-                documents.push({ id_document: head.id_document, document_key: localLicenseKey, title: current ? current.title : head.draft_title,
-                    description: current ? current.description || '' : '', acceptance_scope: 'business', required: current ? asBoolean(current.required) : false,
-                    current_version: versionDto(current), accepted: acceptanceDto(acceptance),
-                    can_accept: Boolean(current && !acceptance && ['admin', 'business_admin'].includes(actor.role)),
-                    pending: Boolean(current && !acceptance) });
-            }
-            let centralAvailable = true;
+            let documents = [], centralAvailable = true;
             if(centralConfigured) {
-                try { documents.push(...(await this.central.current(actor)).map(doc => syncPending && doc.pending
-                    ? {...doc, pending:false, sync_pending:true} : doc)); }
+                try {
+                    documents = (await this.central.current(actor)).map(doc => syncPending && doc.pending
+                        ? {...doc, pending:false, sync_pending:true} : doc);
+                }
                 catch(_) { centralAvailable = false; }
             }
             return ok({ documents, pending_count: documents.filter(document => document.required && document.pending).length,
