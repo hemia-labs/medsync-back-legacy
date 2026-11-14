@@ -29,7 +29,9 @@ const parsePersonnelList = raw => {
 /**
  * Edad cumplida entre dos fechas civiles YYYY-MM-DD, sin redondear (meses y días incluidos).
  * L2-R5: exige fechas civiles reales y nacimiento no posterior a la fecha clínica.
- * Con solo fechas civiles las horas no se conocen: se da el intervalo posible [días×24, días×24+23].
+ * L2-R9: con solo fechas civiles se desconocen la hora de nacimiento y la de la atención (ambas en [0, 24) h).
+ * Las horas transcurridas son días×24 + (hora_atención − hora_nacimiento), con una diferencia en (−24, 24).
+ * Las horas cumplidas posibles son entonces [máx(0, días×24 − 24), días×24 + 23]: días consecutivos dan 0..47.
  */
 function ageAt(birthDate, clinicalDate) {
     if (!validDate(birthDate)) throw Object.assign(new Error('Fecha de nacimiento inválida: ' + birthDate), { code: 'AGE_DATE_INVALID' });
@@ -40,7 +42,7 @@ function ageAt(birthDate, clinicalDate) {
     let months = (cy - by) * 12 + (cm - bm);
     if (cd < bd) months--;
     const days = Math.round((Date.UTC(cy, cm - 1, cd) - Date.UTC(by, bm - 1, bd)) / 86400000);
-    return { years: Math.floor(months / 12), months, days, hoursMin: days * 24, hoursMax: days * 24 + 23 };
+    return { years: Math.floor(months / 12), months, days, hoursMin: Math.max(0, days * 24 - 24), hoursMax: days * 24 + 23 };
 }
 
 /** 'ok' | 'violated' | 'undetermined' para un límite inferior o superior. Solo la unidad H puede quedar indeterminada. */

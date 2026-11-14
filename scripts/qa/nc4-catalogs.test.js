@@ -349,7 +349,7 @@ test('sexo y edad: intersexual omite LSEX; límites en años, meses y días', ()
     assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico1', infant, { ...ctx, birthDate: '2026-10-16' }).result, 'valid');
     assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico1', infant, { ...ctx, birthDate: '2026-10-17' }).issues[0].code, 'DIAGNOSIS_AGE_BELOW');
     assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico1', infant, { ...ctx, birthDate: '2025-11-13' }).issues[0].code, 'DIAGNOSIS_AGE_ABOVE');
-    assert.deepEqual(ageAt('2024-02-29', '2025-02-28'), { years: 0, months: 11, days: 365, hoursMin: 8760, hoursMax: 8783 });
+    assert.deepEqual(ageAt('2024-02-29', '2025-02-28'), { years: 0, months: 11, days: 365, hoursMin: 8736, hoursMax: 8783 });
     assert.throws(() => parseAgeLimit('9A'), { code: 'DIAGNOSIS_AGE_LIMIT_FORMAT' });
 });
 
@@ -376,9 +376,22 @@ test('L2-R5: límites en horas con fecha civil dan valid, invalid o unverified, 
     const sameDay = validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '006H' }), { ...ctx, birthDate: '2026-11-13' });
     assert.equal(sameDay.result, 'unverified');
     assert.equal(sameDay.issues[0].code, 'DIAGNOSIS_AGE_HOURS_UNDETERMINED');
-    // Un día de edad (24–47 h) sí cumple 006H y viola un máximo de 012H.
-    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '006H' }), { ...ctx, birthDate: '2026-11-12' }).result, 'valid');
-    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LSUP: '012H' }), { ...ctx, birthDate: '2026-11-12' }).issues[0].code, 'DIAGNOSIS_AGE_ABOVE');
+    // L2-R9: días consecutivos (23:30 → 00:30 es 1 h; 00:00 → 23:59 del día siguiente son 47 h) no deciden 006H ni 012H.
+    for (const limits of [{ LINF: '006H' }, { LSUP: '012H' }]) {
+        const r = validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx(limits), { ...ctx, birthDate: '2026-11-12' });
+        assert.equal(r.result, 'unverified', JSON.stringify(limits));
+        assert.equal(r.issues[0].code, 'DIAGNOSIS_AGE_HOURS_UNDETERMINED');
+    }
+    assert.deepEqual([ageAt('2026-11-12', '2026-11-13').hoursMin, ageAt('2026-11-12', '2026-11-13').hoursMax], [0, 47]);
+    // Dos días: 24–71 h. Cumple 006H y viola 012H; 048H como máximo queda indeterminado.
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '006H' }), { ...ctx, birthDate: '2026-11-11' }).result, 'valid');
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LSUP: '012H' }), { ...ctx, birthDate: '2026-11-11' }).issues[0].code, 'DIAGNOSIS_AGE_ABOVE');
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LSUP: '048H' }), { ...ctx, birthDate: '2026-11-11' }).result, 'unverified');
+    // Tres días: 48–95 h. Cumple 048H como mínimo (límite exacto) y viola 047H como máximo.
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '048H' }), { ...ctx, birthDate: '2026-11-10' }).result, 'valid');
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LSUP: '047H' }), { ...ctx, birthDate: '2026-11-10' }).issues[0].code, 'DIAGNOSIS_AGE_ABOVE');
+    // Cruce de mes y año: 2026-12-31 → 2027-01-01 también es indeterminado.
+    assert.equal(validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '006H' }), { ...ctx, birthDate: '2026-12-31', clinicalDate: '2027-01-01' }).result, 'unverified');
     // Una violación determinada prevalece sobre una indeterminada.
     const both = validateDiagnosis(CE, 'codigoCIEDiagnostico2', dx({ LINF: '006H', LSEX: 'MUJER' }), { ...ctx, birthDate: '2026-11-13' });
     assert.equal(both.result, 'invalid');
@@ -447,6 +460,27 @@ test('DDL: columnas CatalogRef ascii_bin con las longitudes del contrato', () =>
     assert.match(migration.REF.code, new RegExp(`VARCHAR\\(${LIMITS.code}\\) CHARACTER SET ascii COLLATE ascii_bin`));
     assert.deepEqual(migration.tables.map(([name]) => name), ['sis_catalog_release', 'sis_catalog_entry', 'sis_catalog_relation']);
     assert.match(migration.nc1ForeignKeyExample, /REFERENCES sis_catalog_entry \(family, release_id, code\)/);
+});
+
+test('L2-R7 (estático): verified_at solo cambia en staged → verified', () => {
+    const update = migration.triggers.find(t => t.name === 'trg_sis_release_update').body;
+    assert.match(update, /IF OLD\.status = 'staged' AND NEW\.status = 'verified' THEN\s+IF OLD\.verified_at IS NOT NULL OR NEW\.verified_at IS NULL/);
+    assert.match(update, /ELSEIF NOT \(OLD\.verified_at <=> NEW\.verified_at\)/);
+});
+
+test('L2-R8 (estático): la especificación cubre columnas, índices, FK y CHECK de las tres tablas', () => {
+    for (const [table] of migration.tables) {
+        const spec = migration.SCHEMA_SPEC[table];
+        assert.deepEqual(spec.columns.map(c => c[0]), migration.COLUMNS[table], table);
+        assert.ok(spec.indexes.PRIMARY, table + ' PRIMARY');
+        assert.ok(Object.values(spec.checks).every(c => c.enforced === 'YES'), table + ' CHECK forzados');
+        for (const [col, len] of Object.entries(migration.REF_COLUMNS[table])) {
+            const c = spec.columns.find(x => x[0] === col);
+            assert.deepEqual(c.slice(1, 5), [`varchar(${len})`, 'NO', 'ascii', 'ascii_bin'], `${table}.${col}`);
+        }
+    }
+    assert.equal(Object.keys(migration.SCHEMA_SPEC.sis_catalog_release.checks).length, 10);
+    assert.deepEqual(migration.SCHEMA_SPEC.sis_catalog_entry.foreignKeys.fk_sis_entry_release.onDelete, 'RESTRICT');
 });
 
 test('L2-R1 (estático): triggers cubren INSERT/UPDATE/DELETE de las tres tablas y el release compara todo su contenido', () => {

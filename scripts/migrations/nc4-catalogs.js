@@ -4,7 +4,10 @@
 // Orden: 1. nc4-catalogs (este archivo)  2. nc1-identity (Codex, sin FK)  3. nc1-identity-catalog-fk (Codex).
 // L2-R1: un release solo cambia su estado; nada se borra; entradas y relaciones solo se cargan en staged;
 //        verificar exige que los conteos coincidan con lo cargado; verified_at, una vez fijado, no cambia.
+const { createHash } = require('node:crypto');
 const { LIMITS } = require('../../src/domain/sisCatalog/catalogRef');
+// Estructura contractual esperada (generada con describeTable en MySQL 8.4.13 y revisada; ver contractView).
+const SCHEMA_SPEC = require('./nc4-catalogs.schema.json');
 
 const REF = {
     family: `VARCHAR(${LIMITS.family}) CHARACTER SET ascii COLLATE ascii_bin`,
@@ -126,11 +129,12 @@ const triggers = [
                 OR (OLD.status = 'verified' AND NEW.status = 'retired')) THEN
                 ${signal('Transicion de estado no permitida')};
             END IF;
-            IF OLD.verified_at IS NOT NULL AND NOT (OLD.verified_at <=> NEW.verified_at) THEN
-                ${signal('verified_at no cambia una vez fijado')};
-            END IF;
-            IF OLD.status = 'staged' AND NEW.status = 'retired' AND NEW.verified_at IS NOT NULL THEN
-                ${signal('Un release descartado no tiene verified_at')};
+            IF OLD.status = 'staged' AND NEW.status = 'verified' THEN
+                IF OLD.verified_at IS NOT NULL OR NEW.verified_at IS NULL THEN
+                    ${signal('verified_at se fija solo al verificar')};
+                END IF;
+            ELSEIF NOT (OLD.verified_at <=> NEW.verified_at) THEN
+                ${signal('verified_at solo cambia de staged a verified')};
             END IF;
             IF OLD.status = 'staged' AND NEW.status = 'verified' THEN
                 SELECT COUNT(*) INTO loaded_entries FROM sis_catalog_entry WHERE family = NEW.family AND release_id = NEW.release_id;
@@ -169,28 +173,97 @@ const nc1ForeignKeyExample = `ALTER TABLE care_establishment
 
 const normalize = sql => String(sql).replace(/\s+/g, ' ').trim();
 const incompatible = message => Object.assign(new Error(message), { code: 'CATALOG_DDL_INCOMPATIBLE' });
+const sha = text => createHash('sha256').update(text).digest('hex');
 
-async function verifyTable(conn, table) {
-    const [cols] = await conn.query(
-        `SELECT COLUMN_NAME AS name, CHARACTER_MAXIMUM_LENGTH AS len, CHARACTER_SET_NAME AS charset, COLLATION_NAME AS coll
-         FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, [table]);
-    const names = cols.map(c => c.name);
-    if (names.join(',') !== COLUMNS[table].join(',')) throw incompatible(`${table}: columnas ${names.join(',')} no coinciden con las esperadas.`);
-    for (const [name, len] of Object.entries(REF_COLUMNS[table])) {
-        const c = cols.find(x => x.name === name);
-        if (Number(c.len) !== len || c.charset !== 'ascii' || c.coll !== 'ascii_bin') throw incompatible(`${table}.${name}: se esperaba VARCHAR(${len}) ascii_bin.`);
+// L2-R8: registro de lo que instaló este módulo. Una tabla existente sin registro, o cuya estructura cambió
+// desde que se registró, se rechaza: el instalador nunca adopta ni repara en silencio.
+const SCHEMA_LOG = `CREATE TABLE IF NOT EXISTS sis_catalog_schema_log (
+        object_name VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        definition_sha CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        structure_sha CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        recorded_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (object_name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
+
+/**
+ * Estructura completa de una tabla según information_schema: motor, colación, columnas (tipo, nulabilidad,
+ * charset, colación, default, extra), índices, FK con sus reglas y CHECK con su cláusula y si está forzado.
+ */
+async function describeTable(conn, table) {
+    const p = [table];
+    const [[t]] = await conn.query('SELECT ENGINE AS engine, TABLE_COLLATION AS collation FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', p);
+    const [columns] = await conn.query(`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, CHARACTER_SET_NAME AS charset,
+        COLLATION_NAME AS collation, COLUMN_DEFAULT AS dflt, EXTRA AS extra FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, p);
+    const [stats] = await conn.query(`SELECT INDEX_NAME AS name, NON_UNIQUE AS nonUnique, COLUMN_NAME AS col FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, p);
+    const [fks] = await conn.query(`SELECT k.CONSTRAINT_NAME AS name, k.COLUMN_NAME AS col, k.REFERENCED_TABLE_NAME AS refTable, k.REFERENCED_COLUMN_NAME AS refCol,
+        r.UPDATE_RULE AS onUpdate, r.DELETE_RULE AS onDelete FROM information_schema.KEY_COLUMN_USAGE k
+        JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+        WHERE k.TABLE_SCHEMA = DATABASE() AND k.TABLE_NAME = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION`, p);
+    const [checks] = await conn.query(`SELECT c.CONSTRAINT_NAME AS name, c.CHECK_CLAUSE AS clause, t.ENFORCED AS enforced FROM information_schema.CHECK_CONSTRAINTS c
+        JOIN information_schema.TABLE_CONSTRAINTS t ON t.CONSTRAINT_SCHEMA = c.CONSTRAINT_SCHEMA AND t.CONSTRAINT_NAME = c.CONSTRAINT_NAME AND t.CONSTRAINT_TYPE = 'CHECK'
+        WHERE c.CONSTRAINT_SCHEMA = DATABASE() AND t.TABLE_NAME = ? ORDER BY c.CONSTRAINT_NAME`, p);
+    const indexes = {}, foreignKeys = {}, checkMap = {};
+    for (const s of stats) { indexes[s.name] = indexes[s.name] || { unique: Number(s.nonUnique) === 0, columns: [] }; indexes[s.name].columns.push(s.col); }
+    for (const f of fks) {
+        foreignKeys[f.name] = foreignKeys[f.name] || { refTable: f.refTable, onUpdate: f.onUpdate, onDelete: f.onDelete, columns: [], refColumns: [] };
+        foreignKeys[f.name].columns.push(f.col); foreignKeys[f.name].refColumns.push(f.refCol);
     }
+    for (const c of checks) checkMap[c.name] = { clause: c.clause, enforced: c.enforced };
+    return {
+        engine: t.engine, collation: t.collation,
+        columns: columns.map(c => [c.name, c.type, c.nullable, c.charset, c.collation, c.dflt === null ? null : String(c.dflt), c.extra]),
+        indexes, foreignKeys, checks: checkMap
+    };
+}
+
+// Contrato estático: todo salvo el texto de las cláusulas CHECK, que el servidor reescribe según la versión.
+const contractView = d => ({ ...d, checks: Object.fromEntries(Object.entries(d.checks).map(([name, c]) => [name, { enforced: c.enforced }])) });
+
+function diff(expected, actual, path = '') {
+    if (JSON.stringify(expected) === JSON.stringify(actual)) return null;
+    if (expected && actual && typeof expected === 'object' && typeof actual === 'object' && !Array.isArray(expected)) {
+        for (const key of new Set([...Object.keys(expected), ...Object.keys(actual)])) {
+            const d = diff(expected[key], actual[key], path ? `${path}.${key}` : key);
+            if (d) return d;
+        }
+    }
+    return `${path || 'raíz'}: se esperaba ${JSON.stringify(expected)} y hay ${JSON.stringify(actual)}`;
+}
+
+async function verifyTable(conn, table, recorded) {
+    const actual = await describeTable(conn, table);
+    const problem = diff(SCHEMA_SPEC[table], contractView(actual));
+    if (problem) throw incompatible(`${table} no cumple el contrato: ${problem}`);
+    const structure = sha(JSON.stringify(actual));
+    if (recorded && recorded.structure_sha !== structure) throw incompatible(`${table} cambió desde su instalación (estructura o cláusulas CHECK).`);
+    return structure;
 }
 
 /**
- * Instalación aditiva y reanudable. Crea lo que falta y aborta si un objeto existente difiere. No borra nada.
+ * Instalación aditiva y reanudable. Crea lo que falta, registra su estructura y aborta si un objeto existente
+ * no tiene registro o difiere del contrato o de lo registrado. No borra ni repara nada.
  * @param conn conexión mysql2/promise a la base destino (QA aislada hasta la aceptación bilateral)
  */
 async function install(conn, { log = () => {} } = {}) {
+    await conn.query(SCHEMA_LOG);
     for (const [table, ddl] of tables) {
         const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [table]);
-        if (Number(n) === 0) { await conn.query(ddl); log(`created ${table}`); } else log(`exists ${table}`);
-        await verifyTable(conn, table);
+        const [records] = await conn.query('SELECT definition_sha, structure_sha FROM sis_catalog_schema_log WHERE object_name = ?', [table]);
+        const recorded = records[0];
+        if (Number(n) === 0) {
+            if (recorded) throw incompatible(`${table} figura como instalada pero no existe.`);
+            await conn.query(ddl);
+            const structure = await verifyTable(conn, table, null);
+            await conn.query('INSERT INTO sis_catalog_schema_log (object_name, definition_sha, structure_sha) VALUES (?,?,?)', [table, sha(normalize(ddl)), structure]);
+            log(`created ${table}`);
+            continue;
+        }
+        if (!recorded) throw incompatible(`${table} existe sin registro de instalación; requiere conciliación manual.`);
+        if (recorded.definition_sha !== sha(normalize(ddl))) throw incompatible(`${table} se instaló con otra versión del DDL.`);
+        await verifyTable(conn, table, recorded);
+        log(`exists ${table}`);
     }
     for (const t of triggers) {
         const [rows] = await conn.query(
@@ -205,4 +278,7 @@ async function install(conn, { log = () => {} } = {}) {
     }
 }
 
-module.exports = { REF, tables, triggers, triggerSql, COLUMNS, REF_COLUMNS, nc1ForeignKeyExample, install, status: 'agreed-qa-only' };
+module.exports = {
+    REF, tables, triggers, triggerSql, COLUMNS, REF_COLUMNS, SCHEMA_SPEC, nc1ForeignKeyExample,
+    install, describeTable, contractView, status: 'agreed-qa-only'
+};

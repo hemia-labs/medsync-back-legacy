@@ -89,8 +89,21 @@ async function main() {
         assert.deepEqual([r.status, r.verified_at], ['staged', null]);
     });
     await step('descartar staged → retired sin verified_at; con verified_at se rechaza', async () => {
-        await rejects(conn, "UPDATE sis_catalog_release SET status='retired', verified_at='2026-11-13' WHERE release_id='qa-entity-partial'", [], /descartado/);
+        await rejects(conn, "UPDATE sis_catalog_release SET status='retired', verified_at='2026-11-13' WHERE release_id='qa-entity-partial'", [], /verified_at/);
         await conn.query("UPDATE sis_catalog_release SET status='retired' WHERE release_id='qa-entity-partial'");
+    });
+    // L2-R7: reproducción de Codex. Un release descartado con entry_count=5 y cero entradas no puede recibir verified_at.
+    const forged = buildRelease(manifest({ releaseId: 'qa-forged', sha256: '9'.repeat(64) }), ['11', '12', '13', '14', '15'].map(code => ({ code, label: code })));
+    await step('L2-R7: un descartado no puede fabricar verified_at por ninguna vía', async () => {
+        await insertRelease(conn, forged, { entries: false });
+        await conn.query("UPDATE sis_catalog_release SET status='retired' WHERE release_id='qa-forged'");
+        await rejects(conn, "UPDATE sis_catalog_release SET verified_at='2026-11-13 12:00:00.000' WHERE release_id='qa-forged'", [], /verified_at/);
+        await rejects(conn, "UPDATE sis_catalog_release SET status='retired', verified_at='2026-11-13 12:00:00.000' WHERE release_id='qa-forged'", [], /verified_at/);
+        await rejects(conn, "UPDATE sis_catalog_release SET status='verified', verified_at='2026-11-13 12:00:00.000' WHERE release_id='qa-forged'", [], /Transicion/);
+        const [[r]] = await conn.query("SELECT status, verified_at, entry_count FROM sis_catalog_release WHERE release_id='qa-forged'");
+        assert.deepEqual([r.status, r.verified_at, Number(r.entry_count)], ['retired', null, 5]);
+        const [[n]] = await conn.query("SELECT COUNT(*) n FROM sis_catalog_entry WHERE release_id='qa-forged'");
+        assert.equal(Number(n.n), 0);
     });
     await step('verificar con conteos completos', () => conn.query(verified, ['qa-entity-1']));
 
@@ -134,6 +147,11 @@ async function main() {
         const [[r]] = await conn.query("SELECT status, verified_at FROM sis_catalog_release WHERE release_id='qa-sb-1'");
         assert.equal(r.status, 'retired');
         assert.ok(r.verified_at);
+        // L2-R7: tampoco se borra ni se cambia la evidencia de un retirado tras verificarse.
+        await rejects(conn, "UPDATE sis_catalog_release SET verified_at=NULL WHERE release_id='qa-sb-1'", [], /verified_at/);
+        await rejects(conn, "UPDATE sis_catalog_release SET verified_at='2030-01-01 00:00:00.000' WHERE release_id='qa-sb-1'", [], /verified_at/);
+        const [[again]] = await conn.query("SELECT verified_at FROM sis_catalog_release WHERE release_id='qa-sb-1'");
+        assert.deepEqual(again.verified_at, r.verified_at);
     });
 
     await step('FK de ejemplo NC1: válida, huérfana, mayúsculas, ceros, candidata y nulos parciales', async () => {
@@ -177,12 +195,46 @@ async function main() {
             assert.equal(Number(t[0].n), 0);
         } finally { await other.end(); }
     });
-    await step('install aborta ante un trigger existente con otra definición', async () => {
-        await conn.query('CREATE DATABASE medsync_nc4_trigger');
-        const other = await mysql.createConnection({ ...base, database: 'medsync_nc4_trigger' });
+    // L2-R8: cada alteración se aplica sobre una instalación limpia y registrada; install() debe abortar sin reparar.
+    let driftIndex = 0;
+    async function drift(name, alterations, { after } = {}) {
+        await step(`L2-R8: install aborta tras ${name}`, async () => {
+            const db = `medsync_nc4_drift_${++driftIndex}`;
+            await conn.query(`CREATE DATABASE ${db}`);
+            const other = await mysql.createConnection({ ...base, database: db });
+            try {
+                await migration.install(other);
+                for (const sql of alterations) await other.query(sql);
+                const before = JSON.stringify(await migration.describeTable(other, 'sis_catalog_entry'));
+                await assert.rejects(migration.install(other), { code: 'CATALOG_DDL_INCOMPATIBLE' });
+                assert.equal(JSON.stringify(await migration.describeTable(other, 'sis_catalog_entry')), before, 'install no debe reparar');
+                if (after) await after(other);
+            } finally { await other.end(); }
+        });
+    }
+    await drift('DROP CHECK chk_sis_entry_code (reproducción de Codex)', ['ALTER TABLE sis_catalog_entry DROP CHECK chk_sis_entry_code'], {
+        // Sin el CHECK la DB acepta un código con espacio: por eso el instalador debe detectarlo.
+        after: async other => {
+            await other.query("INSERT INTO sis_catalog_release (release_id, family, source_catalog_name, downloaded_at, sha256, content_sha256, encoding, validity_basis, provenance, status, column_mapping_json, entry_count, relation_count) VALUES ('d1','sis.federal_entity','X','2026-11-13','" + 'a'.repeat(64) + "','" + 'b'.repeat(64) + "','x','unknown','official','staged','{}',1,0)");
+            await other.query("INSERT INTO sis_catalog_entry (family, release_id, code, label, attributes_json) VALUES ('sis.federal_entity','d1','with space','x','{}')");
+        }
+    });
+    await drift('CHECK no forzado', ['ALTER TABLE sis_catalog_release ALTER CHECK chk_sis_release_status NOT ENFORCED']);
+    await drift('CHECK con otra cláusula y el mismo nombre', ['ALTER TABLE sis_catalog_entry DROP CHECK chk_sis_entry_code', "ALTER TABLE sis_catalog_entry ADD CONSTRAINT chk_sis_entry_code CHECK (code <> '')"]);
+    await drift('FK eliminada', ['ALTER TABLE sis_catalog_entry DROP FOREIGN KEY fk_sis_entry_release']);
+    await drift('FK con otra regla', ['ALTER TABLE sis_catalog_entry DROP FOREIGN KEY fk_sis_entry_release',
+        'ALTER TABLE sis_catalog_entry ADD CONSTRAINT fk_sis_entry_release FOREIGN KEY (family, release_id) REFERENCES sis_catalog_release (family, release_id) ON DELETE CASCADE ON UPDATE RESTRICT']);
+    await drift('tipo de columna no referencial', ['ALTER TABLE sis_catalog_entry MODIFY label VARCHAR(400) COLLATE utf8mb4_unicode_ci NOT NULL']);
+    await drift('nulabilidad', ['ALTER TABLE sis_catalog_release MODIFY source_url VARCHAR(1000) COLLATE utf8mb4_unicode_ci NOT NULL']);
+    await drift('índice eliminado', ['ALTER TABLE sis_catalog_release DROP INDEX idx_sis_release_lookup']);
+    await drift('trigger reemplazado', ['DROP TRIGGER trg_sis_release_delete', 'CREATE TRIGGER trg_sis_release_delete BEFORE DELETE ON sis_catalog_release FOR EACH ROW SET @x = 1']);
+    await step('L2-R8: registro sin tabla aborta', async () => {
+        await conn.query('CREATE DATABASE medsync_nc4_missing');
+        const other = await mysql.createConnection({ ...base, database: 'medsync_nc4_missing' });
         try {
-            for (const [, ddl] of migration.tables) await other.query(ddl);
-            await other.query("CREATE TRIGGER trg_sis_release_delete BEFORE DELETE ON sis_catalog_release FOR EACH ROW SET @x = 1");
+            await migration.install(other);
+            await other.query('SET FOREIGN_KEY_CHECKS=0');
+            await other.query('DROP TABLE sis_catalog_relation');
             await assert.rejects(migration.install(other), { code: 'CATALOG_DDL_INCOMPATIBLE' });
         } finally { await other.end(); }
     });
