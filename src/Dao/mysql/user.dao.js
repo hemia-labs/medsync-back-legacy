@@ -441,7 +441,7 @@ async saveProfessionalProfile(body) {
                FROM doctor_professional_profile
               WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
                 AND id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci
-              LIMIT 1`,
+              LIMIT 1 FOR UPDATE`,
             {
                 replacements: {
                     _id_login: targetLogin,
@@ -485,6 +485,13 @@ async saveProfessionalProfile(body) {
             }
         }
 
+        if(existing[0] && profileField('professional_name') !== currentFlags.professional_name) {
+            const [identity] = await sequelize.query(`SELECT given_names,first_surname,second_surname FROM professional_identity
+                WHERE id_business=:business AND id_doctor_professional_profile=:id`,{replacements:{business:body.id_business,id:existing[0].id_doctor_professional_profile},transaction,type:QueryTypes.SELECT});
+            if(identity && (identity.given_names || identity.first_surname || identity.second_surname)) {
+                return {status:409,data:{code:'IDENTITY_CONFLICT'},message:'El nombre tiene identidad estructurada. Recarga el perfil y modifica el nombre desde Identidad.'};
+            }
+        }
         previousSignature = currentFlags.signature_image;
         let signature = profileField('signature_image');
         if (signature !== (previousSignature || null)) {

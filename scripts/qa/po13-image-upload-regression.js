@@ -33,6 +33,15 @@ stub('../../src/db/Sequelize.connection', {
     async transaction() { return { async commit() {}, async rollback() {} }; },
     async query(sql, options = {}) {
         sqlCalls.push({ sql, options });
+        if(sql.startsWith('SELECT * FROM person WHERE')) {
+            assert.equal(options.replacements.business,'tenant');
+            return owns ? [{id_person:options.replacements.id,name:'Synthetic',surname:'Patient',birthday:'2000-01-01'}] : [];
+        }
+        if(sql.startsWith('SELECT * FROM patient_identity WHERE')) return [];
+        if(sql.startsWith('SELECT id_address FROM address') || sql.startsWith('SELECT id_query FROM query')) {
+            assert.equal(options.replacements.business,'tenant');
+            return owns ? [{id_address:'address',id_query:'query'}] : [];
+        }
         if (/^\s*CALL/i.test(sql) || /^\s*INSERT/i.test(sql)) {
             events.push('save'); if (sqlFails) throw new Error('Synthetic SQL failure');
             if (sqlEmpty) return [];
@@ -115,7 +124,8 @@ function reset() { sdkCalls = []; sqlCalls = []; events = []; deleteKeys = []; o
     assert.equal(warnings.length, 1); assert.ok(!warnings[0].includes('previous'));
     const patient = () => ({ id_login: 'actor', id_business: 'tenant', files: { file: dataUrl },
         person: { id_person: 'patient', name: 'Synthetic', surname: 'Patient', birthday: '01-01-2000', age: 26 },
-        address: {}, query: {}, allergy: { review_status: 'UNREVIEWED' } });
+        identity:{biologicalSex:'2'},expectedRevision:0,
+        address: {id_address:'address'}, query: {id_query:'query'}, allergy: { review_status: 'UNREVIEWED' } });
     reset(); assert.equal((await patients.pxSave(patient())).status, 200);
     assert.equal(sdkCalls[0].Bucket, 'qa-signature');
     assert.ok(sqlCalls.some(call => call.sql.includes('INSERT INTO person') && call.options.replacements._id_signature.startsWith('https://synthetic.invalid/')));
