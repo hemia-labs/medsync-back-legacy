@@ -1,0 +1,458 @@
+{
+  "sis_catalog_release": {
+    "engine": "InnoDB",
+    "collation": "utf8mb4_unicode_ci",
+    "columns": [
+      [
+        "release_id",
+        "varchar(50)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "family",
+        "varchar(48)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "source_catalog_name",
+        "varchar(250)",
+        "NO",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ],
+      [
+        "source_url",
+        "varchar(1000)",
+        "YES",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ],
+      [
+        "source_version",
+        "varchar(100)",
+        "YES",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ],
+      [
+        "downloaded_at",
+        "datetime(3)",
+        "NO",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "sha256",
+        "char(64)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "content_sha256",
+        "char(64)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "encoding",
+        "varchar(40)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "valid_from",
+        "date",
+        "YES",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "valid_to",
+        "date",
+        "YES",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "validity_basis",
+        "varchar(20)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "provenance",
+        "varchar(10)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "status",
+        "varchar(10)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "verified_at",
+        "datetime(3)",
+        "YES",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "column_mapping_json",
+        "json",
+        "NO",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "entry_count",
+        "int unsigned",
+        "NO",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "relation_count",
+        "int unsigned",
+        "NO",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "created_at",
+        "datetime(3)",
+        "NO",
+        null,
+        null,
+        "CURRENT_TIMESTAMP(3)",
+        "DEFAULT_GENERATED"
+      ],
+      [
+        "created_by",
+        "varchar(50)",
+        "YES",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ],
+      [
+        "status_changed_at",
+        "datetime(3)",
+        "YES",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "status_changed_by",
+        "varchar(50)",
+        "YES",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ]
+    ],
+    "indexes": {
+      "idx_sis_release_lookup": {
+        "unique": false,
+        "columns": [
+          "family",
+          "status",
+          "valid_from"
+        ]
+      },
+      "PRIMARY": {
+        "unique": true,
+        "columns": [
+          "release_id"
+        ]
+      },
+      "ux_sis_release_family_id": {
+        "unique": true,
+        "columns": [
+          "family",
+          "release_id"
+        ]
+      },
+      "ux_sis_release_family_sha": {
+        "unique": true,
+        "columns": [
+          "family",
+          "sha256"
+        ]
+      }
+    },
+    "foreignKeys": {},
+    "checks": {
+      "chk_sis_release_basis": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_basis_date": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_family": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_hashes": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_id": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_provenance": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_state": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_status": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_verified": {
+        "enforced": "YES"
+      },
+      "chk_sis_release_window": {
+        "enforced": "YES"
+      }
+    }
+  },
+  "sis_catalog_entry": {
+    "engine": "InnoDB",
+    "collation": "utf8mb4_unicode_ci",
+    "columns": [
+      [
+        "family",
+        "varchar(48)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "release_id",
+        "varchar(50)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "code",
+        "varchar(32)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "label",
+        "varchar(500)",
+        "NO",
+        "utf8mb4",
+        "utf8mb4_unicode_ci",
+        null,
+        ""
+      ],
+      [
+        "attributes_json",
+        "json",
+        "NO",
+        null,
+        null,
+        null,
+        ""
+      ],
+      [
+        "is_sentinel",
+        "tinyint(1)",
+        "NO",
+        null,
+        null,
+        "0",
+        ""
+      ]
+    ],
+    "indexes": {
+      "idx_sis_entry_code": {
+        "unique": false,
+        "columns": [
+          "family",
+          "code"
+        ]
+      },
+      "PRIMARY": {
+        "unique": true,
+        "columns": [
+          "family",
+          "release_id",
+          "code"
+        ]
+      }
+    },
+    "foreignKeys": {
+      "fk_sis_entry_release": {
+        "refTable": "sis_catalog_release",
+        "onUpdate": "RESTRICT",
+        "onDelete": "RESTRICT",
+        "columns": [
+          "family",
+          "release_id"
+        ],
+        "refColumns": [
+          "family",
+          "release_id"
+        ]
+      }
+    },
+    "checks": {
+      "chk_sis_entry_code": {
+        "enforced": "YES"
+      }
+    }
+  },
+  "sis_catalog_relation": {
+    "engine": "InnoDB",
+    "collation": "utf8mb4_unicode_ci",
+    "columns": [
+      [
+        "family",
+        "varchar(48)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "release_id",
+        "varchar(50)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "left_family",
+        "varchar(48)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "left_code",
+        "varchar(32)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ],
+      [
+        "right_code",
+        "varchar(32)",
+        "NO",
+        "ascii",
+        "ascii_bin",
+        null,
+        ""
+      ]
+    ],
+    "indexes": {
+      "fk_sis_relation_entry": {
+        "unique": false,
+        "columns": [
+          "family",
+          "release_id",
+          "right_code"
+        ]
+      },
+      "PRIMARY": {
+        "unique": true,
+        "columns": [
+          "family",
+          "release_id",
+          "left_code",
+          "right_code"
+        ]
+      }
+    },
+    "foreignKeys": {
+      "fk_sis_relation_entry": {
+        "refTable": "sis_catalog_entry",
+        "onUpdate": "RESTRICT",
+        "onDelete": "RESTRICT",
+        "columns": [
+          "family",
+          "release_id",
+          "right_code"
+        ],
+        "refColumns": [
+          "family",
+          "release_id",
+          "code"
+        ]
+      }
+    },
+    "checks": {
+      "chk_sis_relation_codes": {
+        "enforced": "YES"
+      }
+    }
+  }
+}
