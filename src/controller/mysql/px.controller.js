@@ -237,6 +237,7 @@ getFamilyPath = async(req, res, next) =>{
         const clinical = await canReadClinicalHistory(permission =>
             hasPermission(req.tokenDecode.id_login, permission, { enabledCatalog: true }));
         response = await PxDao.getPxById(id, id_business, { clinical });
+        if(response.status===200 && response.data) { const service=require('../../Dao/mysql/identity.dao'); const value=await service.read('patient',id,id_business);response.data.identity=service.view(value.data,value.revision,value.updatedAt); }
     } catch (error) {
         response = this.HttpError(error.status, error.message);
     }

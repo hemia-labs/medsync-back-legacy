@@ -129,6 +129,7 @@ class ClinicalHistoryDao {
             }
         );
 
+        if(rows[0]) { const identity=require('./identity.dao');const value=await identity.read('patient',patientId,businessId,transaction);rows[0].identity=identity.view(value.data,value.revision,value.updatedAt); }
         return rows[0] || null;
     }
 

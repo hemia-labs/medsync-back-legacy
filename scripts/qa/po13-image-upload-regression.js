@@ -33,6 +33,20 @@ stub('../../src/db/Sequelize.connection', {
     async transaction() { return { async commit() {}, async rollback() {} }; },
     async query(sql, options = {}) {
         sqlCalls.push({ sql, options });
+        if(sql.startsWith('SELECT id_pathological_personal FROM pathological_personal')) {
+            assert.equal(options.replacements.business,'tenant');assert.equal(options.replacements.id,'patient');
+            assert.match(sql,/id_person=:id AND id_business=:business FOR UPDATE/);
+            return options.replacements.child==='owned-history' ? [{id_pathological_personal:'owned-history'}] : [];
+        }
+        if(sql.startsWith('SELECT * FROM person WHERE')) {
+            assert.equal(options.replacements.business,'tenant');
+            return owns ? [{id_person:options.replacements.id,name:'Synthetic',surname:'Patient',birthday:'2000-01-01'}] : [];
+        }
+        if(sql.startsWith('SELECT * FROM patient_identity WHERE')) return [];
+        if(sql.startsWith('SELECT id_address FROM address') || sql.startsWith('SELECT id_query FROM query')) {
+            assert.equal(options.replacements.business,'tenant');
+            return owns ? [{id_address:'address',id_query:'query'}] : [];
+        }
         if (/^\s*CALL/i.test(sql) || /^\s*INSERT/i.test(sql)) {
             events.push('save'); if (sqlFails) throw new Error('Synthetic SQL failure');
             if (sqlEmpty) return [];
@@ -115,7 +129,8 @@ function reset() { sdkCalls = []; sqlCalls = []; events = []; deleteKeys = []; o
     assert.equal(warnings.length, 1); assert.ok(!warnings[0].includes('previous'));
     const patient = () => ({ id_login: 'actor', id_business: 'tenant', files: { file: dataUrl },
         person: { id_person: 'patient', name: 'Synthetic', surname: 'Patient', birthday: '01-01-2000', age: 26 },
-        address: {}, query: {}, allergy: { review_status: 'UNREVIEWED' } });
+        identity:{biologicalSex:'2'},expectedRevision:0,
+        address: {id_address:'address'}, query: {id_query:'query'}, allergy: { review_status: 'UNREVIEWED' } });
     reset(); assert.equal((await patients.pxSave(patient())).status, 200);
     assert.equal(sdkCalls[0].Bucket, 'qa-signature');
     assert.ok(sqlCalls.some(call => call.sql.includes('INSERT INTO person') && call.options.replacements._id_signature.startsWith('https://synthetic.invalid/')));
@@ -123,6 +138,15 @@ function reset() { sdkCalls = []; sqlCalls = []; events = []; deleteKeys = []; o
     assert.equal(sdkCalls[0].Bucket, 'qa-signature');
     reset(); owns = false;
     assert.equal((await patients.pxUpdate(patient())).status, 404); assert.equal(sdkCalls.length, 0);
+    for(const foreign of ['other-tenant-history','other-patient-history','missing-history']) {
+        reset();
+        const result=await patients.pxUpdate({...patient(),pathological_data:[{id_type_pathological_personal:'1'},{id_pathological_personal:'owned-history'},{id_pathological_personal:foreign}]});
+        assert.equal(result.status,404);
+        assert.equal(sdkCalls.length,0,'R16: every history owner is checked before S3');
+        assert.equal(sqlCalls.filter(c=>/^\s*(INSERT|UPDATE|DELETE|CALL)\b/i.test(c.sql)).length,0,'R16: preflight rejects before identity/legacy writes');
+    }
+    reset();assert.equal((await patients.pxUpdate({...patient(),pathological_data:[{id_pathological_personal:'owned-history'}]})).status,200);
+    assert.equal(sdkCalls.length,1,'Owned history still permits signature upload');
     await assert.rejects(service.uploadImage('qa-photo', 'data:image/png;base64,%%%%'));
     const imagePath = require.resolve('../../src/util/file/image');
     process.env.MAX_IMAGE_UPLOAD_BYTES = '0'; delete require.cache[imagePath];

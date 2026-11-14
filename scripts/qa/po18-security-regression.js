@@ -15,6 +15,12 @@ stub('../../src/db/Sequelize.connection', {
         const permission = options.replacements?._permission;
         if (permission) return allowed.has(permission) && (!sql.includes('cp.is_active = 1') || catalogEnabled) ? [{ granted: 1 }] : [];
         dataQueries.push(sql);
+        if (sql.startsWith('SELECT * FROM person WHERE') || sql.startsWith('SELECT * FROM patient_identity WHERE')) {
+            assert.equal(options.replacements.business, 'synthetic-tenant');
+            assert.match(sql, /id_business=:business/);
+            if(options.replacements.id !== '11111111-1111-4111-8111-111111111111') return [];
+            return sql.startsWith('SELECT * FROM patient_identity') ? [] : [{id_person:options.replacements.id,name:'Synthetic',surname:'Patient',birthday:null}];
+        }
         if (sql.includes('FROM person p')) {
             assert.equal(options.replacements.business || options.replacements._id_business, 'synthetic-tenant');
             const patient = options.replacements.patient || options.replacements._id_person;
