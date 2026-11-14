@@ -18,6 +18,8 @@ This additive change does not install catalog foreign keys or validate catalog c
 
 ## Failure/restart and rollback
 
+The CLI exits 1 with a JSON `nc1.install.failed` event on failure. Internally constructed validation/preflight/drift messages are printed; database errors expose only sanitized `code`/`sqlState` (and known connection error codes), never SQL, driver messages, stack, host, user or credentials. Unknown causes receive a generic message. Retain this stderr event in the operator ticket: failures before connection/preflight audit creation cannot have a database audit row. Do not connect merely to audit a rejected target/checksum. Once a run is created, its existing failed/complete audit remains authoritative.
+
 MySQL DDL is not a multi-statement transaction. Audit and per-table fingerprints allow a controlled restart with the **same artifact**. Existing unknown tables, changed definitions/checksums, or altered parent index definitions abort; never silently adopt/repair them. A crash between CREATE and manifest insertion requires manual inspection and explicit remediation before retrying. Old R3 QA tables are not an upgrade target; recreate only disposable QA containers.
 
 On application rollback, stop NC1 writers and restore the previous application release; preserve the additive tables and audit. Do not automatically drop identity data, history, indexes or FKs. Parent FKs can intentionally prevent deletion/reassignment by old code. Any schema reversal requires an independently reviewed plan after checking dependencies and retained data.

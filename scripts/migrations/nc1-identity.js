@@ -3,6 +3,7 @@
 const {models,prefix}=require('../../src/domain/identity/storage');
 const {snake,enums}=require('../../src/domain/identity/contract');
 const {createHash}=require('node:crypto');
+const {InstallationError}=require('./nc1-install-error');
 const refTypes={family:'VARCHAR(48) CHARACTER SET ascii COLLATE ascii_bin',release_id:'VARCHAR(50) CHARACTER SET ascii COLLATE ascii_bin',code:'VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin'};
 function refColumns(p,family) {
     return [...Object.entries(refTypes).map(([k,t])=>`${p}_${k} ${t} NULL`),
@@ -39,13 +40,13 @@ async function applySteps(connection) {
         const [done]=await connection.execute('SELECT sha,definition_sha FROM nc1_identity_steps WHERE name=?',[name]);
         const [exists]=await connection.execute('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?',[name]);
         if(done.length) {
-            if(done[0].sha!==hash||!exists.length)throw new Error('Deriva de migracion: '+name);
+            if(done[0].sha!==hash||!exists.length)throw new InstallationError('Deriva de migracion: '+name);
             const [[definition]]=await connection.query('SHOW CREATE TABLE '+name);
             const actual=createHash('sha256').update(definition['Create Table']).digest('hex');
-            if(done[0].definition_sha!==actual)throw new Error('Deriva de estructura: '+name);
+            if(done[0].definition_sha!==actual)throw new InstallationError('Deriva de estructura: '+name);
             continue;
         }
-        if(exists.length)throw new Error('Tabla existente sin evidencia compatible: '+name);
+        if(exists.length)throw new InstallationError('Tabla existente sin evidencia compatible: '+name);
         await connection.query(sql);
         const [[definition]]=await connection.query('SHOW CREATE TABLE '+name);
         const actual=createHash('sha256').update(definition['Create Table']).digest('hex');
@@ -55,18 +56,18 @@ async function applySteps(connection) {
 async function apply(connection,{isolated=false,expectedDatabase,expectedChecksum,actor}={}) {
     const [[db]]=await connection.query('SELECT DATABASE() AS name');
     const qa=isolated && /^nc1_qa_[a-z0-9_]+$/.test(db.name||'');
-    if(!qa && (!actor || !/^[A-Za-z0-9@._-]{1,100}$/.test(actor) || expectedDatabase!==db.name || expectedChecksum!==checksum))throw new Error('Solo QA aislada nc1_qa_* o instalacion explicita con database/checksum/actor');
+    if(!qa && (!actor || !/^[A-Za-z0-9@._-]{1,100}$/.test(actor) || expectedDatabase!==db.name || expectedChecksum!==checksum))throw new InstallationError('Solo QA aislada nc1_qa_* o instalacion explicita con database/checksum/actor');
     const lockName="nc1_"+createHash("sha256").update(db.name).digest("hex").slice(0,48);
     const [[lock]]=await connection.execute("SELECT GET_LOCK(?,0) AS acquired",[lockName]);
-    if(Number(lock.acquired)!==1)throw new Error('NC1 migration already running');
+    if(Number(lock.acquired)!==1)throw new InstallationError('NC1 migration already running');
     let run;
     try {
         // Validate both parents before performing any DDL. No data rewrite or orphan adoption.
         for(const [table,key] of parents) {
             const [cols]=await connection.execute('SELECT COLUMN_NAME name,COLUMN_TYPE type,COLLATION_NAME coll FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME IN (?,?)',[table,'id_business',key]);
-            if(cols.length!==2 || cols.some(c=>c.type!=='varchar(50)' || c.coll!=='utf8mb4_unicode_ci'))throw new Error('NC1 parent incompatible: '+table);
+            if(cols.length!==2 || cols.some(c=>c.type!=='varchar(50)' || c.coll!=='utf8mb4_unicode_ci'))throw new InstallationError('NC1 parent incompatible: '+table);
             const [[t]]=await connection.execute('SELECT ENGINE engine FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?',[table]);
-            if(t.engine!=='InnoDB')throw new Error('NC1 parent engine incompatible: '+table);
+            if(t.engine!=='InnoDB')throw new InstallationError('NC1 parent engine incompatible: '+table);
         }
         await connection.query('CREATE TABLE IF NOT EXISTS nc1_identity_audit (run_id CHAR(36) PRIMARY KEY,actor VARCHAR(100) NOT NULL,database_name VARCHAR(64) NOT NULL,ddl_sha CHAR(64) NOT NULL,state VARCHAR(16) NOT NULL,started_at DATETIME(3) NOT NULL,finished_at DATETIME(3) NULL)');
         run=require('node:crypto').randomUUID();
@@ -74,7 +75,7 @@ async function apply(connection,{isolated=false,expectedDatabase,expectedChecksu
         for(const [index,[table,key]] of parents.entries()) {
             const [rows]=await connection.execute("SELECT COLUMN_NAME col,NON_UNIQUE non_unique,SUB_PART prefix_length FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME='uq_nc1_parent' ORDER BY SEQ_IN_INDEX",[table]);
             if(!rows.length)await connection.query(parentIndexes[index]);
-            else if(rows.map(r=>r.col).join(',')!==['id_business',key].join(',')||rows.some(r=>Number(r.non_unique)!==0||r.prefix_length!==null))throw new Error('NC1 parent index drift: '+table);
+            else if(rows.map(r=>r.col).join(',')!==['id_business',key].join(',')||rows.some(r=>Number(r.non_unique)!==0||r.prefix_length!==null))throw new InstallationError('NC1 parent index drift: '+table);
         }
         await applySteps(connection);
         await connection.execute("UPDATE nc1_identity_audit SET state='complete',finished_at=UTC_TIMESTAMP(3) WHERE run_id=?",[run]);

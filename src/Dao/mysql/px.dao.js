@@ -547,6 +547,11 @@ async pxUpdate(body) {
             const [child]=await sequelize.query(`SELECT ${key} FROM ${table} WHERE ${key}=:child AND id_business=:business AND id_person=:id AND last=1 FOR UPDATE`,{replacements:{...scope,child:data[key]},transaction,type:QueryTypes.SELECT});
             if(!child)throw Object.assign(new Error('Recarga los datos del paciente.'),{status:409});
         }
+        for(const item of body.pathological_data||[]) {
+            if(!item.id_pathological_personal)continue;
+            const [owned]=await sequelize.query('SELECT id_pathological_personal FROM pathological_personal WHERE id_pathological_personal=:child AND id_person=:id AND id_business=:business FOR UPDATE',{replacements:{...scope,child:item.id_pathological_personal},transaction,type:QueryTypes.SELECT});
+            if(!owned)throw Object.assign(new Error('Antecedente no encontrado.'),{status:404});
+        }
         await Identity.patientWrite(body,p.id_person,transaction);
         if(!p.id_signature && body.files && body.files.file) { const uploaded=await uploadImage(config.BUCKETS.FIRMAS,body.files.file);p.id_signature=uploaded.Location; }
         p.telephone=cleanPhone(p.telephone);p.local_telephone=cleanPhone(p.local_telephone);
@@ -570,8 +575,6 @@ async pxUpdate(body) {
             const key=item.id_pathological_personal;
             const json=JSON.stringify(Object.fromEntries(Object.entries(item).filter(([k])=>k!=='id_pathological_personal')));
             if(key) {
-                const [owned]=await sequelize.query('SELECT id_pathological_personal FROM pathological_personal WHERE id_pathological_personal=:child AND id_person=:id AND id_business=:business FOR UPDATE',{replacements:{...scope,child:key},transaction,type:QueryTypes.SELECT});
-                if(!owned)throw Object.assign(new Error('Antecedente no encontrado.'),{status:404});
                 await sequelize.query('UPDATE pathological_personal SET json=:json,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_pathological_personal=:child AND id_person=:id AND id_business=:business',{replacements:{...scope,child:key,json},transaction});
             } else await sequelize.query('INSERT INTO pathological_personal (id_pathological_personal,id_business,id_person,id_type_pathological_personal,json,created_at,created_by) VALUES (:child,:business,:id,:type,:json,UTC_TIMESTAMP(),:actor)',{replacements:{...scope,child:uuidv4(),type:item.id_type_pathological_personal,json},transaction});
         }

@@ -1,4 +1,5 @@
 'use strict';
+const {InstallationError,safeCause}=require('../migrations/nc1-install-error');
 const test=require('node:test');const assert=require('node:assert/strict');
 const C=require('../../src/domain/identity/contract');const S=require('../../src/domain/identity/storage');const M=require('../migrations/nc1-identity');
 test('NC1-R8: generic CURP is exactly the generic literal and requires reason',()=>{
@@ -31,3 +32,18 @@ test('PATCH absent/null and residence hierarchy',()=>{const cur={biologicalSex:'
 test('no heuristic surnames or CURP sex and all catalogs remain unverified',()=>{const d=C.legacy({name:'Ficticia',surname:'De la Prueba Ensayo',birthday:'2000-01-01'});assert.equal(d.firstSurname,null);assert.equal(d.legacySurname,'De la Prueba Ensayo');const v=C.view({...d,birthCountry:{family:'sis.country',code:'142'},curp:{value:'XXXXXXXXXXXXXXXXXX',kind:'generic',reason:'fixture'}},1);assert.equal(v.curpSex,null);assert.equal(v.curp.validationStatus,'unchecked');assert.equal(v.qualityIssues[0].code,'CATALOG_UNAVAILABLE');});
 test('storage round trip and no catalog FK',()=>{const d={...C.validate('patient',{biologicalSex:'3',birthCountry:{family:'sis.country',code:'001'},residence:{entity:{family:'inegi.state',code:'01'}}}),legacySurname:'Raw'};const round=S.decode('patient',S.encode('patient',d));assert.deepEqual(round.birthCountry,d.birthCountry);assert.deepEqual(round.residence.entity,d.residence.entity);assert.ok(M.statements.every(sql=>!sql.includes('REFERENCES sis_catalog')));});
 test('date and readonly rejection',()=>{assert.throws(()=>C.validate('patient',{birthDate:'2026-02-30'}));assert.throws(()=>C.validate('patient',{revision:42}));assert.throws(()=>C.validate('establishment',{displayName:'Test',validFrom:'2026-01-02',validTo:'2026-01-01'}));});
+
+test('NC1 R17: safe installer causes omit driver messages, SQL, host and credentials',()=>{
+ assert.deepEqual(safeCause(new InstallationError('NC1 parent incompatible: person')),{message:'NC1 parent incompatible: person'});
+ const driver=Object.assign(new Error('SECRET host/user SQL'),{code:'ER_ACCESS_DENIED_ERROR',sqlState:'28000',sql:'SECRET SQL',password:'SECRET'});
+ assert.deepEqual(safeCause(driver),{code:'ER_ACCESS_DENIED_ERROR',sqlState:'28000'});
+ assert.doesNotMatch(JSON.stringify(safeCause(new Error('SECRET'))),/SECRET/);
+ assert.doesNotMatch(JSON.stringify(safeCause({code:'ER_BAD\nSECRET',sqlState:'SECRET'})),/SECRET/);
+});
+test('NC1 R17: CLI checksum rejection is actionable, sanitized and exits 1 without configuration',()=>{
+ const {spawnSync}=require('node:child_process');
+ const result=spawnSync(process.execPath,[require.resolve('../migrations/install-nc1-identity'),'apply','synthetic_fixture','wrongchecksum','synthetic-operator'],{encoding:'utf8'});
+ assert.equal(result.status,1);const failure=JSON.parse(result.stderr.trim());
+ assert.equal(failure.event,'nc1.install.failed');assert.match(failure.message,/checksum does not match/);
+ assert.equal(result.stdout,'');assert.doesNotMatch(result.stderr,/wrongchecksum|synthetic_fixture|synthetic-operator/);
+});
