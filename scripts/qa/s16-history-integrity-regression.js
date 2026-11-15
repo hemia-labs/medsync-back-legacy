@@ -10,6 +10,8 @@ const db = {
     },
     async query(sql, options = {}) {
         const tx = options.transaction, values = options.replacements || {};
+        if(sql.startsWith('SELECT * FROM person WHERE')) {assert.equal(values.business,'tenant');return [{id_person:'patient',name:'Synthetic',surname:'Patient'}];}
+        if(sql.startsWith('SELECT * FROM patient_identity WHERE')) {assert.equal(values.business,'tenant');return [];}
         if (sql.includes('FROM person p')) return archived && sql.includes('p.active = 1') ? [] : [{ id_person: 'patient' }];
         if (sql.includes('FROM clinical_histories')) {
             if (sql.includes('FOR UPDATE')) {

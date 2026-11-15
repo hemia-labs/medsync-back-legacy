@@ -92,6 +92,7 @@ app.use('/api', require('./routes/mysql/registration'));
 app.use('/api/rol', require('./routes/mysql/rol'));
 app.use('/api/user', require('./routes/mysql/user'));
 app.use('/api/home', require('./routes/mysql/home'));
+app.use('/api/identity', require('./routes/mysql/identity'));
 app.use('/api/px', require('./routes/mysql/px'));
 app.use('/api/catalog', require('./routes/mysql/catalog'));
 app.use('/api/file', require('./routes/mysql/file'));

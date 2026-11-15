@@ -11,6 +11,9 @@ const config = require('../../config/config');
 const { uploadImage } = require('../../services/aws/s3');
 const { nextPatientCode } = require('../../util/patientCode');
 const minimalRequest = require('../../domain/appointments/minimalPatientRequest');
+const Identity = require('./identity.dao');
+const { normalizePatient } = require('../../domain/identity/legacyDate');
+const identityError = e => e.status ? {status:e.status,message:e.message,data:{code:e.code,field:e.field}} : SequelizeException(e, Messages.DATA_SAVE_ERROR);
 const PatientAllergyDao = require('./patientAllergy.dao');
 const { hydrateAllergy, validateReview } = require('../../domain/clinicalHistory/allergyStatus');
 
@@ -56,11 +59,13 @@ class PXDao{
 async updateAdministrative(body) {
     const transaction = await sequelize.transaction();
     try {
+        body = normalizePatient(body);
         const person = body.person;
         const address = body.address;
         const replacements = { patient: person.id_person, business: body.id_business, user: body.id_login };
         const rows = await sequelize.query(`SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business FOR UPDATE`, { replacements, type: QueryTypes.SELECT, transaction });
         if (!rows.length) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
+        await Identity.patientWrite(body, person.id_person, transaction);
         await sequelize.query(`UPDATE person SET name = :name, surname = :surname, birthday = :birthday, age = :age,
             ocupation = :occupation, rfc = :rfc, telephone = :phone, local_telephone = :localPhone,
             updated_at = NOW(), updated_by = :user WHERE id_person = :patient AND id_business = :business`, {
@@ -80,7 +85,7 @@ async updateAdministrative(body) {
         }
         await transaction.commit();
         return responseData.success({ id_person: person.id_person }, 'Datos administrativos actualizados.');
-    } catch (error) { await transaction.rollback(); return SequelizeException(error, Messages.DATA_SAVE_ERROR); }
+    } catch (error) { await transaction.rollback(); return identityError(error); }
 }
 
 async setArchived(id_person, id_login, id_business, archived) {
@@ -92,20 +97,25 @@ async setArchived(id_person, id_login, id_business, archived) {
         await sequelize.query(`UPDATE person SET active = :active, updated_by = :user, updated_at = NOW() WHERE id_person = :patient AND id_business = :business`, { replacements, transaction });
         await transaction.commit();
         return responseData.success({ id_person, active: replacements.active }, archived ? 'Paciente archivado. Su expediente se conserva.' : 'Paciente restaurado.');
-    } catch (error) { await transaction.rollback(); return SequelizeException(error, Messages.DATA_SAVE_ERROR); }
+    } catch (error) { await transaction.rollback(); return identityError(error); }
 }
 
 async pxCreateMinimal(body) {
     if (body.request_id != null && !minimalRequest.validKey(body.request_id)) return responseData.bad_request('Clave de alta invalida.');
     const transaction = await sequelize.transaction();
     try {
+        body = normalizePatient(body);
         const person = body.person || {};
         const address = body.address || {};
         const idPerson = body.request_id ? minimalRequest.patientIdFor(body) : uuidv4();
         await sequelize.query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE', { replacements: { business: body.id_business }, type: QueryTypes.SELECT, transaction });
         if (body.request_id) {
             const rows = await sequelize.query('SELECT id_person FROM person WHERE id_person=:id AND id_business=:business FOR UPDATE', { replacements: { id: idPerson, business: body.id_business }, type: QueryTypes.SELECT, transaction });
-            if (rows.length) { await transaction.rollback(); return { status: 409, data: { code: 'PATIENT_CREATE_ALREADY_RECORDED' }, message: 'Esta operacion ya creo un paciente. Consulta su resultado; no se creo otro.' }; }
+            if (rows.length) {
+                const [stored]=await sequelize.query('SELECT request_hash FROM patient_identity WHERE id_person=:id AND id_business=:business',{replacements:{id:idPerson,business:body.id_business},type:QueryTypes.SELECT,transaction});
+                const mismatch=stored && stored.request_hash && stored.request_hash!==require('../../domain/identity/service').hash(body);
+                await transaction.rollback(); return {status:409,data:{code:mismatch?'PATIENT_CREATE_PAYLOAD_CONFLICT':'PATIENT_CREATE_ALREADY_RECORDED'},message:mismatch?'La clave de alta ya tiene otra captura. Consulta el resultado.':'Esta operacion ya creo un paciente. Consulta su resultado; no se creo otro.'};
+            }
         }
         const idAddress = uuidv4();
         const idQuery = uuidv4();
@@ -233,11 +243,12 @@ async pxCreateMinimal(body) {
             }
         );
 
+        await Identity.patientWrite(body, idPerson, transaction, true);
         await transaction.commit();
         return responseData.success({ id_person: idPerson }, Messages.DATA_SAVE_SUCCESSFULLY);
     } catch (error) {
         await transaction.rollback();
-        return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        return identityError(error);
     }
 }
 
@@ -248,6 +259,7 @@ async pxCreateMinimal(body) {
 async pxSave(body) {
     let response;        
     try {
+        body = normalizePatient(body);
 
         // let _family_parents = body.family_parents.map((p)=>{
         //     return{
@@ -286,7 +298,7 @@ async pxSave(body) {
                     AND p.id_business COLLATE ${PATIENT_COLLATION} = :_id_business COLLATE ${PATIENT_COLLATION}
                     AND p.name COLLATE ${PATIENT_COLLATION} = :_name COLLATE ${PATIENT_COLLATION}
                     AND p.surname COLLATE ${PATIENT_COLLATION} = :_surname COLLATE ${PATIENT_COLLATION}
-                    AND p.birthday = fn_FormatDate(fn_replace_character(:_birthday, "-", "/"))
+                    AND p.birthday = :_birthday
                     AND p.age = :_age
                   LIMIT 1`,
                 {
@@ -320,7 +332,7 @@ async pxSave(body) {
                     created_at, created_by, updated_at, updated_by
                  ) VALUES (
                     :_id_person, :_id_business, :_code, :_name, :_surname,
-                    fn_FormatDate(fn_replace_character(:_birthday, "-", "/")), :_age, :_ocupation, :_rfc, 1,
+                    :_birthday, :_age, :_ocupation, :_rfc, 1,
                     :_local_telephone, :_telephone, :_name_signature, :_social_media, :_id_signature,
                     NOW(), :_id_login, NULL, NULL
                  )`,
@@ -447,6 +459,7 @@ async pxSave(body) {
                 }
             }
 
+            await Identity.patientWrite(body, idPerson, transaction, true);
             await transaction.commit();
             return responseData.success({ id_person: idPerson }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (innerError) {
@@ -510,7 +523,7 @@ async pxSave(body) {
             response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
         }
     } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
+            response = identityError(error);
     }
     return response;
 }
@@ -521,112 +534,53 @@ async pxSave(body) {
  * @returns
  */
 async pxUpdate(body) {
-    let response;        
+    // The old procedure commits internally; use one caller-owned transaction for identity + clinical draft.
+    const transaction = await sequelize.transaction();
     try {
-
-        // let _family_parents = body.family_parents.map((p)=>{
-        //     return{
-        //         ...p,
-        //         live : Number(p.live),
-        //         dead : Number(p.dead)
-        //     }
-        // });
-
-        let person = body.person;
-        let address = body.address;
-        let query = body.query;
-        let allergy = body.allergy;
-        let family_parents = null;//JSON.stringify(_family_parents);
-        let family_brothers = null;//JSON.stringify(body.family_brothers);
-        let family_grandparents = null;//JSON.stringify(body.family_grandparents);
-        let pathological_data =  body.pathological_data ? JSON.stringify((body.pathological_data)) : null;
-        let social_media =  body.social_media ? JSON.stringify((body.social_media)) : null;
-
-        const belongsToBusiness = await sequelize.query(
-            'SELECT id_person FROM person WHERE id_person = :_id_person AND id_business = :_id_business AND active = 1 LIMIT 1',
-            {
-                replacements: {
-                    _id_person: person.id_person,
-                    _id_business: body.id_business
-                },
-                type: QueryTypes.SELECT
+        body = normalizePatient(body);
+        const p=body.person,a=body.address,q=body.query;
+        const scope={id:p.id_person,business:body.id_business,actor:body.id_login};
+        const [patient]=await sequelize.query('SELECT id_person FROM person WHERE id_person=:id AND id_business=:business AND active=1 FOR UPDATE',{replacements:scope,transaction,type:QueryTypes.SELECT});
+        if(!patient) throw Object.assign(new Error('Paciente no encontrado.'),{status:404});
+        // Validate current child ownership before any identity write or signature upload.
+        for(const [table,key,data] of [['address','id_address',a],['query','id_query',q]]) {
+            const [child]=await sequelize.query(`SELECT ${key} FROM ${table} WHERE ${key}=:child AND id_business=:business AND id_person=:id AND last=1 FOR UPDATE`,{replacements:{...scope,child:data[key]},transaction,type:QueryTypes.SELECT});
+            if(!child)throw Object.assign(new Error('Recarga los datos del paciente.'),{status:409});
+        }
+        for(const item of body.pathological_data||[]) {
+            if(!item.id_pathological_personal)continue;
+            const [owned]=await sequelize.query('SELECT id_pathological_personal FROM pathological_personal WHERE id_pathological_personal=:child AND id_person=:id AND id_business=:business FOR UPDATE',{replacements:{...scope,child:item.id_pathological_personal},transaction,type:QueryTypes.SELECT});
+            if(!owned)throw Object.assign(new Error('Antecedente no encontrado.'),{status:404});
+        }
+        await Identity.patientWrite(body,p.id_person,transaction);
+        if(!p.id_signature && body.files && body.files.file) { const uploaded=await uploadImage(config.BUCKETS.FIRMAS,body.files.file);p.id_signature=uploaded.Location; }
+        p.telephone=cleanPhone(p.telephone);p.local_telephone=cleanPhone(p.local_telephone);
+        for(const [table,key,data,fields] of [
+            ['person','id_person',p,['name','surname','birthday','age','ocupation','rfc','local_telephone','telephone','name_signature','id_signature']],
+            ['address','id_address',a,['place_birth','residence','direction','cp']],
+            ['query','id_query',q,['reason_consultation','current_condition','pulse','blood_pressure','dia','oxygenation']]
+        ]) {
+            const id=data[key];
+            const values={...scope,child:id,...Object.fromEntries(fields.map(f=>[f,nullableValue(data[f])]))};
+            if(table==='person') {
+                await sequelize.query(`UPDATE person SET ${fields.map(f=>f+'=:'+f).join(',')},updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_person=:id AND id_business=:business`,{replacements:values,transaction});
+            } else {
+                // Preserve the legacy procedure's append-only address/query history, within this transaction.
+                await sequelize.query(`UPDATE ${table} SET last=0 WHERE id_person=:id AND id_business=:business AND last=1`,{replacements:scope,transaction});
+                await sequelize.query(`INSERT INTO ${table} (${key},id_business,id_person,${fields.join(',')},last,created_at,created_by) VALUES (:child,:business,:id,${fields.map(f=>':'+f).join(',')},1,UTC_TIMESTAMP(),:actor)`,{replacements:{...values,child:uuidv4()},transaction});
             }
-        );
-
-        if (!belongsToBusiness || belongsToBusiness.length === 0) {
-            return responseData.notSuccess('Paciente no encontrado para este negocio.');
         }
-
-        // Prevent swapping child identifiers from another patient or tenant through the legacy procedure.
-        const children = [ ['address', 'id_address', address.id_address], ['query', 'id_query', query.id_query],
-            ...(Array.isArray(body.pathological_data) ? body.pathological_data.filter(item => item.id_pathological_personal).map(item => ['pathological_personal', 'id_pathological_personal', item.id_pathological_personal]) : []) ];
-        for (const [table, key, id] of children) {
-            if (!id) continue;
-            const matches = await sequelize.query(`SELECT ${key} FROM ${table} WHERE ${key} = :child AND id_person = :patient AND id_business = :business LIMIT 1`, {
-                replacements: { child: id, patient: person.id_person, business: body.id_business }, type: QueryTypes.SELECT
-            });
-            if (!matches.length) return responseData.forbidden('Los datos no pertenecen a este paciente. Vuelve a cargar su ficha.');
+        await sequelize.query('UPDATE person SET social_media=:social WHERE id_person=:id AND id_business=:business',{replacements:{...scope,social:body.social_media?JSON.stringify(body.social_media):null},transaction});
+        for(const item of body.pathological_data||[]) {
+            const key=item.id_pathological_personal;
+            const json=JSON.stringify(Object.fromEntries(Object.entries(item).filter(([k])=>k!=='id_pathological_personal')));
+            if(key) {
+                await sequelize.query('UPDATE pathological_personal SET json=:json,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_pathological_personal=:child AND id_person=:id AND id_business=:business',{replacements:{...scope,child:key,json},transaction});
+            } else await sequelize.query('INSERT INTO pathological_personal (id_pathological_personal,id_business,id_person,id_type_pathological_personal,json,created_at,created_by) VALUES (:child,:business,:id,:type,:json,UTC_TIMESTAMP(),:actor)',{replacements:{...scope,child:uuidv4(),type:item.id_type_pathological_personal,json},transaction});
         }
-
-        if( !person.id_signature && body.files && body.files.file ){
-            let resultFile = await uploadImage(config.BUCKETS.FIRMAS, body.files.file);
-            person.id_signature = resultFile.Location;
-        }
-
-        // Allergies are changed through the shared review endpoint; ignore stale form data.
-        allergy = await PatientAllergyDao.getCurrent(person.id_person, body.id_business);
-
-        let result = await sequelize.query(SequelizeSP.SP_PX_UPDATE, {
-            replacements: {
-                _id_person : person.id_person,
-                _name : person.name,
-                _surname : person.surname,
-                _birthday : person.birthday,
-                _age : person.age,
-                _ocupation : person.ocupation,
-                _rfc : person.rfc,
-                _local_telephone : person.local_telephone,
-                _telephone : person.telephone,
-                _id_signature : person.id_signature,
-                _name_signature : person.name_signature ? person.name_signature : null,
-                _id_address : address.id_address,
-                _place_birth : address.place_birth,
-                _residence : address.residence,
-                _direction : address.direction,
-                _cp : address.cp,
-                _id_query : query.id_query,
-                _reason_consultation : query.reason_consultation,
-                _current_condition : query.current_condition,
-                _pulse : query.pulse,
-                _blood_pressure : query.blood_pressure,
-                _dia : query.dia,
-                _oxygenation : query.oxygenation,
-                _family_parents : family_parents,
-                _family_brothers : family_brothers,
-                _family_grandparents : family_grandparents,
-                _pathological_personal : pathological_data,
-                _id_allergy: allergy.id_allergy,
-                _has_allergy : allergy.has_allergy,
-                _description : allergy.description,
-                _social_media: social_media,
-                _id_login : body.id_login,
-                _id_business : body.id_business
-            },
-            type: QueryTypes.RAW,
-            plain: true
-        });
-
-        if(result){/*Validamos si existe un registro de salida */
-            let SQLValid = SQLException(result);
-            response =  !SQLValid.hasError ? responseData.success(result[0], Messages.DATA_GET_SUCCESSFULLY) : responseData.notSuccess(SQLValid.message);
-        }
-        else{/* regresamos una excepción controlada al no obtener una respuesta */
-            response = responseData.notSuccess(Messages.DATA_GET_ERROR)    
-        }
-    } catch (error) {
-            response = SequelizeException(error, Messages.DATA_GET_ERROR);
-    }
-    return response;
+        // Allergy revisions and signatures remain on their dedicated endpoints.
+        await transaction.commit();return responseData.success({id_person:p.id_person},Messages.DATA_SAVE_SUCCESSFULLY);
+    } catch(error) {await transaction.rollback();return identityError(error);}
 }
 
 
