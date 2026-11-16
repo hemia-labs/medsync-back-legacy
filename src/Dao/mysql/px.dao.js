@@ -12,6 +12,7 @@ const { uploadImage } = require('../../services/aws/s3');
 const { nextPatientCode } = require('../../util/patientCode');
 const minimalRequest = require('../../domain/appointments/minimalPatientRequest');
 const Identity = require('./identity.dao');
+const EmergencyContacts = require('./emergencyContact.dao');
 const { normalizePatient } = require('../../domain/identity/legacyDate');
 const identityError = e => e.status ? {status:e.status,message:e.message,data:{code:e.code,field:e.field}} : SequelizeException(e, Messages.DATA_SAVE_ERROR);
 const PatientAllergyDao = require('./patientAllergy.dao');
@@ -66,6 +67,7 @@ async updateAdministrative(body) {
         const rows = await sequelize.query(`SELECT id_person FROM person WHERE id_person = :patient AND id_business = :business FOR UPDATE`, { replacements, type: QueryTypes.SELECT, transaction });
         if (!rows.length) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
         await Identity.patientWrite(body, person.id_person, transaction);
+        await EmergencyContacts.write(person.id_person, body.id_business, body.id_login, body.emergencyContact, transaction);
         await sequelize.query(`UPDATE person SET name = :name, surname = :surname, birthday = :birthday, age = :age,
             ocupation = :occupation, rfc = :rfc, telephone = :phone, local_telephone = :localPhone,
             updated_at = NOW(), updated_by = :user WHERE id_person = :patient AND id_business = :business`, {

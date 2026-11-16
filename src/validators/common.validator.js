@@ -1,9 +1,9 @@
 const VALID_IMAGE_TYPES = ['jpeg', 'jpg', 'png', 'webp'];
 
-const invalid = (message) => ({
-    isValid: false,
-    message
-});
+// `data` is optional public detail such as { code, field }. Without it the 400 keeps its historical shape.
+const invalid = (message, data) => (data === undefined
+    ? { isValid: false, message }
+    : { isValid: false, message, data });
 
 const valid = () => ({
     isValid: true,
