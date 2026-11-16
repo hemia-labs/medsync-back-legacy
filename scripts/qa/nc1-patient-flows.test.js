@@ -14,6 +14,8 @@ test('isolated legacy DAOs: minimal/normal create, idempotency, administrative/c
    await connection.query(source.slice(source.indexOf('CREATE TABLE')));
   }
   await connection.query('CREATE TABLE doctor_professional_profile(id_business VARCHAR(50),id_doctor_professional_profile VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+  // Same columns as the exported structure of patient_emergency_contacts (structure only, synthetic database).
+  await connection.query("CREATE TABLE patient_emergency_contacts(id_patient_emergency_contact VARCHAR(50) PRIMARY KEY,id_business VARCHAR(50) NOT NULL,id_person VARCHAR(50) NOT NULL,contact_name VARCHAR(255) NOT NULL,contact_phone VARCHAR(50) NULL,relationship VARCHAR(150) NULL,is_primary TINYINT(1) DEFAULT '1',active TINYINT(1) DEFAULT '1',created_at DATETIME DEFAULT CURRENT_TIMESTAMP,created_by VARCHAR(50) NULL,updated_at DATETIME NULL,updated_by VARCHAR(50) NULL,KEY idx_patient_emergency_business_person(id_business,id_person)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
   await require('../migrations/nc1-identity').apply(connection,{isolated:true});
   const [cols]=await connection.query('SHOW COLUMNS FROM allergy');
   for(const [name,type] of [['review_status',"VARCHAR(30) DEFAULT 'UNREVIEWED'"],['revision','INT DEFAULT 0'],['reviewed_at','DATETIME NULL'],['reviewed_by','VARCHAR(50) NULL']])if(!cols.some(c=>c.Field===name))await connection.query('ALTER TABLE allergy ADD COLUMN '+name+' '+type);
@@ -57,6 +59,25 @@ test('isolated legacy DAOs: minimal/normal create, idempotency, administrative/c
    assert.equal((await dao.pxUpdate({...clinical2,address:{...await current('address'),direction:'Must rollback'},query:{...await current('query'),id_query:'wrong-child'}})).status,409);assert.equal(await snapshot(),before);
    assert.equal((await dao.pxUpdate({...clinical2,person:{...clinical2.person,birthday:'31-02-2000'}})).status,400);
    const [oldQuery]=await db.query('SELECT reason_consultation FROM query WHERE id_query=:qid',{replacements:{qid:queries[0].id_query}});assert.notEqual(oldQuery[0].reason_consultation,'Motivo nuevo');
+  });
+  await t.test('NC1-EC1: emergency contact is saved in the administrative transaction, retired softly and tenant scoped',async()=>{
+   const contacts=require('../../src/Dao/mysql/emergencyContact.dao');
+   const base=async()=>({...edit,identity:undefined,expectedRevision:(await svc.read('patient',id,'tenant')).revision,address:await current('address')});
+   const rows=async()=>(await db.query('SELECT contact_name,contact_phone,relationship,is_primary,active,created_by,updated_by FROM patient_emergency_contacts WHERE id_person=:id ORDER BY created_at',{replacements:{id}}))[0];
+   assert.equal(await contacts.read(id,'tenant'),null);
+   let result=await dao.updateAdministrative({...await base(),emergencyContact:{name:'Contacto ficticio',phone:'(55) 1111-2222',relationship:'Hermana'}});assert.equal(result.status,200,JSON.stringify(result));
+   assert.deepEqual(await contacts.read(id,'tenant'),{name:'Contacto ficticio',phone:'5511112222',relationship:'Hermana'});
+   assert.equal(await contacts.read(id,'foreign'),null,'another tenant cannot read it');
+   result=await dao.updateAdministrative({...await base(),emergencyContact:{name:'Contacto ficticio',phone:'5533334444'}});assert.equal(result.status,200,JSON.stringify(result));
+   let stored=await rows();assert.equal(stored.length,1,'update keeps one row');assert.deepEqual({...stored[0]},{contact_name:'Contacto ficticio',contact_phone:'5533334444',relationship:null,is_primary:1,active:1,created_by:'actor',updated_by:'actor'});
+   result=await dao.updateAdministrative(await base());assert.equal(result.status,200);assert.equal((await rows()).length,1,'absent field leaves the contact untouched');
+   const before=JSON.stringify(await rows());
+   result=await dao.updateAdministrative({...await base(),emergencyContact:{name:'Debe revertirse'},person:{...edit.person,rfc:'RFC-SINTETICO-DEMASIADO-LARGO'}});assert.notEqual(result.status,200,'a later SQL failure aborts the save');assert.equal(JSON.stringify(await rows()),before,'failed save does not write the contact');
+   const [[foreign]]=await db.query('SELECT COUNT(*) n FROM patient_emergency_contacts WHERE id_business=:b',{replacements:{b:'foreign'}});assert.equal(foreign.n,0);
+   result=await dao.updateAdministrative({...await base(),id_business:'foreign',emergencyContact:{name:'Intruso'}});assert.notEqual(result.status,200);
+   const [[afterForeign]]=await db.query("SELECT COUNT(*) n FROM patient_emergency_contacts WHERE contact_name='Intruso'");assert.equal(afterForeign.n,0);
+   result=await dao.updateAdministrative({...await base(),emergencyContact:null});assert.equal(result.status,200);
+   assert.equal(await contacts.read(id,'tenant'),null);stored=await rows();assert.equal(stored.length,1,'retired, not deleted');assert.equal(stored[0].active,0);
   });
   await t.test('NC1-R4: foreign tenant cannot upload a signature',async()=>{
    assert.equal((await dao.pxUpdate({...clinical,id_business:'foreign',files:{file:'synthetic'},person:{...clinical.person,id_signature:null}})).status,404);assert.equal(uploads,0);

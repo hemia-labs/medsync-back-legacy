@@ -4,7 +4,7 @@ const path = require('node:path');
 
 // Reviewed allowlist only. Never discover fixtures/live MySQL scripts by glob.
 const tests = [
-    'nc1-identity.test',
+    'nc1-identity.test', 'nc1-emergency-contact.test',
     'platform-sso.test', 's18-session-revocation-http-regression',
     'account-legal-regression',
     'registration-recovery-regression',

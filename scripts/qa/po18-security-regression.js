@@ -31,6 +31,7 @@ stub('../../src/db/Sequelize.connection', {
         }
         if (sql.includes('FROM pathological_personal')) return [{ id_pathological_personal: 'synthetic', json: { detail: 'SYNTHETIC_PRIVATE_HISTORY' } }];
         if (sql.includes('FROM allergy')) return [];
+        if (sql.includes('FROM patient_emergency_contacts')) { assert.equal(options.replacements.business, 'synthetic-tenant'); assert.match(sql, /id_business = :business/); return []; }
         throw new Error('Unexpected SQL in isolated test');
     }
 });

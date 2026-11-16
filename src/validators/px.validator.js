@@ -1,4 +1,5 @@
 const identityContract = require('../domain/identity/contract');
+const emergencyContact = require('../domain/patientContact/emergencyContact');
 const { normalizeBirthday } = require('../domain/identity/legacyDate');
 const validateIdentity = req => { try { identityContract.validate('patient', req.body.identity, {}, {creating:true}); return valid(); } catch(e) { return invalid(e.message); } };
 const {
@@ -155,6 +156,7 @@ const validatePxAdministrative = (req) => {
             if (object[field] != null && (typeof object[field] !== 'string' || object[field].length > 1000)) return invalid(`Campo invalido: ${field}`);
         }
     }
+    try { emergencyContact.normalize(req.body.emergencyContact); } catch (error) { return invalid(error.message); }
     return validateAdministrativeFormats(person, req.body.address);
 };
 
