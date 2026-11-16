@@ -45,6 +45,7 @@ test('validator: administrative payload accepts absent/null/valid contact and re
     assert.equal(validatePxAdministrative({ body: { ...body, emergencyContact: { name: 'Contacto ficticio', phone: '5511112222', relationship: 'Madre' } } }).isValid, true);
     const invalid = validatePxAdministrative({ body: { ...body, emergencyContact: { name: 'Contacto', phone: '12' } } });
     assert.equal(invalid.isValid, false);
+    assert.deepEqual(invalid.data, { code: 'EMERGENCY_CONTACT_INVALID', field: 'emergencyContact.phone' });
 });
 
 test('store.read: returns the newest active primary contact, scoped by tenant', async () => {

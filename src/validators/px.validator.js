@@ -156,7 +156,11 @@ const validatePxAdministrative = (req) => {
             if (object[field] != null && (typeof object[field] !== 'string' || object[field].length > 1000)) return invalid(`Campo invalido: ${field}`);
         }
     }
-    try { emergencyContact.normalize(req.body.emergencyContact); } catch (error) { return invalid(error.message); }
+    // EC1-R1: keep the contract's public code and field, in the same { code, field } shape as identity errors.
+    try { emergencyContact.normalize(req.body.emergencyContact); } catch (error) {
+        if (error && error.code === 'EMERGENCY_CONTACT_INVALID') return invalid(error.message, { code: error.code, field: error.field });
+        return invalid('Revisa el contacto de emergencia.');
+    }
     return validateAdministrativeFormats(person, req.body.address);
 };
 
