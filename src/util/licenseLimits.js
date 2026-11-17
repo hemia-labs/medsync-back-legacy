@@ -173,9 +173,11 @@ async function getBusinessEffectiveLicense(idBusiness, transaction = null) {
         return null;
     }
 
-    const plan = getSaasPlan(business.plan) || getUnknownSaasPlan(business.plan);
+    const {paidPlan,managed} = require('../services/payments/paidLicense');
+    const plan = paidPlan(business) || getSaasPlan(business.plan) || getUnknownSaasPlan(business.plan);
     const usage = await LicenseUsageDao.getBusinessLicenseUsage(idBusiness, transaction);
-    const overrides = await LicenseUsageDao.getBusinessLicenseOverride(idBusiness, { transaction });
+    const overrides = managed(business) ? {extra_professionals:0,extra_auxiliary_users:0,source:'billing'}
+        : await LicenseUsageDao.getBusinessLicenseOverride(idBusiness, { transaction });
     const planLimits = buildPlanLimits(plan);
     const effectiveLimits = buildEffectiveLimits(plan, overrides);
 

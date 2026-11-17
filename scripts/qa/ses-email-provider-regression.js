@@ -331,6 +331,26 @@ async function credentials(config) {return typeof config.credentials==='function
         assertSafeFailure(await service.sendTransactionalEmail(message));
         assert.equal(commands.length,1);
     });
+    await check('paid welcome reuses the published template, validates contract fields and escapes values once',async()=>{
+        const service=configure({EMAIL_REGISTRATION_WELCOME_TEMPLATE:'Exact-Welcome-Template-QA'});
+        const variables={firstName:'Ana',clinicName:'Centro A & B',planName:'Profesional <QA>',amountLabel:'$999 MXN',
+            billingIntervalLabel:'mes',paidAmountLabel:'$749.50 MXN',paymentMethodLabel:'PayPal',
+            activatedAtLabel:'11 de noviembre de 2026',loginUrl:'https://app.example.test/login'};
+        const message={type:'subscription-welcome',to:'patient@example.test',variables};
+        assert.equal((await service.sendTransactionalEmail(message)).success,true);
+        assertTemplateOnly(input());assert.equal(input().Content.Template.TemplateName,'Exact-Welcome-Template-QA');
+        assert.equal(input().ConfigurationSetName,'qa-auth-set');assert.equal(data().planName,'Profesional <QA>');
+        assertEscapedExactlyOnce(data().html.planName,variables.planName);assertEscapedExactlyOnce(data().html.clinicName,variables.clinicName);
+        assert.equal(data().trialDurationLabel,undefined);assert.equal(data().nextBillingAtLabel,undefined);
+        for(const key of Object.keys(variables))assertSafeFailure(await service.sendTransactionalEmail({...message,variables:{...variables,[key]:''}}));
+        assertSafeFailure(await service.sendTransactionalEmail({...message,variables:{...variables,loginUrl:'javascript:alert(1)'}}));
+        assertSafeFailure(await service.sendTransactionalEmail({...message,variables:{...variables,nextBillingAtLabel:'bad\nheader'}}));
+        assert.equal(commands.length,1);
+        assert.equal((await service.sendTransactionalEmail({...message,variables:{...variables,nextBillingAtLabel:'11 de diciembre de 2026',
+            renewalNotice:'Renovación cada mes.',html:{planName:'untrusted'},trialDurationLabel:'15 días'}})).success,true);
+        assert.equal(data().nextBillingAtLabel,'11 de diciembre de 2026');assert.equal(data().html.planName,'Profesional &lt;QA&gt;');
+        assert.equal(data().trialDurationLabel,undefined);assert.equal(commands.length,2);
+    });
     await check('development sends welcome and signature through SES using the configured loopback app URL',async()=>{
         const settings={APP_ENV:'development',NODE_ENV:'development',ENVIRONMENT:'development',
             PUBLIC_APP_URL:'http://localhost:8080',EMAIL_REGISTRATION_WELCOME_TEMPLATE:'Exact-Welcome-Template-QA'};

@@ -56,6 +56,10 @@ function isBusinessOperational(business, now = new Date()) {
         return deny('TENANT_INACTIVE', COMMERCIAL_MESSAGES.inactive, 'inactive');
     }
 
+    if (business.status && business.status !== 'active') {
+        return deny('TENANT_SUSPENDED', COMMERCIAL_MESSAGES.suspended, 'suspended');
+    }
+
     const subscriptionStatus = String(business.subscription_status || '').trim().toLowerCase();
 
     if (subscriptionStatus === STATUS.PENDING_ACTIVATION) {
@@ -73,6 +77,11 @@ function isBusinessOperational(business, now = new Date()) {
     }
 
     if (subscriptionStatus === STATUS.ACTIVE) {
+        if (require('../services/payments/paidLicense').managed(business)) {
+            const until = parseDate(business.billing_access_until);
+            if (!until || until <= now) return deny('BILLING_CONFIRMATION_EXPIRED',
+                'No pudimos confirmar una licencia vigente. Consulta el estado de tu suscripción para reactivar la operación.', STATUS.PAST_DUE);
+        }
         return allow();
     }
 

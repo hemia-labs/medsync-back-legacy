@@ -253,7 +253,7 @@ class AccountLegalService {
             const informational=doc.requiredAction==='informational';
             return {id_document:'central:'+doc.documentId+(set.documentSetKey===registration?'':':'+set.documentSetKey),document_key:doc.documentKey,title:doc.title,acceptance_scope:scope,
                 document_set_key:set.documentSetKey,document_set_name:set.name,informational,central_can_review:!informational&&(scope==='user'||canRepresent(actor)),
-                required:!informational,source:'central',
+                required:!informational,source:'central',required_action:doc.requiredAction,
                 current_version:{id_version:doc.documentVersionId,version_number:doc.version,title:doc.title,content_hash:doc.contentHash,
                     content_html:'',acceptance_scope:scope,source:'central'},
                 accepted:!needsReview&&item?this.receipt(item,doc,actor,set):null,can_accept:false,pending:needsReview};

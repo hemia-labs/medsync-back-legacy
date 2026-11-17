@@ -2,6 +2,8 @@
 !Dockerfile
 !package.json
 !package-lock.json
+!vendor/
+!vendor/*.tgz
 !src/
 !src/**
 src/tempFolder/**

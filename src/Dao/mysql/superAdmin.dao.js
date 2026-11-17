@@ -1050,6 +1050,8 @@ async function getBusinessById(idBusiness, transaction, forUpdate = false) {
                 active,
                 status,
                 subscription_status,
+                billing_revision,
+                billing_access_until,
                 trial_starts_at,
                 trial_ends_at,
                 current_period_starts_at,
@@ -1083,6 +1085,9 @@ function mapBusinessCommercial(row) {
     const subscriptionStatus = row.subscription_status || null;
     const operational = isBusinessOperational({
         active: row.active,
+        status: row.status,
+        billing_revision: row.billing_revision,
+        billing_access_until: row.billing_access_until,
         subscription_status: subscriptionStatus,
         trial_ends_at: row.trial_ends_at
     });
@@ -1098,6 +1103,8 @@ function mapBusinessCommercial(row) {
         active: row.active === true || row.active === 1,
         status: row.status || null,
         subscription_status: subscriptionStatus,
+        billingManaged: require('../../services/payments/paidLicense').managed(row),
+        billingAccessUntil: row.billing_access_until || null,
         plan: row.plan || null,
         plan_label: getPlanLabel(row.plan),
         plan_limits_summary: getPlanLimitsSummary(row.plan),
@@ -1396,6 +1403,10 @@ class SuperAdminDao {
                 return notFound('Negocio no encontrado.');
             }
 
+            if (require('../../services/payments/paidLicense').managed(business)) {
+                await transaction.rollback();
+                return {status:409,data:{code:'BILLING_MANAGED_SUBSCRIPTION'},message:'Administra los límites de esta cuenta desde Billing.'};
+            }
             const before = await LicenseUsageDao.getBusinessLicenseOverride(idBusiness, {
                 transaction,
                 forUpdate: true
@@ -2040,6 +2051,8 @@ class SuperAdminDao {
                     b.active,
                     b.status,
                     b.subscription_status,
+                    b.billing_revision,
+                    b.billing_access_until,
                     b.plan,
                     b.trial_starts_at,
                     b.trial_ends_at,
@@ -2070,6 +2083,8 @@ class SuperAdminDao {
                     b.active,
                     b.status,
                     b.subscription_status,
+                    b.billing_revision,
+                    b.billing_access_until,
                     b.plan,
                     b.trial_starts_at,
                     b.trial_ends_at,
@@ -2097,6 +2112,9 @@ class SuperAdminDao {
                     const business = {
                         id_business: row.id_business,
                         active: row.active,
+                        status: row.status,
+                        billing_revision: row.billing_revision,
+                        billing_access_until: row.billing_access_until,
                         subscription_status: row.subscription_status,
                         trial_ends_at: row.trial_ends_at
                     };
@@ -2502,6 +2520,11 @@ class SuperAdminDao {
                 return notFound('Negocio no encontrado.');
             }
 
+            if (require('../../services/payments/paidLicense').managed(before)) {
+                await transaction.rollback();
+                return {status:409,data:{code:'BILLING_MANAGED_SUBSCRIPTION'},message:'Administra el plan y la suscripción de esta cuenta desde Billing.'};
+            }
+
             const reason = normalizeReason(payload.reason);
             if (['past_due', 'suspended', 'cancelled'].includes(subscriptionStatus) && !reason) {
                 await transaction.rollback();
@@ -2640,6 +2663,11 @@ class SuperAdminDao {
                 return notFound('Negocio no encontrado.');
             }
 
+            if (require('../../services/payments/paidLicense').managed(before)) {
+                await transaction.rollback();
+                return {status:409,data:{code:'BILLING_MANAGED_SUBSCRIPTION'},message:'Administra el plan y la suscripción de esta cuenta desde Billing.'};
+            }
+
             if (before.subscription_status !== 'trial') {
                 await transaction.rollback();
                 return responseData.bad_request('Solo se puede extender el trial de negocios en prueba gratis.');
@@ -2722,6 +2750,11 @@ class SuperAdminDao {
             if (!before) {
                 await transaction.rollback();
                 return notFound('Negocio no encontrado.');
+            }
+
+            if (require('../../services/payments/paidLicense').managed(before)) {
+                await transaction.rollback();
+                return {status:409,data:{code:'BILLING_MANAGED_SUBSCRIPTION'},message:'Administra el plan y la suscripción de esta cuenta desde Billing.'};
             }
 
             const reason = normalizeReason(payload.reason);

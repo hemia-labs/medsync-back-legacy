@@ -11,7 +11,7 @@ class PulseAccess {
         // NC1-AUTH-S1/S2: session claims first (401 AUTH_SESSION_INVALID); a valid session without business is 403 context.
         if (!principal?.id_login || !principal.id_session) throw Object.assign(Error('AUTH_SESSION_INVALID'), { status: 401, code: 'AUTH_SESSION_INVALID' });
         if (!principal.id_business) throw Object.assign(Error('BUSINESS_CONTEXT_REQUIRED'), { status: 403, code: 'BUSINESS_CONTEXT_REQUIRED' });
-        const records = await this.db.query(`SELECT cp.code,b.active,b.plan,b.subscription_status,b.trial_ends_at,l.id_rol,r.code AS roleCode
+        const records = await this.db.query(`SELECT cp.code,b.active,b.status,b.billing_revision,b.billing_access_until,b.plan,b.subscription_status,b.trial_ends_at,l.id_rol,r.code AS roleCode
          FROM login l JOIN rol r ON r.id_rol=l.id_rol AND r.active=1 AND r.code<>'super_admin'
          JOIN business b ON b.id_business=l.id_business
          JOIN \`session\` s ON s.id_login=l.id_login AND s.id_session=:session AND s.active=1 AND s.\`last\`=1

@@ -13,7 +13,7 @@ class PulseHistory {
     constructor(db) { this.db = db; }
     query(sql, replacements, type = QueryTypes.SELECT) { return this.db.query(sql, { replacements, type }); }
     async enabled(business, now) {
-        const rows = await this.query(`SELECT b.active,b.subscription_status,b.trial_ends_at FROM business b WHERE b.id_business=:business AND EXISTS(
+        const rows = await this.query(`SELECT b.active,b.status,b.billing_revision,b.billing_access_until,b.subscription_status,b.trial_ends_at FROM business b WHERE b.id_business=:business AND EXISTS(
          SELECT l.id_login FROM login l JOIN rol r ON r.id_rol=l.id_rol AND r.active=1 AND r.code<>'super_admin' ${joins()}
          WHERE l.id_business=b.id_business AND l.active=1 AND cp.is_active=1 AND cp.code IN(:permissions)
          AND COALESCE(bp.active,pr.active,0)=1 GROUP BY l.id_login HAVING COUNT(DISTINCT cp.code)=4)`, { business, permissions: [...REQUIRED] });
@@ -21,7 +21,8 @@ class PulseHistory {
     }
     async candidates(now, limit = 25) {
         return this.query(`SELECT b.id_business,ac.timezone FROM business b JOIN appointment_config ac ON ac.id_business=b.id_business AND ac.active=1 AND ac.doctor_profile_id IS NULL
-         WHERE b.active=1 AND (b.subscription_status='active' OR (b.subscription_status='trial' AND b.trial_ends_at>=:now))
+         WHERE b.active=1 AND b.status='active' AND (b.billing_revision=0 OR b.billing_access_until>:now)
+         AND (b.subscription_status='active' OR (b.subscription_status='trial' AND b.trial_ends_at>=:now))
          AND ac.id_appointment_config=(SELECT newest.id_appointment_config FROM appointment_config newest WHERE newest.id_business=b.id_business AND newest.active=1 AND newest.doctor_profile_id IS NULL ORDER BY newest.created_at DESC,newest.id_appointment_config LIMIT 1)
          AND TIME(CONVERT_TZ(:now,'+00:00',ac.timezone))>='18:00:00' AND TIME(CONVERT_TZ(:now,'+00:00',ac.timezone))<'18:05:00'
          AND NOT EXISTS(SELECT 1 FROM business_pulse_captures c WHERE c.id_business=b.id_business AND c.local_date=DATE(CONVERT_TZ(:now,'+00:00',ac.timezone)) AND c.cut_kind='daily18'

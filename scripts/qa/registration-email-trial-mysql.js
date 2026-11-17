@@ -18,7 +18,7 @@ async function run() {
         await connection.query('CREATE DATABASE `'+database+'` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
         await connection.changeUser({database});
         for(const [name,columns] of Object.entries({
-            business:'id_business VARCHAR(50) PRIMARY KEY,status VARCHAR(30),subscription_status VARCHAR(30),active TINYINT,plan VARCHAR(30),trial_starts_at DATETIME,trial_ends_at DATETIME,created_by VARCHAR(50)',
+            business:'id_business VARCHAR(50) PRIMARY KEY,status VARCHAR(30),subscription_status VARCHAR(30),active TINYINT,plan VARCHAR(30),trial_starts_at DATETIME,trial_ends_at DATETIME,created_by VARCHAR(50),billing_revision DECIMAL(65,0) UNSIGNED NOT NULL DEFAULT 0,billing_access_until DATETIME(3)',
             rol:'id_rol VARCHAR(50) PRIMARY KEY,code VARCHAR(30),active TINYINT',
             login:'id_login VARCHAR(50) PRIMARY KEY,id_business VARCHAR(50),id_rol VARCHAR(50),email VARCHAR(254),telephone VARCHAR(50),active TINYINT,created_by VARCHAR(50),password VARCHAR(300)'
         })) await connection.query('CREATE TABLE `'+name+'` ('+columns+') ENGINE=InnoDB');
@@ -32,7 +32,7 @@ async function run() {
         // Reproduce both old unverified states, while preserving historical and verified identities.
         for(const [id,state] of [['old-reserved','reserved'],['old-pending','pending'],['old-verified','verified'],['historical','legacy'],['old-self-legacy','legacy']]) {
             const phone='550000000'+['old-reserved','old-pending','old-verified','historical','old-self-legacy'].indexOf(id);
-            await connection.query("INSERT INTO business VALUES (?,'active','pending_activation',1,NULL,NULL,NULL,?)",[id,id]);
+            await connection.query("INSERT INTO business(id_business,status,subscription_status,active,created_by) VALUES (?,'active','pending_activation',1,?)",[id,id]);
             await connection.query("INSERT INTO login VALUES (?,?,'admin',?,?,1,?,'fixture-hash')",[id,id,id+'@example.invalid',phone,id]);
             if(id!=='historical') await connection.query('INSERT INTO registration_account(id_login,id_business) VALUES (?,?)',[id,id]);
             if(state!=='pending') await connection.query('UPDATE auth_identity SET reservation_status=?,expires_at=NULL,verified_at=? WHERE kind=\'phone\' AND id_login=?',
@@ -62,7 +62,7 @@ async function run() {
         const q=(sql,replacements={})=>db.query(sql,{replacements,type:QueryTypes.SELECT});
         const write=(sql,replacements={})=>db.query(sql,{replacements});
         async function account(id,telephone=null) {
-            await write("INSERT INTO business VALUES (:id,'active','pending_activation',1,NULL,NULL,NULL,:id)",{id});
+            await write("INSERT INTO business(id_business,status,subscription_status,active,created_by) VALUES (:id,'active','pending_activation',1,:id)",{id});
             await write("INSERT INTO login VALUES (:id,:id,'admin',:email,:telephone,1,:id,'fixture-hash')",{id,email:id+'@example.invalid',telephone});
             await write('INSERT INTO registration_account(id_login,id_business) VALUES (:id,:id)',{id});
             return {id_login:id,id_business:id};

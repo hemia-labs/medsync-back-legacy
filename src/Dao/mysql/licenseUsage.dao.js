@@ -36,7 +36,7 @@ async function getBusinessPlan(idBusiness, transaction = null) {
     }
 
     const rows = await sequelize.query(
-        `SELECT id_business, name, plan, subscription_status, active, status
+        `SELECT id_business, name, plan, subscription_status, active, status,billing_snapshot,billing_revision,billing_access_until
            FROM business
           WHERE id_business COLLATE ${TENANT_COLLATION} = :_id_business COLLATE ${TENANT_COLLATION}
           LIMIT 1`,

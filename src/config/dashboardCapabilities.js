@@ -55,19 +55,29 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function getEffectiveDashboardCapabilities(planCode) {
+function getEffectiveDashboardCapabilities(planCode, billingFeatures) {
     const normalizedPlan = normalizePlanCode(planCode);
     const plan = getSaasPlan(normalizedPlan);
     const effectivePlanCode = plan && DASHBOARD_CAPABILITIES_BY_PLAN[plan.code] ? plan.code : 'basic';
     const effectivePlan = getSaasPlan(effectivePlanCode);
     const config = DASHBOARD_CAPABILITIES_BY_PLAN[effectivePlanCode];
 
+    const capabilities = clone(config.widgets);
+    if (billingFeatures) {
+        const basic = billingFeatures['dashboard.basic'] === true || billingFeatures['dashboard.operational'] === true || billingFeatures['dashboard.admin'] === true;
+        const operational = billingFeatures['dashboard.operational'] === true || billingFeatures['dashboard.admin'] === true;
+        Object.keys(capabilities).forEach(key => {
+            const entitlement = ['trends','operationalAnalysis','teamBreakdown'].includes(key) ? operational
+                : ['professionalBreakdown','advancedReports'].includes(key) ? billingFeatures['dashboard.admin'] === true : basic;
+            capabilities[key] = capabilities[key] && entitlement;
+        });
+    }
     return {
         level: config.level,
         planLabel: effectivePlan ? effectivePlan.name : 'Individual',
         sourcePlan: plan ? normalizedPlan : null,
         fallbackApplied: !plan || effectivePlanCode !== plan.code,
-        capabilities: clone(config.widgets)
+        capabilities
     };
 }
 

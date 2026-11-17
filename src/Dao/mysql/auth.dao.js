@@ -61,6 +61,8 @@ const getLoginRole = async (idLogin) => {
                 b.active AS business_active,
                 b.plan AS business_plan,
                 b.subscription_status,
+                b.billing_revision,
+                b.billing_access_until,
                 b.trial_starts_at,
                 b.trial_ends_at,
                 b.current_period_starts_at,
@@ -469,6 +471,7 @@ const buildAuthPayload = async (authRow, fallbackIdLogin) => {
         registrationWelcomePending=Boolean(registration && !registration.setup_welcome_acknowledged_at);
         registrationActivationConfirmed=isActivationConfirmed({active:role.business_active,status:role.business_status,
             subscription_status:role.subscription_status,trial_ends_at:role.trial_ends_at,plan:role.business_plan,
+            billing_revision:role.billing_revision,billing_access_until:role.billing_access_until,
             activation_completed_at:registration?.activation_completed_at,email_verified:registration?.email_verified});
     }
 
@@ -501,6 +504,8 @@ const buildAuthPayload = async (authRow, fallbackIdLogin) => {
             status: role.business_status,
             subscription_status: role.subscription_status,
             plan: role.business_plan || null,
+            billingManaged: require('../../services/payments/paidLicense').managed(role),
+            billingAccessUntil: role.billing_access_until || null,
             trial_starts_at: role.trial_starts_at,
             trial_ends_at: role.trial_ends_at,
             current_period_starts_at: role.current_period_starts_at,

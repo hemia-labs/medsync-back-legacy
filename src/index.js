@@ -89,6 +89,7 @@ app.use(require('../src/routes/index'));
 app.use('/api/auth', require('./routes/mysql/auth'));
 app.use('/api/platform-auth', require('./routes/mysql/platform-auth'));
 app.use('/api', require('./routes/mysql/registration'));
+app.use('/api/payments', require('./routes/mysql/payments'));
 app.use('/api/rol', require('./routes/mysql/rol'));
 app.use('/api/user', require('./routes/mysql/user'));
 app.use('/api/home', require('./routes/mysql/home'));
@@ -142,6 +143,7 @@ const server = app.listen(app.get('port'), () => {
     startBusinessPulseJob();
     require('./services/registration/legalRegistration.service').startLegalEvidenceJob(Sequelize);
     require('./services/registration/registrationWelcome.service').startRegistrationWelcomeJob(Sequelize);
+    require('./services/payments/contractWelcome.service').startContractWelcomeJob(Sequelize);
     require('./services/pulse/runtime').startMetricsLogging();
   }).catch(async () => {
     console.error('[STARTUP_DATABASE_UNAVAILABLE]');

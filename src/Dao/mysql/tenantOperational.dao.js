@@ -12,6 +12,8 @@ class TenantOperationalDao {
                     id_business,
                     active,
                     status,
+                    billing_revision,
+                    billing_access_until,
                     subscription_status,
                     trial_starts_at,
                     trial_ends_at,
