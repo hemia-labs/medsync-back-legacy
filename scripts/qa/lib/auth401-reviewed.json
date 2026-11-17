@@ -1,0 +1,1640 @@
+[
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "getConfig",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "a57bd5aff7af20341e26038b2dd9fce1a14a57f658bb194b8ee82348775902b7",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "saveConfig",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "681251040d4a90b517b69c9342e33441655c20fcb7d84976961a88c5884f2b32",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "list",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ef9ed4c910812a9505c56c0dddd77260bced4180526671f6fb309a7ac2ee0c88",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "patientHistory",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d77d8579bd9b38a14a5b724c820482de9c32fb0480556470ea730b13c28b3164",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "save",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d00ac84f49cedd6fadcf833d5fbd83e5f8eb3ea5ae4ad7dc4862b64214dce713",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/appointment.controller.js",
+    "scope": "delete",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "85ff7c5908bc6d9e8ffd469b5d191adde193e857bd75d0e43473df0d91d09cfa",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "csrf",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1d50a00f32dd9af325e4a40afb8ba69730eee4eb853268e6588d5dd786459ee6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "session",
+    "snippet": "responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code })",
+    "hash": "74131819d75e5688c9455b43a82d4b4d5b982f5df1f778b9afae5ac66bcea61d",
+    "context": "81a02b436aa36c21e5f325c00447ac598995c2378bf54a736cdc2b42e7fd2de0",
+    "count": 1,
+    "reason": "Auth control: login/session/refresh/close retain their reviewed contract; session code mapping covered by S18/D2 HTTP tests."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "session",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "81a02b436aa36c21e5f325c00447ac598995c2378bf54a736cdc2b42e7fd2de0",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "refreshToken",
+    "snippet": "responseData.unauthorized(GENERIC_REFRESH_ERROR)",
+    "hash": "f95b325b495f03c34da0c6fdc7b163546e75cfc71c0c8884d70b8b4c4256b907",
+    "context": "1d33b86c38d3bd9f56006e45d4a1fa65dea88eecf7e4d9d18bf467fd324600d3",
+    "count": 2,
+    "reason": "Auth control: login/session/refresh/close retain their reviewed contract; session code mapping covered by S18/D2 HTTP tests."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "close",
+    "snippet": "this.HttpNotAutorized(HttpStatus.UNAUTHORIZED, MESSAGES.NOT_CONTENT)",
+    "hash": "767716f99000387cd2c0ad5301e14ba3c0e76713665e668d0e74555dc5c209ad",
+    "context": "b81e6679b3c37338e3e31846d160db656787d340eb7acc05fb08373dddb0a96d",
+    "count": 1,
+    "reason": "Auth control: login/session/refresh/close retain their reviewed contract; session code mapping covered by S18/D2 HTTP tests."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "close",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b81e6679b3c37338e3e31846d160db656787d340eb7acc05fb08373dddb0a96d",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "forze_close",
+    "snippet": "this.HttpNotAutorized(HttpStatus.UNAUTHORIZED, MESSAGES.NOT_CONTENT)",
+    "hash": "767716f99000387cd2c0ad5301e14ba3c0e76713665e668d0e74555dc5c209ad",
+    "context": "35fe6fc9cb9f116f0b744e66303feacbbb600ec8ec1d17910b5e79e902bb4364",
+    "count": 1,
+    "reason": "Auth control: login/session/refresh/close retain their reviewed contract; session code mapping covered by S18/D2 HTTP tests."
+  },
+  {
+    "file": "src/controller/mysql/auth.controller.js",
+    "scope": "forze_close",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "35fe6fc9cb9f116f0b744e66303feacbbb600ec8ec1d17910b5e79e902bb4364",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/business.controller.js",
+    "scope": "current",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "4353ebc37f63e88e71f1e6abac501d2b132089115d89ece818af31c505e944b2",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/business.controller.js",
+    "scope": "updateCurrent",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "4ec42f5696f02360430928f74687c90875363b940bf7dc26cfa879e331bab34f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessDashboard.controller.js",
+    "scope": "summary",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "a6e1f8bfa86923650e7be2edd4d5244859a61aee885cf412f6f348e82aa7ca93",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessDashboard.controller.js",
+    "scope": "trends",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9a8c154656bc7686a5ab479648e8b7bb9e60be521b71f9afb87e26d2dad5dd5b",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessDashboard.controller.js",
+    "scope": "operationalSummary",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1e620a7a973f7124e7f0c0a54732bf8f6ec8dd5623ea48b1cb547e87bb3ca996",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessDashboard.controller.js",
+    "scope": "professionalBreakdown",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ee6cab935fc2ab66a7ac0994f33a62b2f404787cf9f6640871e2e5361d0503d9",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessDashboard.controller.js",
+    "scope": "teamBreakdown",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c40ce64d7b188bbd2e46ceb0d49b904c3a03ab8c24b89eb39d30e48e3bc49e35",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/businessPulse.controller.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(status).send({ status, data: code ? { code } : null, message: status === 401 ? 'La sesion ya no esta activa.' : status === 403 ? 'No tienes acceso a esta lectura o accion.' : status === 400 ? 'Parametros o cursor no validos; actualiza la lectura.' : 'No pudimos verificar el Pulso. Puedes reintentar.', ...(code ? { code } : {}) })",
+    "hash": "2503ab4eeca3e4ec2aba6ef4347a2cb4da8a49fd81195a26ccdd16bbe9ced5b3",
+    "context": "d3c5cd0c5ed945664644e7a2fd88a4c2d139d1af08b74a015dc095dadaae4e17",
+    "count": 1,
+    "reason": "Pulso status whitelist and serializer forward error.code to data.code and root; real route envelope tests cover 401/403/503."
+  },
+  {
+    "file": "src/controller/mysql/businessPulse.controller.js",
+    "scope": "<anonymous/module>",
+    "snippet": "401",
+    "hash": "0c9bb47545eed97a6502a1e0cc23a43b886ca8a16139a76960189335451c4659",
+    "context": "d3c5cd0c5ed945664644e7a2fd88a4c2d139d1af08b74a015dc095dadaae4e17",
+    "count": 1,
+    "reason": "Pulso status whitelist and serializer forward error.code to data.code and root; real route envelope tests cover 401/403/503."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getCatalogPathological",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "804cb0b547adaace1028a2a720ff0054abd445629aa513fdef27431cc8772bfd",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getCatalogSectionsPathological",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b3f9d87a480679324d00af22ce85e1fed4e493503dcf25fc5c04600517a97ce7",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getCatalogFiles",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "989f4a0e87050e8fd83c952a2d7fe4149450a32ed7ebfe73023dee2b411d3c87",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b3c7be42e556c5ae026dc31b45b99344d9ae1db399dd5b392ca49272e3e26c5a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getConditions",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "79948487a1aae04fd15e99746dd69d82943d2d2d5e629f7f5718fdec345675ae",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/catalog.controller.js",
+    "scope": "getCatUnit",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ef36684008e9da4235e8966b2626c61e9278efa6c0e71595809e5ae42446196a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "latestByPatient",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1bd6bbd30110a311300cdea0022010ca2011c76db852dfb744c70ad9c6497053",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "versionsByPatient",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8d248d5fe534fb78861837c075545671d548d91e583e2b951b65f8be3cf52278",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "getById",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9bb23b7c80fa6a2262d46dd96261c0eee1c7ed8a93a161d0bc80c8615719d447",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "createDraft",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c890965b9b43b757f490be1239e95fa027882a02a28743e0fa6779ab104d45a1",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "updateDraft",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ebdbf9493fe248eedb958593daf28734f629d78f31a3c5eae3b50e4cd8618854",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "finalize",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1e8e3026efd619c99241fb931d1bf547c906f03589f9eb952b3559bc3a9da6f2",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "printed",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "08bb60d6787f50c125cb25ef0c417f7e6ee7517f429fd8f424c2d6e5f0c9f687",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistory.controller.js",
+    "scope": "cancel",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "174312ce089d53a2b849171249e0a9a4c8bcebdc937eba87db9da784867e021f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistoryTemplate.controller.js",
+    "scope": "current",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c5619a9a094403661524d1a6076a16de4f6b74eb808297d6458038c061ed35ad",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistoryTemplate.controller.js",
+    "scope": "createBusinessTemplate",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "a2d9424c696367196839cbb7aedcd100428983c1d997d21ee211e375d71dee49",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/clinicalHistoryTemplate.controller.js",
+    "scope": "createVersion",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "79b05400baed8aeefd6d4331a6881e8c5a3458f13d97943ff36549b764d1fb00",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "signatureContentSave",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d2379ff936772e43996da7ec6f21940174ce71d9847fb773133b09d2f341a863",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "signatureContentUpdate",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "eb82b22f490ae86acf0d0c4bc6a007ccb147136e69027a72b77421787d28a0a5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "signatureContentGet",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "66f6c43677e0e778248323225d451a33cd7a7fbf2f2a908f9b672a44254f2938",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "loginImageSave",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8afefb7405497708c2e80de3eccdde3902e81e5ecba4466de025b4f383cf7389",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "loginImageGet",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "36219a38a20608efc7504e8f57a87734ddfbbbca153ec24d0985943e4a7fa38c",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "themeList",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "3751cbe0daf282bdb1107ab2905338eb5fba46b845154ec130f330bec90bed06",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "themeGet",
+    "snippet": "responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code })",
+    "hash": "74131819d75e5688c9455b43a82d4b4d5b982f5df1f778b9afae5ac66bcea61d",
+    "context": "301f7a0404ff6ec1263f8df26d154ce04756505ee4a28015a71f550312d8ae36",
+    "count": 1,
+    "reason": "Theme OptionalAuth maps expired/invalid/inactive authentication to AUTH_*; covered by S18 HTTP."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "themeGet",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "301f7a0404ff6ec1263f8df26d154ce04756505ee4a28015a71f550312d8ae36",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "themeSave",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "6346b3f6519fca6d758aaa600a4ad7e017b27f2094bcd18242e08e156c42aadc",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "clinicalModuleConfigGet",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c0db62cb03ed5b47f25388ed5b90b3390145f5803921ed97a1602c4491e2f849",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/config.controller.js",
+    "scope": "clinicalModuleConfigSave",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ca9dc51a604c73002b582673ba0bb7309f2ac920b9a578083694276802a64f61",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "Templates",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8f81152a43dcf8901ffab053fa117c2373626ab5a84de7c28a7aedbf4eaeb763",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "SaveTemplate",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "e25a5786eb8a3ffad101f5a80e00f35cd5bc73450b885dd0d71e4b991c4375d4",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "PatientDocuments",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "2d111f457f86fa69bfaa60dc6cf0469a885737e7fb5545631c172c0e9da8d5e5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "CreateDocument",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "112a5a302b33794ed3551c8771c3f243a647ffc0c757096c0281970618d77804",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "SignDocument",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "75fe0fc2cc0ff3e38bf241a6d7ad642746812f64203e2a4c0e06a48acf121b8f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "RegisterRefusal",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "ef93456e51f4b19c0c345b235dcbb5a6af0dcfa3b4d5499e090c2ea1b0ec8ba4",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "CancelDocument",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b3badc067fe3d1ef52233a6f269f6802080b4516634becaab69ef4e4a42cea75",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/document.controller.js",
+    "scope": "AuditAction",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "6e634907b68e32a5a46434f589f74d4f6103f4b9afb00526b596e8c78a973fee",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/documentSignatureRequest.controller.js",
+    "scope": "Create",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d5b9dca5bca9866253beb55d2ed2b633b50631d20625b0cf304a60991558e392",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/documentSignatureRequest.controller.js",
+    "scope": "List",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "138b38cd3dc9d685db8fa3bd784a010caef26702e672f29569aca10804a30b4c",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/documentSignatureRequest.controller.js",
+    "scope": "Revoke",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5da3fdff0798eb60229a3e119bcac76d10e63a19d47eb9e18a9b1f53290b5b74",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/documentSignatureRequest.controller.js",
+    "scope": "Email",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "28a5517aa04fe338c4e2d38b042b5a6a4c8111c21b5c5ece983621e52a87d45c",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/files.controller.js",
+    "scope": "listBuckets",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c2b121696dff36241e2d8b816d2183d1023a57b592aff7539f2b57cffd83e4b0",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/files.controller.js",
+    "scope": "uploadFile",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "2cd8cca3cc11431517433e711640d91403f794f1aa92da5b44df321766f8a7aa",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/files.controller.js",
+    "scope": "uploaProfilePhoto",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "0941679d089b876e75bbcc1d37837540c0d01f0ad6e2d0a29852bb3c8fbc1469",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/files.controller.js",
+    "scope": "getfilesPhoto",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "72abca3e51abdf90d8458f1d164b32e6be2927a58017147ba432497e9e7f7c1e",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/files.controller.js",
+    "scope": "deletefile",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "32984da2111364afbeba8fb6958b7f00b8c42f533a6063c1154e4ff123f0b1c6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/homeContinuity.controller.js",
+    "scope": "summary",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5cce0fc49742a0760e2d16c9a4213def3e4bd7b046ec5c8a503b3076a412a0ac",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "getByidTooht",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "48cfbc77c51cb0e7e32fafabdf5bd037b304af78c5360831f0509e1a4f257796",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "SaveTooth",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f376324d7e6fef429dc8e2c2ce8cce8c1a31510a18560cac17bd964f4bf37335",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "UpdateTooth",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "0ad547c0e11ede6529f68873f6aabf595f26c87e2c740beea2b4b71fe452aa21",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "GetCatTypeTooth",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f0dcde7892ad250f55a11eb1499d987762ec27c69c3fbea5092e3f5dfdd424df",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "getValidator",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "dc2c45f01aa103c59b4ff4b21e8eb34f906be98e16bbbbb36e8e738af179a01f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "saveOdontogramv1",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5e4ef19dae5c4ab5bd0e669f5a70fb66529b4f90a3f43a6770763f79fd443b10",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "getOdontogram",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "6b8ddd2e15dc836139c050b6b11376928e5711db20061246d617039a3396b363",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "saveOdontogramvDetailV1",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "e06b2e06835d7abf11374303d3a0d413c215d7efa488765d553ca5f3bad15f21",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "getHistoryv1",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "dbfb81a2d9c3ee5f087e53b48704bc6d3347a5d44dbc3aea516d1aa964e62e04",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "updateStatusOdontogramV1",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "92d9dd2d6d52b4a2656ac0bbc3a5f429717b3f44a5130acbea6f9d398e6f1115",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/odontogram.controller.js",
+    "scope": "deleteOdontogramV1",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "fb067625d0ad264f75356cf45644d65f37a27301e2f12261efcdf302477ba8bd",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "getConfig",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1cc89784ee003218cf2b9455e8999ea737c319f1bc14ac44ea3dddf243a3b3a8",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "saveConfig",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f11c7d848d2d9e2c1be7ef979301f2c52f4f646bddabc72b3c6cc4a9eafbdaeb",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "list",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "02dc3475819a4268fd60bf628556e4d5f511530dd92e37a08c54d3360a40d2aa",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "listByPatient",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "7356e36b72c8a67038546c9151f51a7a5df206283dde9e8399fda7c59204c7a3",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "getById",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "daac693c5fb2d6bc49d8f67a8f69f751d7c72dfd459301b88129a9f999c75868",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "save",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "e726fe79b1ef5141454d2d475e6a2a0d58103d8bbdad43eec9200bdd08932b9b",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "issue",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "2cfc82e3d946bd2dd8cbb5ee13c99dca4175e3da94d2de9000ae742889edc66c",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "cancel",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8013f5848ba7bb7ae7c3108e92759aa9eddf5885083a3fe017583ea954866811",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "deleteDraft",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "2596013dfce9e3b9bd07a24e791d94647af9fba7d694fca8b575fdcf50d511e4",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "auditAction",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f9ae6885e34f8644ebaa385edd7a7c2ac3666473c813eaabb082fbf228ade6d3",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/prescription.controller.js",
+    "scope": "doctors",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8356bdc0411b549a08f8ef168b9126adf8395b01828458266eb1c92fe7410fc5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/publicDocumentSignature.controller.js",
+    "scope": "Get",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f7ae5cbc089263402ffe61f68e5446ffd34ea466d1b25edc917fce161912bb5a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/publicDocumentSignature.controller.js",
+    "scope": "Sign",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5c8c14d4c80c7c2b1f81013aef34d02d4ebaf208a9090701e0a2c1d85adf29e2",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "PxSave",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b7115eb5a3e45dfa18e508949ab4fc7d91fd90242d6ccf0f89719469e6786b5f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "PxCreateMinimal",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8d0ba710a8715992de258ffdad39352d8cfd1a2b4419613a6750445162cd10ec",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "PxUpdate",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "74696cc4c8a013808c2563854b033149ede6cac3025b57e3f407dde46bba2f67",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "pxForceDelete",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "b6c3f55ae0f8dc1f429025daf24004021eecbaa27bcb58790bcfeddfaf4d1611",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "pxDelete",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "163a9a54d9eb6d892a0d6d582d9ae43dfcc0324c1e36d2a33c48e8b2d20e3d08",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "getPxSearch",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d9b7a14863baf438d1db75ff8fd18c343bc2af81e100868a5d38f27b7b4708a1",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "getPxFastSearch",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "03349b29d08342e78e97db4a3ecd445b2690d21aff2c0ca0f5baed1c19bf9bf9",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "getPxBithDay",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9953b59845d4236cbc50f145cddcf424acb015c198b0a3f8154db0c7ac184734",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "getFamilyPath",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "04d4534711c8a38ff114f8de077f7d12d672ceb6d88f7264274c4b2c2a6fdbd5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/px.controller.js",
+    "scope": "getPxById",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9d024149339c13837739f8915b16fb6d373a1f2cc242bd31eee5d91eb401d1cc",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/rol.controller.js",
+    "scope": "getRoles",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d94f89204a2f1e3dee39df403bce6f91dd9347738bc86668d1859848a0876e7d",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/rol.controller.js",
+    "scope": "getPermissions",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8d6a25d3eb11aeb0fffbabb0eff2f353c720283fd25f3c46646d34d142f5e1d4",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/rol.controller.js",
+    "scope": "savePermissions",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1dada6ed9dd6387e3d0e9bdb0f888bc10a023182dd26b4971d4b1034104405f9",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/saasLegal.controller.js",
+    "scope": "representativeContext",
+    "snippet": "res.set('Cache-Control','no-store').status(response.status).send(response.success?response.data:response)",
+    "hash": "82f1ccd3c84175c705d9a22591545f9ef5017b9b805d578115c98a0d6b480318",
+    "context": "3e80ae3b60327ac1154e1025d288b96b01bba7fea8d6f2c6127807d95850b217",
+    "count": 1,
+    "reason": "Legal representative response: error branch forwards original envelope; only success unwraps data."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "audit",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1ec050933d1d3a0b3b2ae942226ab832fe99fde6522ca696b1ee7366e7e30d20",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "createBusiness",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5b2a247ef97c0160a70387fc3c08a300db278770f2ac3c122732c3fd0fd795c4",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "dashboardSummary",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5b7cfa1b024cb3c9febdbc80c5af16a141b7d384c97c7d5b7bf4aabb9e58a789",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "saasJobsStatus",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "30a04d1fb9b9e91bd59cd9476f7d2660b49f29c3eaa1d26f0ad9cf704d310105",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "plans",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "413467115e133a22f64f0bd6e4d13c7c71149d7c28a87f5708c33c0df154966f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "businessLicenseSummary",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "3d1a8b79a5953e7c9fa6de864c3da5e050c84ed455a2d4a987a419bc97a560f9",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "businessLicenseOverrides",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "cb1cdca14c749bdfa097ca850ba28beb9e850e5426923f3b5fd45eb0f73b0bbb",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "updateBusinessLicenseOverrides",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "94943ec05943a121b4b1fc6f66668ba102ad4ad5a26771f0f439b1d16ac60f74",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "runSaasTrialLifecycleJob",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "46276a0a87db70defbd53c53cf518c18b8b530c367c53bc75d6ec8fa36e75d80",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "businesses",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "aa5b3d944cc55195e5b147a6b67f1c394c5a120e0b3d07757091515885bdcec6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "updateBusiness",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9d9c6b96927edd434d10b111fa452da58c144ae7e0a9843c7023e201129a1f57",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "updateBusinessSubscriptionStatus",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "194ebcf32a85ba5d51ee5e314fb8d5f1a4a4a29779ae0838406eb28749ad378a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "extendBusinessTrial",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8c7e288218d78d7f5761b4c0c985f0056e1399dea37938e09d40c4a33556c18d",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "updateBusinessPlan",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "08180dc37316cacb8a4c7826e298c14da1df65ea86cf8ba91a6ea1c804896fbd",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "users",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "8a9dc8cd757dcdc624f4670b5bced15c3062fbff675ffd90c5a05705dbb94cd6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "sessions",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "6a9e23f37d2d612ec6ff64d9b531aa99322b08dfb9deae59a9817dfcb4eaac05",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "closeSession",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "15cb4a7f22e8467464cf65a73f7be57bd8e8f24e0bd9c6802d9bc33c9936e88e",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/superAdmin.controller.js",
+    "scope": "closeUserSessions",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "998b77887a906435bc2b61c22959c716b983c4f6b1336f1fd0e480ee6820f908",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tooth.controller.js",
+    "scope": "getTeeth",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "7326ba2528fdffee2b4b1f49779c15c46a21967c773351b3df9f227d4a8d618f",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tracing.controller.js",
+    "scope": "getTracing",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "c12a73b0c07910311edd26cc5d5d5967c7356cd4c74bee9c8228e261b173d5b6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tracing.controller.js",
+    "scope": "nextQuote",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "e1b2b180d72bf04d17017b6cfbed2507c38c34541805def90ff6a5f3e260a17c",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tracing.controller.js",
+    "scope": "SaveTracing",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "f2d7f0b696f3a543ce9ab198af5eb988e8fb3dc6cd776e37ade1e623995d7d0e",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tracing.controller.js",
+    "scope": "UpdateTracing",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "262f507ce74db0627abb14509607f2ecd9aab80596d8371bb521429e063ae1ab",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/tracing.controller.js",
+    "scope": "DeleteTracing",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "fe487d52efc2be58b24d2a5814327f657dedbca0e7e0610e237915454ffd6506",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "GetTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "5eb91d47ac28219d928d0b380408db4773bb3f57a5f668ad2590a82648abc15a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "CatTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "da464be9318254a7d89bcd38c69b2a17779e6df1db4f7e0eb671fb8068c92d6a",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "SaveTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "0e2f6e680043cfae34c88443b98cc46ea26421a2b0d2d7cc9ee56755ad342eb5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "UpdateTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "9317ce6022ea38743034177768278939d2641a7f7fdd5760eb79fc4dba657c30",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "DeleteTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "70196404158c452fa8ec4c85076a64f589b0f023a71be7fb57cb9cf4475a2358",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "GetDiagnosis",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "93f8e1ba7bc791a8289a8ebc81bdbbb8f077386c199b1492b90345296991bd53",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "SaveDiagnosis",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "7e539249616da380e5610097e23197862ce3f4aa87f398db52785f54504cf5de",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "GetTreatmentPlan",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d2bb5aea3161763d84fc9b44a3d399e7ea00ce18e363615d428c1ae47186637b",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "CreateTreatmentPlan",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1158cffe7f769a4cc5383708945e1f512da48e19fb588e37fe761cd4d0f78dad",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "CloseTreatmentPlan",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "e34637b349bef981834aa433a497c038092fa9c0b67969e72f1a1fd427b8e543",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "SavePlanTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "af3b2e34b1559a320e425d87fb64fc55206fe4d0dff4002c2f1ad314ee252d36",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "UpdatePlanTreatmentStatus",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "d8398a722d2cd45420e2c2967ce06fc5d6a3958a44d1e9c421bb6eea6bff888e",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "DeletePlanTreatment",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "1c6e2478b9f9af40041f2fd29b50bf26172d28e72e1f1dff8ddfc980819b56a5",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/treatment.controller.js",
+    "scope": "SavePlanConsent",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "584e4b390f3e2579730571cacf0b0a7fc2b79613b9d711328b9e5f38e2a5c956",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "SaveUser",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "3a20701801e9b142aa870ac3385b04a49d65a0749baf7bb670c41251972b4e84",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "UpdateUser",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "003f2fbd09d7bb6d4e3789c79dedabd3e7f80fafcad36cbfaf369e17aa2a3547",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "getUsers",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "3cecf34145ee77e7ac471b40b6fbab909d4a760270f3f965b6667d4987066e9b",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "getUsersbyId",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "135c282e7cb189f0fd9776924fae47da44090297876da082173ff260421da5a6",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "getProfessionalProfile",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "91053842128387e567a24a49e610020bdb690775e6e415074d569b59c276faef",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/controller/mysql/user.controller.js",
+    "scope": "saveProfessionalProfile",
+    "snippet": "this.HttpError(error.status, error.message)",
+    "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
+    "context": "a673ab326d8037f92637536f759a63aed981a293500912cd25fd77c6fa6ebe86",
+    "count": 1,
+    "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "handleRefreshTokenReuse",
+    "snippet": "responseData.unauthorized(Messages.AUTH_NOT_FOUND)",
+    "hash": "d86d7dd653fb6ece272d81d9f811511247df47944b7f2bd5686252be664204b3",
+    "context": "3b4b31845a2cc447ebb97fbf222ddf5d1646c8fc2991b68833388009b791f852",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "refreshToken",
+    "snippet": "responseData.unauthorized(Messages.AUTH_NOT_FOUND)",
+    "hash": "d86d7dd653fb6ece272d81d9f811511247df47944b7f2bd5686252be664204b3",
+    "context": "75be43e65284f11b7ff0cb7b298afc753dbb9cdd7613d75e607abf682541754b",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "session",
+    "snippet": "responseData.unauthorized(Messages.AUTH_NOT_FOUND)",
+    "hash": "d86d7dd653fb6ece272d81d9f811511247df47944b7f2bd5686252be664204b3",
+    "context": "b30d4095b99870f701e2bab70228acca01f86e45dda20581142f1cde77fa1583",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "requestPasswordChangeCode",
+    "snippet": "responseData.unauthorized('La sesion no es valida.')",
+    "hash": "04c7fdbebd379af4ef8fa56cf76d10b8f3b15f3dffe406d9aa9329223113e40c",
+    "context": "8c44c129358aaa96e12cda8ea46bb46f9c2fbea62267be70c646c7cb0be4d23b",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "requestPasswordChangeCode",
+    "snippet": "responseData.unauthorized('La cuenta de la sesion ya no esta activa.')",
+    "hash": "e2f48db61c9b54f7a1dd1275a20306c18dff72645f76ed78180b286aa7136f5a",
+    "context": "8c44c129358aaa96e12cda8ea46bb46f9c2fbea62267be70c646c7cb0be4d23b",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "confirmPasswordChange",
+    "snippet": "responseData.unauthorized('La sesion no es valida.')",
+    "hash": "04c7fdbebd379af4ef8fa56cf76d10b8f3b15f3dffe406d9aa9329223113e40c",
+    "context": "261a952464cd6f8f95c21b28a9b1593e246586f36440dd28bfb415d6f82ecaf0",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/Dao/mysql/auth.dao.js",
+    "scope": "confirmPasswordChange",
+    "snippet": "responseData.unauthorized('La cuenta de la sesion ya no esta activa.')",
+    "hash": "e2f48db61c9b54f7a1dd1275a20306c18dff72645f76ed78180b286aa7136f5a",
+    "context": "261a952464cd6f8f95c21b28a9b1593e246586f36440dd28bfb415d6f82ecaf0",
+    "count": 1,
+    "reason": "Auth control internals: login/refresh/session/changePassword; session controller maps invalid authentication to AUTH_SESSION_INVALID."
+  },
+  {
+    "file": "src/index.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(err.status || 500)",
+    "hash": "4586902883042ab9a0d9fa34f0ce57209f948fb59e7bcb5285e722facdae41cc",
+    "context": "76bf40ab942ff75988f0193a2f56cfbfd5e1b9bcdc435fd520f1f608674c80a5",
+    "count": 1,
+    "reason": "Existing generic HTML error handler (404/500); not an authentication path. AUTH middleware sends its own response; new explicit 401 origins fail inventory."
+  },
+  {
+    "file": "src/middleware/corsCredentialed.middleware.js",
+    "scope": "sendStatus",
+    "snippet": "res.sendStatus(statusCode)",
+    "hash": "5d9a2156fba0ee1a5a89681ff534f6bd839f7c708f33dce107321bb5a6701d5f",
+    "context": "c7adcd9acd71d44c949c922a8b861920848a0b02065d51a089e7c4681ea55163",
+    "count": 1,
+    "reason": "CORS helper and its fixed 403/204 callers; not authentication. Function fingerprints bind this review to current behavior."
+  },
+  {
+    "file": "src/middleware/corsCredentialed.middleware.js",
+    "scope": "sendStatus",
+    "snippet": "res.status(statusCode)",
+    "hash": "50f80dfb8d8ffba8f4ac469e17bda27d1ad0355077a4a1c1e131ff39b5d7daa9",
+    "context": "c7adcd9acd71d44c949c922a8b861920848a0b02065d51a089e7c4681ea55163",
+    "count": 1,
+    "reason": "CORS helper and its fixed 403/204 callers; not authentication. Function fingerprints bind this review to current behavior."
+  },
+  {
+    "file": "src/middleware/corsCredentialed.middleware.js",
+    "scope": "corsCredentialedAllowlistMiddleware",
+    "snippet": "sendStatus(res, 403)",
+    "hash": "60f6134c82a1d00f88964155c8cc38fce3b6cb5dfeca89cae408e766512fd41e",
+    "context": "000f005df8ebd21b7a8b3c407bd4fbd84289da180fc52662b407fb7980fe60f4",
+    "count": 1,
+    "reason": "CORS helper and its fixed 403/204 callers; not authentication. Function fingerprints bind this review to current behavior."
+  },
+  {
+    "file": "src/middleware/corsCredentialed.middleware.js",
+    "scope": "corsCredentialedAllowlistMiddleware",
+    "snippet": "sendStatus(res, 204)",
+    "hash": "084335ac3fd2444ef3cacd04dc036370d2ba48902d186ba3310e7223e72eebe4",
+    "context": "000f005df8ebd21b7a8b3c407bd4fbd84289da180fc52662b407fb7980fe60f4",
+    "count": 1,
+    "reason": "CORS helper and its fixed 403/204 callers; not authentication. Function fingerprints bind this review to current behavior."
+  },
+  {
+    "file": "src/middleware/corsCredentialed.middleware.js",
+    "scope": "sendStatus",
+    "snippet": "res.statusCode = statusCode",
+    "hash": "68998b8bec4cfa73a3bb92e822a57f063c70dcde8f83fff50af25cb2fd476f06",
+    "context": "c7adcd9acd71d44c949c922a8b861920848a0b02065d51a089e7c4681ea55163",
+    "count": 1,
+    "reason": "CORS helper and its fixed 403/204 callers; not authentication. Function fingerprints bind this review to current behavior."
+  },
+  {
+    "file": "src/middleware/error.middleware.js",
+    "scope": "errorMiddleware",
+    "snippet": "res.status(status).send(error)",
+    "hash": "480eb1d9cbfe1a5e39c60cf0c438aaeaf027c498e847eb8ad2d3cc0d29d37419",
+    "context": "5a4713f948fba2d0ac38140b86472c2c31fb2f8da61470a60540af25b8801dbc",
+    "count": 1,
+    "reason": "Existing generic error serializer, not an authentication emitter. Reviewed as an unresolved boundary, not proof of AUTH preservation."
+  },
+  {
+    "file": "src/middleware/requestBody.middleware.js",
+    "scope": "parseError",
+    "snippet": "res.status(status).json({code,message})",
+    "hash": "e46b7f9304a0393df21dce81f32c0bbb1c0b917548b340157f98bb4d177c2f35",
+    "context": "35618789a3dd7840624062fc028dd7990de177d853f1fe9a42b6b8f88709431c",
+    "count": 1,
+    "reason": "parseError assigns only 400/413/415. Protected authentication denial is separately checked."
+  },
+  {
+    "file": "src/middleware/requestBody.middleware.js",
+    "scope": "parseError",
+    "snippet": "res.status(status).json({ status, success: false, code, data: null, message, limitBytes: bytes })",
+    "hash": "3e3a881edba58d731ec3895533e70585a9712f8bfd0b1b886397aa6caf8c9f59",
+    "context": "35618789a3dd7840624062fc028dd7990de177d853f1fe9a42b6b8f88709431c",
+    "count": 1,
+    "reason": "parseError assigns only 400/413/415. Protected authentication denial is separately checked."
+  },
+  {
+    "file": "src/middleware/validatePayload.middleware.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(response.status).send(response.data)",
+    "hash": "f6800cfa45870969ae4aaa97168ef41675f182fca61c6f75ec43c00c0983427a",
+    "context": "e681ce76bd61f404629084e7b2b31ebeb5b859d1123472c5fc02d165ce0132b3",
+    "count": 1,
+    "reason": "Validator failure always constructs HttpBadRequest(BAD_REQUEST); not authentication."
+  },
+  {
+    "file": "src/routes/mysql/identity.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(e.status||500).send({status:e.status||500,message:e.status?e.message:'No se pudo completar la operación.',data:{code:e.code||'IDENTITY_ERROR',field:e.field}})",
+    "hash": "c152231d02a719cfb2f0faf78ff701ef2c1bcf63ae0b5ed8bb347e2afc9bfccd",
+    "context": "bb2dca061ea19b1c2ff2db386b0c405d2fb81ad9896a0de75adafc3ffb61b8de",
+    "count": 1,
+    "reason": "Identity error serializer forwards e.code; current identity errors are validation/conflict/authorization. Authentication is upstream Token.Auth."
+  },
+  {
+    "file": "src/routes/mysql/odontogramGlobalAliases.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(error.status).send({status:error.status,message:error.message,code:error.code})",
+    "hash": "4fb4abceb005d4ab68b372ca32b4a2323a67d19773733cbaffe3e307d886149f",
+    "context": "879022f812cc9edab5c3e7c54148191a242b6685e8a701aba679244866caaa9c",
+    "count": 1,
+    "reason": "Domain error serializer forwards error.code unchanged at root; Token.Auth executes first."
+  },
+  {
+    "file": "src/routes/mysql/odontogramV2.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(error.status).send({ status: error.status, code: error.code, message: error.message })",
+    "hash": "8b7a338a50a3ea71f6fc824735b5023033cf89928b150a9f52f739d6ab7862ef",
+    "context": "5d38da08a9cc4e4ce79df05b364bb0dd565b5390be457c40ec8baba4977f82f0",
+    "count": 1,
+    "reason": "Domain error serializer forwards error.code unchanged at root; Token.Auth executes first."
+  },
+  {
+    "file": "src/routes/mysql/registration.js",
+    "scope": "sendError",
+    "snippet": "res.status(status).json(body)",
+    "hash": "b3ee35d4451a1ad1adf83fd55422f37819c0444dd9869d24c4bd0cc5229eee80",
+    "context": "3443452ee7f1a916f2a110beea92139804e69a9bd89d0f93935fa01a16ffb409",
+    "count": 1,
+    "reason": "Registration/activation control contract: explicit root code and Token.Auth code preservation; existing registration HTTP tests."
+  },
+  {
+    "file": "src/routes/mysql/registration.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(result.status).json({accountCreated:true,sessionEstablished,activation})",
+    "hash": "afeb3091dbd6c790524d44208eb68f2f752e33d84c0b79fcb68cc44f5cba7856",
+    "context": "8eefee10439c49ff598a40c1592594b5d417235540215ea118e1183ab117d2c5",
+    "count": 1,
+    "reason": "Registration/activation control contract: explicit root code and Token.Auth code preservation; existing registration HTTP tests."
+  },
+  {
+    "file": "src/routes/mysql/registration.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(status).json(await contacts[action](req.tokenDecode,req.body,req.ip))",
+    "hash": "f45b719ebe15ed2f0d60eb2743790416057fe7e956a42caff3c225b6d37b54ad",
+    "context": "b18c31a221f2652ce27af5963509fb96a2a98e538d40098ee61b1da024989798",
+    "count": 1,
+    "reason": "Registration/activation control contract: explicit root code and Token.Auth code preservation; existing registration HTTP tests."
+  },
+  {
+    "file": "src/routes/mysql/registration.js",
+    "scope": "<anonymous/module>",
+    "snippet": "this.statusCode===401",
+    "hash": "5222b0e6902b96ff3c120a5c31d4cbcbe9ac41760079f6bcd7abc4ea651862a4",
+    "context": "3eb68330e1d9e7067917c7b66325d22b1169cd4fa93e4d38ce0ec6baab2586bb",
+    "count": 1,
+    "reason": "Registration/activation control contract: explicit root code and Token.Auth code preservation; existing registration HTTP tests."
+  },
+  {
+    "file": "src/services/registration/legalRegistration.service.js",
+    "scope": "deliver",
+    "snippet": "error.status===401",
+    "hash": "24e762dbbeef9092834d4886bc8f63fe41f6c6d0beb243a44acb43606b6333f6",
+    "context": "39acd84a2731e6888b5d52c4d66a9c6eb6da7f052575c21496565c2ad63bb327",
+    "count": 1,
+    "reason": "Consumes an upstream Legal 401 to invalidate its own client, not an HTTP emitter."
+  },
+  {
+    "file": "src/util/httpResponse.js",
+    "scope": "<anonymous/module>",
+    "snippet": "HttpNotAutorized",
+    "hash": "01c0764cec783a05b1caafbd24850fb6e6407cff5d084a5fa0b36b0e26adeff5",
+    "context": null,
+    "count": 1,
+    "reason": "Legacy HttpNotAutorized helper definition/default; callers are inventoried separately. Does not itself choose a route response."
+  },
+  {
+    "file": "src/util/httpResponse.js",
+    "scope": "HttpNotAutorized",
+    "snippet": "statusCode = 401",
+    "hash": "0f60dfba46b835071a69b32b2c62a85fab2f97906dd984bfa4f2b004ae537a6f",
+    "context": "be7c01d9a41e16412ce072978090fb407d61ff8321326031d0b050b997808266",
+    "count": 1,
+    "reason": "Legacy HttpNotAutorized helper definition/default; callers are inventoried separately. Does not itself choose a route response."
+  },
+  {
+    "file": "src/util/httpStatusCode.js",
+    "scope": "<anonymous/module>",
+    "snippet": "UNAUTHORIZED = 401",
+    "hash": "62e10d6c275a8fbfc8f6c11096cf36deffe69196ede0f8e2fb3af7dd04ea1614",
+    "context": null,
+    "count": 1,
+    "reason": "Numeric UNAUTHORIZED constant definition; references and dynamic emission sites inventoried separately."
+  },
+  {
+    "file": "src/util/responsedata.js",
+    "scope": "unauthorized",
+    "snippet": "{\r\n        status: HttpStatus.UNAUTHORIZED,\r\n        data: data,\r\n        message: message_res\r\n    }",
+    "hash": "fc5df97a1c1588c66f9101cac5d6b5bab2967c49c412925e958b7fc3bb42d056",
+    "context": "730eefd80e2a313296763168f5e95697d6c5ecc90c875c9dfc30b5b281eea0de",
+    "count": 1,
+    "reason": "unauthorized helper definition/export: data is forwarded; each call site is checked separately."
+  },
+  {
+    "file": "src/util/responsedata.js",
+    "scope": "unauthorized",
+    "snippet": "unauthorized",
+    "hash": "64dbe86d4183a2f4d275489eaa151270750cf59c6f1df5dccd550a670a288ddb",
+    "context": "730eefd80e2a313296763168f5e95697d6c5ecc90c875c9dfc30b5b281eea0de",
+    "count": 1,
+    "reason": "unauthorized helper definition/export: data is forwarded; each call site is checked separately."
+  },
+  {
+    "file": "src/util/responsedata.js",
+    "scope": "<anonymous/module>",
+    "snippet": "unauthorized",
+    "hash": "eb8a7633d158819e3adb1b6926ab0951128822fc083e2c01841dd88da52ceaed",
+    "context": null,
+    "count": 1,
+    "reason": "unauthorized helper definition/export: data is forwarded; each call site is checked separately."
+  }
+]

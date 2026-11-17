@@ -20,41 +20,10 @@ const test = async (name, fn) => { try { await fn(); results.push(name); console
 const stub = (rel, exports) => { const id = require.resolve(rel); require.cache[id] = { id, filename: id, loaded: true, exports }; };
 const AUTH_CODES = ['AUTH_ACCESS_INVALID', 'AUTH_ACCESS_EXPIRED', 'AUTH_SESSION_INVALID'];
 
-// ---------------------------------------------------------------- S3 inventory scanner
-// A line is a 401 emitter when it uses the helper, an alias of the status, a literal 401 status or an error
-// carrying status 401. It is compliant when the same statement names an AUTH_* code (or forwards a code
-// variable, for serializers). Everything else must be an allowlisted auth/* control or helper definition.
-const EMITTER = /\bunauthorized\s*\(|HttpStatus\.UNAUTHORIZED|HttpNotAutorized\s*\(|\bstatus\s*\(\s*401\s*\)|\bstatus\s*:\s*401\b|[sS]tatus(?:Code)?\s*={2,3}\s*401|\[[^\]]*\b401\b[^\]]*\]\.includes/;
-const COMPLIANT = /code\s*:\s*'AUTH_(ACCESS_INVALID|ACCESS_EXPIRED|SESSION_INVALID)'|\{\s*code\s*\}|authCode\(|AUTH_CODE/;
-const ALLOW = [
-    // Helper and constant definitions (they do not choose a status for a request).
-    { file: 'src/util/responsedata.js', snippet: 'function unauthorized(', count: 1, reason: 'helper definition' },
-    { file: 'src/util/responsedata.js', snippet: 'status: HttpStatus.UNAUTHORIZED', count: 1, reason: 'helper body' },
-    // auth/* controls keep their own contract (contract §7.2); the client classifies api/auth/* as control requests.
-    { file: 'src/controller/mysql/auth.controller.js', snippet: 'responseData.unauthorized(GENERIC_REFRESH_ERROR)', count: 2, reason: 'POST auth/refreshToken: the refresh action owns a failed renewal' },
-    { file: 'src/controller/mysql/auth.controller.js', snippet: 'this.HttpNotAutorized(HttpStatus.UNAUTHORIZED, MESSAGES.NOT_CONTENT)', count: 2, reason: 'POST auth/close and auth/forze_close: logout controls, default response before the DAO answers' },
-    { file: 'src/Dao/mysql/auth.dao.js', snippet: 'responseData.unauthorized(Messages.AUTH_NOT_FOUND)', count: 3, reason: 'auth/login, auth/refreshToken and auth/session internals; auth/session re-maps to AUTH_SESSION_INVALID' },
-    { file: 'src/Dao/mysql/auth.dao.js', snippet: "responseData.unauthorized('La sesion no es valida.')", count: 2, reason: 'auth/changePassword/{sendCode,confirm}: behind Token.Auth, unreachable without an actor' },
-    { file: 'src/Dao/mysql/auth.dao.js', snippet: "responseData.unauthorized('La cuenta de la sesion ya no esta activa.')", count: 2, reason: 'auth/changePassword/{sendCode,confirm}: auth/* control, owned by its screen' },
-    // Documented registration contract: root code, preserves upstream AUTH_* and only falls back for an uncoded 401.
-    { file: 'src/routes/mysql/registration.js', snippet: "this.statusCode===401?'AUTH_REQUIRED'", count: 1, reason: 'registration/activation serializer; keeps body.code/body.data.code from Token.Auth' },
-    // Pulso serializer: maps the error status; the following statement forwards error.code to data.code (envelope test below).
-    { file: 'src/controller/mysql/businessPulse.controller.js', snippet: 'const status = [400,401,403,429,503].includes(error.status)', count: 1, reason: 'status whitelist of the Pulso serializer; code forwarded on the next statement' },
-    // Not emitters: they read a received status.
-    { file: 'src/services/registration/legalRegistration.service.js', snippet: 'error.status===401', count: 1, reason: 'reads an upstream status from Hemia Legal' }
-];
-function scan(files) {
-    const findings = [], used = new Map();
-    for (const { file, text } of files) {
-        text.split(/\r?\n/).forEach((line, index) => {
-            if (!EMITTER.test(line) || /^\s*(\/\/|\*)/.test(line)) return;
-            const allow = ALLOW.find(entry => entry.file === file && line.includes(entry.snippet));
-            if (allow) { used.set(allow, (used.get(allow) || 0) + 1); return; }
-            if (!COMPLIANT.test(line)) findings.push(`${file}:${index + 1}: ${line.trim().slice(0, 140)}`);
-        });
-    }
-    return { findings, used };
-}
+// S3-R1: syntax-bound inventory; unresolved boundaries are reviewed by exact AST node,
+// enclosing-function fingerprint and occurrence count. No line/comment-based approval.
+const { scan } = require('./lib/auth401-inventory');
+const ALLOW = require('./lib/auth401-reviewed.json');
 function sourceFiles(dir) {
     const out = [];
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -84,8 +53,8 @@ const withActor = actor => (req, _res, next) => { if (actor) req.tokenDecode = {
 const authCode = body => body && ((body.data && body.data.code) || body.code);
 
 (async () => {
-    await test('S3 inventory: every 401 emitter in src carries an AUTH_* code or is an allowlisted auth/* control', async () => {
-        const { findings, used } = scan(sourceFiles(path.join(root, 'src')));
+    await test('S3 inventory: 401 origins and dynamic HTTP boundaries match the reviewed contract', async () => {
+        const { findings, used } = scan(sourceFiles(path.join(root, 'src')), ALLOW);
         assert.deepEqual(findings, [], 'Codeless 401 emitters:\n' + findings.join('\n'));
         for (const entry of ALLOW) assert.equal(used.get(entry) || 0, entry.count, `Allowlist entry is stale or widened: ${entry.file} «${entry.snippet}» (${entry.reason})`);
     });
