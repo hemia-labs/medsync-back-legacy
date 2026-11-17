@@ -1,7 +1,7 @@
 'use strict';
 const {QueryTypes}=require('sequelize');
 const {v5:uuidV5}=require('uuid');
-const {RegistrationError}=require('../registration/errors');
+const {RegistrationError,invalidSession}=require('../registration/errors');
 const {LicenseProjection}=require('./licenseProjection');
 const {paymentUpdates}=require('./paymentUpdates.service');
 const {commercialState}=require('./paidLicense');
@@ -83,7 +83,7 @@ class PaymentsService {
         return {...row,id_login:String(row.id_login).toLowerCase(),id_business:String(row.id_business).toLowerCase()};
     }
     async context(actor,{checkout=false}={}) {
-        if(!actor?.id_login||!actor?.id_business||!actor?.id_session)throw new RegistrationError('AUTH_REQUIRED',401);
+        if(!actor?.id_login||!actor?.id_business||!actor?.id_session)throw invalidSession();
         const row=await this.nativeContext(actor.id_login,actor.id_business,actor.id_session);
         if(row.rol!=='admin')throw new RegistrationError('PAYMENTS_FORBIDDEN',403);
         if(checkout&&![1,true,'1'].includes(row.email_verified))throw new RegistrationError('CONTACT_VERIFICATION_REQUIRED',409);

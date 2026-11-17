@@ -1,0 +1,43 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const mysql=require('mysql2/promise'),{Sequelize}=require('sequelize');
+test('NC1 R3: identity then professional profile preserves structured names; stale legacy name conflicts', {skip:process.env.NC1_ISOLATED_QA!=='1'},async()=>{
+ const database='nc1_qa_professional_'+Date.now();
+ const conn=await mysql.createConnection({host:'127.0.0.1',port:33381,user:'root',password:'nc1-synthetic-only'});
+ let db;
+ try {
+  await conn.query('CREATE DATABASE '+database);await conn.changeUser({database});
+  await conn.query(`CREATE TABLE doctor_professional_profile (id_doctor_professional_profile VARCHAR(50) PRIMARY KEY,id_business VARCHAR(50),id_login VARCHAR(50),professional_name VARCHAR(250),professional_license VARCHAR(50),university VARCHAR(100),specialty VARCHAR(100),specialty_license VARCHAR(50),professional_phone VARCHAR(50),signature_image TEXT,can_issue_prescriptions INT,can_sign_documents INT,is_active INT,updated_at DATETIME,updated_by VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  await conn.query('CREATE TABLE person(id_business VARCHAR(50),id_person VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+  await require('../migrations/nc1-identity').apply(conn,{isolated:true});
+  await conn.query('CREATE TABLE login(id_login VARCHAR(50),id_business VARCHAR(50),id_rol VARCHAR(50),name VARCHAR(100),email VARCHAR(100),telephone VARCHAR(50),active INT) CHARACTER SET utf8mb4');
+  await conn.query('CREATE TABLE rol(id_rol VARCHAR(50),code VARCHAR(50)) CHARACTER SET utf8mb4');
+  await conn.query("INSERT INTO rol VALUES ('r','doctor')");await conn.query("INSERT INTO login VALUES ('actor','qa','r','Ficticio','fixture@example.invalid','5512345678',1)");
+  await conn.query("INSERT INTO doctor_professional_profile (id_doctor_professional_profile,id_business,id_login,professional_name,is_active,can_issue_prescriptions,can_sign_documents) VALUES ('profile','qa','actor','Nombre anterior',1,0,0)");
+  db=new Sequelize(database,'root','nc1-synthetic-only',{host:'127.0.0.1',port:33381,dialect:'mysql',logging:false,pool:{max:1,min:0}});
+  const stub=(p,exports)=>{const id=require.resolve(p);require.cache[id]={id,filename:id,loaded:true,exports};};
+  stub('../../src/db/Sequelize.connection',db);
+  stub('../../src/util/licenseMutation',{beginLicenseMutation:()=>db.transaction()});
+  stub('../../src/util/effectivePermissions',{hasPermission:async()=>false});
+  stub('../../src/util/tracingPermissions',{seedTracingPermissions:async()=>{}});
+  stub('../../src/util/dashboardAccess',{seedDashboardPermissions:async()=>{}});
+  stub('../../src/util/licenseLimits',{validateLicenseForProfessionalProfile:async()=>({allowed:true})});
+  stub('../../src/Dao/mysql/licenseUsage.dao',{});
+  stub('../../src/services/aws/privateImages',{remove:async()=>{},upload:()=>{throw Error('No real upload');}});
+  const dao=require('../../src/Dao/mysql/user.dao');
+  const service=require('../../src/domain/identity/service').createService(db);
+  await service.save('professional','profile','qa','actor',{givenNames:'Ana Maria',firstSurname:'De la Prueba',secondSurname:'Ensayo',firstSurnameStatus:'present',secondSurnameStatus:'present'},0);
+  const before=await service.read('professional','profile','qa');
+  const stale=await dao.saveProfessionalProfile({id_login:'actor',id_business:'qa',professional_name:'Nombre anterior',professional_phone:'5511111111'});
+  assert.equal(stale.status,409,JSON.stringify(stale));assert.equal(stale.data.code,'IDENTITY_CONFLICT');
+  assert.deepEqual((await service.read('professional','profile','qa')).data,before.data);
+  assert.equal((await dao.getProfessionalProfile('actor','qa','actor')).data.professional_phone,null,'conflict rolls back other fields');
+  const current=await dao.getProfessionalProfile('actor','qa','actor');assert.equal(current.data.professional_name,'Ana Maria De la Prueba Ensayo');
+  const saved=await dao.saveProfessionalProfile({id_login:'actor',id_business:'qa',professional_name:current.data.professional_name,professional_phone:'5512345678',university:'Universidad ficticia'});
+  assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.professional_phone,'5512345678');
+  const after=await service.read('professional','profile','qa');assert.deepEqual(after.data,before.data);assert.equal(after.revision,before.revision);
+  assert.equal((await dao.saveProfessionalProfile({id_login:'actor',id_business:'qa',specialty:'QA'})).status,200);
+  assert.equal((await dao.saveProfessionalProfile({id_login:'actor',id_business:'foreign',professional_name:'Otro'})).status,400);
+  assert.deepEqual((await service.read('professional','profile','qa')).data,before.data);
+ }finally{if(db)await db.close();await conn.end();}
+});

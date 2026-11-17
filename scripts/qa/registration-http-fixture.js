@@ -13,6 +13,7 @@ const tables={
         plan VARCHAR(30),active TINYINT,created_at DATETIME,created_by VARCHAR(50),updated_at DATETIME,updated_by VARCHAR(50),suspended_at DATETIME,cancelled_at DATETIME,status_reason TEXT`,
     rol:`id_rol VARCHAR(50) PRIMARY KEY,code VARCHAR(30),desc_rol VARCHAR(100),active TINYINT`,
     login:`id_login VARCHAR(50) PRIMARY KEY,id_business VARCHAR(50),id_rol VARCHAR(50),name VARCHAR(500),first_name VARCHAR(500) NOT NULL DEFAULT '',last_name VARCHAR(500) NOT NULL DEFAULT '',
+        first_surname VARCHAR(200) NULL,second_surname VARCHAR(200) NULL,
         email VARCHAR(254),telephone VARCHAR(50),password VARCHAR(300),locked TINYINT DEFAULT 0,active TINYINT DEFAULT 1,created_at DATETIME,created_by VARCHAR(50),updated_at DATETIME,updated_by VARCHAR(50)`,
     appointment_config:`id_appointment_config VARCHAR(100) PRIMARY KEY,id_business VARCHAR(50),enabled TINYINT,default_appointment_duration INT,timezone VARCHAR(80),active TINYINT,created_at DATETIME,created_by VARCHAR(50)`,
     cat_ui_theme:`id_cat_ui_theme VARCHAR(50) PRIMARY KEY,code VARCHAR(50),active TINYINT`,

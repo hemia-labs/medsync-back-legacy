@@ -8,10 +8,9 @@ const validatePayload = (validator) => {
         const result = validator(req);
 
         if (result && result.isValid === false) {
-            const response = httpResponseHelper.HttpBadRequest(
-                HttpStatus.BAD_REQUEST,
-                result.message
-            );
+            const response = result.data === undefined
+                ? httpResponseHelper.HttpBadRequest(HttpStatus.BAD_REQUEST, result.message)
+                : httpResponseHelper.HttpBadRequest(HttpStatus.BAD_REQUEST, result.message, result.data);
             res.status(response.status).send(response.data);
             return;
         }

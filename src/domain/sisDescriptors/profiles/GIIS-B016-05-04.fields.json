@@ -1,0 +1,754 @@
+{
+  "profileId": "GIIS-B016-05-04",
+  "descriptorVersion": "1.0.0",
+  "guideVersion": "5.4 preliminar",
+  "guideDate": "2026-09-11",
+  "guideSha256": "044a31ed6aaf4f59f469fd1190e19931b507b5600c00db232e6f45b25fae5bae",
+  "guidePages": "11-31",
+  "fieldCount": 81,
+  "source": "Diccionario de datos extraído con pdftotext -raw y cotejado contra las matrices NC0.1 verificadas",
+  "fields": [
+    {
+      "position": 1,
+      "name": "clues",
+      "guidePage": "11",
+      "type": "text",
+      "maxLength": 11,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.establishments"
+    },
+    {
+      "position": 2,
+      "name": "paisNacimiento",
+      "guidePage": "11",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.country"
+    },
+    {
+      "position": 3,
+      "name": "curpPrestador",
+      "guidePage": "11-12",
+      "type": "text",
+      "maxLength": 18,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 4,
+      "name": "nombrePrestador",
+      "guidePage": "12",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 5,
+      "name": "primerApellidoPrestador",
+      "guidePage": "12-13",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 6,
+      "name": "segundoApellidoPrestador",
+      "guidePage": "13",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 7,
+      "name": "tipoPersonal",
+      "guidePage": "13-14",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.personnel_type"
+    },
+    {
+      "position": 8,
+      "name": "curpPaciente",
+      "guidePage": "14",
+      "type": "text",
+      "maxLength": 18,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 9,
+      "name": "nombre",
+      "guidePage": "14-15",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 10,
+      "name": "primerApellido",
+      "guidePage": "15",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 11,
+      "name": "segundoApellido",
+      "guidePage": "15-16",
+      "type": "text",
+      "maxLength": 50,
+      "required": "yes",
+      "confidential": true
+    },
+    {
+      "position": 12,
+      "name": "fechaNacimiento",
+      "guidePage": "16",
+      "type": "text",
+      "maxLength": 10,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 13,
+      "name": "paisNacPaciente",
+      "guidePage": "16",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.country"
+    },
+    {
+      "position": 14,
+      "name": "entidadNacimiento",
+      "guidePage": "16-17",
+      "type": "text",
+      "maxLength": 2,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.federal_entity"
+    },
+    {
+      "position": 15,
+      "name": "sexoCURP",
+      "guidePage": "17",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 16,
+      "name": "sexoBiologico",
+      "guidePage": "17",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 17,
+      "name": "seAutodenominaAfromexicano",
+      "guidePage": "17",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 18,
+      "name": "seConsideraIndigena",
+      "guidePage": "17",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 19,
+      "name": "migrante",
+      "guidePage": "18",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 20,
+      "name": "paisProcedencia",
+      "guidePage": "18",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.country"
+    },
+    {
+      "position": 21,
+      "name": "genero",
+      "guidePage": "18",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 22,
+      "name": "derechohabiencia",
+      "guidePage": "18-19",
+      "type": "text",
+      "maxLength": 20,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.affiliation"
+    },
+    {
+      "position": 23,
+      "name": "fechaConsulta",
+      "guidePage": "19",
+      "type": "text",
+      "maxLength": 10,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 24,
+      "name": "servicioAtencion",
+      "guidePage": "19",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.personnel_service_sb"
+    },
+    {
+      "position": 25,
+      "name": "peso",
+      "guidePage": "19-20",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 26,
+      "name": "talla",
+      "guidePage": "20",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 27,
+      "name": "circunferenciaCintura",
+      "guidePage": "20",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 28,
+      "name": "sistolica",
+      "guidePage": "20",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 29,
+      "name": "diastolica",
+      "guidePage": "20",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 30,
+      "name": "frecuenciaCardiaca",
+      "guidePage": "21",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 31,
+      "name": "frecuenciaRespiratoria",
+      "guidePage": "21",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 32,
+      "name": "temperatura",
+      "guidePage": "21",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 33,
+      "name": "saturacionOxigeno",
+      "guidePage": "21",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 34,
+      "name": "glucemia",
+      "guidePage": "21",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 35,
+      "name": "tipoMedicion",
+      "guidePage": "22",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 36,
+      "name": "primeraVezAnio",
+      "guidePage": "22",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 37,
+      "name": "tipoDificultad",
+      "guidePage": "22",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 38,
+      "name": "gradoDificultad",
+      "guidePage": "22-23",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 39,
+      "name": "origenDificultad",
+      "guidePage": "23",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 40,
+      "name": "relacionTemporal",
+      "guidePage": "23",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 41,
+      "name": "codigoCIEDiagnostico1",
+      "guidePage": "23-24",
+      "type": "text",
+      "maxLength": 4,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.diagnosis"
+    },
+    {
+      "position": 42,
+      "name": "primeraVezDiagnostico2",
+      "guidePage": "24",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 43,
+      "name": "codigoCIEDiagnostico2",
+      "guidePage": "24-25",
+      "type": "text",
+      "maxLength": 4,
+      "required": "conditional",
+      "confidential": false,
+      "catalogFamily": "sis.diagnosis"
+    },
+    {
+      "position": 44,
+      "name": "primeraVezDiagnostico3",
+      "guidePage": "25",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 45,
+      "name": "codigoCIEDiagnostico3",
+      "guidePage": "25-26",
+      "type": "text",
+      "maxLength": 4,
+      "required": "conditional",
+      "confidential": false,
+      "catalogFamily": "sis.diagnosis",
+      "lengthSource": "rule_text"
+    },
+    {
+      "position": 46,
+      "name": "placaBacteriana",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 47,
+      "name": "cepillado",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 48,
+      "name": "hiloDental",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 49,
+      "name": "limpiezaDental",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 50,
+      "name": "protesis",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 51,
+      "name": "tejidosBucales",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 52,
+      "name": "autoExamen",
+      "guidePage": "26",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 53,
+      "name": "fluor",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 54,
+      "name": "raspadoAlisadoPeriodontal",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 55,
+      "name": "barnizFluor",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 56,
+      "name": "fosetasFisuras",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 57,
+      "name": "amalgamas",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 58,
+      "name": "resinas",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 59,
+      "name": "ionomeroVidrio",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 60,
+      "name": "alkasite",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 61,
+      "name": "obturacionTemporal",
+      "guidePage": "27",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 62,
+      "name": "dienteTemp",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 63,
+      "name": "dientePerm",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 64,
+      "name": "pulpar",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "no",
+      "confidential": false
+    },
+    {
+      "position": 65,
+      "name": "cirugiaBucal",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 66,
+      "name": "farmacoTerapia",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 67,
+      "name": "otrasAtenciones",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 68,
+      "name": "radiografias",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 69,
+      "name": "orientacionSaludBucal",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 70,
+      "name": "tratamientoIntegral",
+      "guidePage": "28",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 71,
+      "name": "lineaVida",
+      "guidePage": "29",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 72,
+      "name": "cartillaSalud",
+      "guidePage": "29",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 73,
+      "name": "esquemaVacunacion",
+      "guidePage": "29",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 74,
+      "name": "referidoPor",
+      "guidePage": "29",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 75,
+      "name": "referidoA",
+      "guidePage": "29",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 76,
+      "name": "especialidadReferencia",
+      "guidePage": "30",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false,
+      "catalogFamily": "sis.referral_service"
+    },
+    {
+      "position": 77,
+      "name": "contrarreferido",
+      "guidePage": "30",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 78,
+      "name": "telemedicina",
+      "guidePage": "30",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 79,
+      "name": "teleconsulta",
+      "guidePage": "30",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 80,
+      "name": "estudiosTeleconsulta",
+      "guidePage": "30-31",
+      "type": "text",
+      "maxLength": 15,
+      "required": "yes",
+      "confidential": false
+    },
+    {
+      "position": 81,
+      "name": "modalidadConsulDist",
+      "guidePage": "31",
+      "type": "numeric",
+      "maxLength": null,
+      "required": "yes",
+      "confidential": false
+    }
+  ]
+}

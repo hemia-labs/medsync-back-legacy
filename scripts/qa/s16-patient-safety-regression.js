@@ -8,6 +8,11 @@ const db = {
     async query(sql, options = {}) {
         calls.push({ sql, options });
         assert.doesNotMatch(sql, /\bDELETE\s+FROM\b|SP_px_force/i);
+        if(sql.startsWith('SELECT * FROM person WHERE')) {
+            assert.equal(options.replacements.business,'tenant-a');
+            return tenantFound ? [{id_person:'patient-a',name:'QA',surname:'Test',birthday:'2000-01-01'}] : [];
+        }
+        if(sql.startsWith('SELECT * FROM patient_identity WHERE')) return [];
         if (/SELECT id_person FROM person/.test(sql)) return tenantFound ? [{ id_person: 'patient-a' }] : [];
         if (/SELECT id_address FROM address/.test(sql)) return childFound ? [{ id_address: 'address-a' }] : [];
         if (/SELECT id_query FROM query/.test(sql)) return childFound ? [{ id_query: 'query-a' }] : [];
@@ -62,7 +67,7 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
     assert.equal((await filesDao.uploadFile(payload)).status, 404, 'Reject foreign patient before S3');
     assert.equal((await filesDao.uploaProfilePhoto(payload)).status, 404);
     tenantFound = true; childFound = false; calls = [];
-    assert.equal((await dao.pxUpdate(payload)).status, 403, 'Clinical form cannot swap child ids');
+    assert.equal((await dao.pxUpdate(payload)).status, 409, 'Clinical form cannot swap stale/foreign child ids');
     assert.equal(calls.some(call => /CALL |^UPDATE/.test(call.sql)), false);
     childFound = true; calls = [];
     assert.equal((await dao.pxForceDelete('patient-a', 'tenant-a')).status, 403);
@@ -94,7 +99,7 @@ const payload = { id_business: 'tenant-a', id_login: 'reception', person: { id_p
     try {
         permissions = ['px.all', 'px.new'];
         const projection = await request('/px/get/patient-a?clinical=true'); assert.equal(projection.body.data.access.clinical, false);
-        assert.equal((await request('/px/create-minimal', 'POST', payload)).status, 200);
+        assert.equal((await request('/px/create-minimal', 'POST', {...payload,identity:{biologicalSex:'2'}})).status, 200);
         assert.equal((await request('/px/administrative', 'PUT', payload)).status, 200);
         for (const [url, method] of [['/px/save', 'POST'], ['/px/update', 'PUT'], ['/px/allergies', 'PUT'], ['/api/file/px/upload-file', 'POST'], ['/api/file/delete', 'DELETE']]) assert.equal((await request(url, method, payload)).status, 403, url);
         assert.equal((await request('/api/file/px/file/patient-a')).status, 403);

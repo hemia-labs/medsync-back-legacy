@@ -18,8 +18,8 @@ async function createSession(c, identity, db, jwtKey, audit, request = {}) {
         if (!user || !user.active || user.locked || user.rol !== 'super_admin' || String(user.email).toLowerCase() !== binding.email.toLowerCase()) {
             throw new Error('MedSync account is not authorized');
         }
-        await db.query(`UPDATE refresh_token SET active=0, revoked_at=COALESCE(revoked_at,NOW()),
-            revoked_reason=COALESCE(revoked_reason,'sso_login') WHERE id_login=:login AND active=1`, options);
+        await db.query(`UPDATE refresh_token SET \`last\`=0, revoked_at=COALESCE(revoked_at,NOW()),
+            revoked_reason=COALESCE(revoked_reason,'sso_login') WHERE id_login=:login AND (\`last\`=1 OR revoked_at IS NULL)`, options);
         await db.query('UPDATE `session` SET active=0, `last`=0, updated_at=NOW() WHERE id_login=:login', options);
         const counts = await db.query('SELECT COALESCE(MAX(sec),0)+1 AS next_sec FROM `session` WHERE id_login=:login', { ...options, type: QueryTypes.SELECT });
         const id = randomUUID();

@@ -1,3 +1,7 @@
+const identityContract = require('../domain/identity/contract');
+const emergencyContact = require('../domain/patientContact/emergencyContact');
+const { normalizeBirthday } = require('../domain/identity/legacyDate');
+const validateIdentity = req => { try { identityContract.validate('patient', req.body.identity, {}, {creating:true}); return valid(); } catch(e) { return invalid(e.message); } };
 const {
     requireField,
     requireFields,
@@ -9,7 +13,8 @@ const {
 const normalizePhone = value => String(value || '').replace(/[()\s-]/g, '');
 const validateAdministrativeFormats = (person, address = {}, today = new Date()) => {
     if (typeof person.name !== 'string' || !person.name.trim() || typeof person.surname !== 'string' || !person.surname.trim()) return invalid('El nombre y el apellido del paciente son obligatorios.');
-    const date = person.birthday;
+    let date;
+    try { date = normalizeBirthday(person.birthday); } catch (_) { return invalid('Ingresa una fecha de nacimiento válida.'); }
     if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return invalid('Ingresa una fecha de nacimiento válida.');
     const birth = new Date(`${date}T00:00:00`);
     const formatted = Number.isFinite(birth.getTime()) ? `${birth.getFullYear()}-${String(birth.getMonth() + 1).padStart(2, '0')}-${String(birth.getDate()).padStart(2, '0')}` : '';
@@ -106,10 +111,12 @@ const validatePxPayload = (req, isUpdate = false) => {
 };
 
 const validatePxSave = (req) => {
-    return validatePxPayload(req);
+    const result = validateIdentity(req);
+    return result.isValid ? validatePxPayload(req) : result;
 };
 
 const validatePxCreateMinimal = (req) => {
+    const identity = validateIdentity(req); if (!identity.isValid) return identity;
     const personResult = requireObject(req.body, 'person');
     if (!personResult.isValid) {
         return personResult;
@@ -148,6 +155,11 @@ const validatePxAdministrative = (req) => {
         for (const field of ['ocupation', 'rfc', 'local_telephone', 'place_birth', 'residence', 'direction', 'cp']) {
             if (object[field] != null && (typeof object[field] !== 'string' || object[field].length > 1000)) return invalid(`Campo invalido: ${field}`);
         }
+    }
+    // EC1-R1: keep the contract's public code and field, in the same { code, field } shape as identity errors.
+    try { emergencyContact.normalize(req.body.emergencyContact); } catch (error) {
+        if (error && error.code === 'EMERGENCY_CONTACT_INVALID') return invalid(error.message, { code: error.code, field: error.field });
+        return invalid('Revisa el contacto de emergencia.');
     }
     return validateAdministrativeFormats(person, req.body.address);
 };

@@ -11,7 +11,17 @@ function errorResponse(res,error) {
     const known=error instanceof RegistrationError;
     const status=known?error.status:503,code=known?error.code:'BILLING_UNAVAILABLE';
     if(error.retryAfterSeconds)res.set('Retry-After',String(error.retryAfterSeconds));
-    return res.status(status).json({code,message:code==='PLAN_CHANGE_ALREADY_AUTHORIZED'?'Este cambio ya fue autorizado. Consulta su estado antes de continuar.':code==='PAYMENT_CANCELLATION_UNAVAILABLE'?'No hay un periodo pagado vigente confirmado para cancelar la renovación.':messages[code]||'No se pudo completar esta acción.',...(error.retryAfterSeconds?{retryAfterSeconds:error.retryAfterSeconds}:{})});
+    const body={status,code,message:code==='PLAN_CHANGE_ALREADY_AUTHORIZED'?'Este cambio ya fue autorizado. Consulta su estado antes de continuar.':code==='PAYMENT_CANCELLATION_UNAVAILABLE'?'No hay un periodo pagado vigente confirmado para cancelar la renovación.':messages[code]||'No se pudo completar esta acción.',...(error.retryAfterSeconds?{retryAfterSeconds:error.retryAfterSeconds}:{})};
+    return res.status(body.status).json(body);
+}
+const machineUnauthorized={status:401,code:'AUTH_ACCESS_INVALID'};
+function machineErrorResponse(res,error,code,message) {
+    if(error?.status===machineUnauthorized.status) {
+        const body={...machineUnauthorized,message};
+        return res.status(body.status).json(body);
+    }
+    const body={status:[400,403,409].includes(error?.status)?error.status:503,code,message};
+    return res.status(body.status).json(body);
 }
 function createRouter(options={}) {
     const router=express.Router(),service=options.service||configuredPayments();
@@ -20,14 +30,14 @@ function createRouter(options={}) {
     router.use((_req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});next();});
     const machineHeaders=req=>({authorization:req.get('authorization'),timestamp:req.get('x-billing-timestamp')});
     const delivery=handler=>async(req,res)=>{try{res.json(await handler(req));}catch(error){
-        res.status([400,401,403,409].includes(error?.status)?error.status:503).json({code:'BILLING_SYNC_UNAVAILABLE',message:'No se pudo sincronizar la licencia.'});
+        machineErrorResponse(res,error,'BILLING_SYNC_UNAVAILABLE','No se pudo sincronizar la licencia.');
     }};
     router.get('/webhooks/license',delivery(req=>service.probe(machineHeaders(req),req.query.productCode)));
     router.post('/webhooks/license',delivery(req=>service.receive(machineHeaders(req),req.body)));
     // Machine authentication is separate from browser cookies/CSRF and runs first.
     router.post('/legal/context',async(req,res)=>{
         try {res.json(await service.legalContext({authorization:req.get('authorization')},req.body));}
-        catch(error){res.status([400,401,403,409].includes(error?.status)?error.status:503).json({code:'LEGAL_CONTEXT_UNAVAILABLE',message:'No se pudo validar el contexto de contratación.'});}
+        catch(error){machineErrorResponse(res,error,'LEGAL_CONTEXT_UNAVAILABLE','No se pudo validar el contexto de contratación.');}
     });
     router.use(authenticate);
     const mutation=(req,res,next)=>{

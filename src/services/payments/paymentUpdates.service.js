@@ -1,5 +1,5 @@
 'use strict';
-const {RegistrationError}=require('../registration/errors');
+const {RegistrationError,invalidSession}=require('../registration/errors');
 
 // Checkout notices contain no payment data; subscription streams push committed snapshots.
 // shortcut: process-local delivery; add shared pub/sub before running multiple API workers.
@@ -11,7 +11,7 @@ class PaymentUpdates {
         const listeners=this.listeners.get(business)||new Set();
         if(listeners.size>=4||this.total>=200)throw new RegistrationError('BILLING_UNAVAILABLE',503);
         const duration=subscription?expiresAt-Date.now():Math.min(60000,expiresAt-Date.now());
-        if(!(duration>0))throw new RegistrationError('AUTH_REQUIRED',401);
+        if(!(duration>0))throw invalidSession();
         let closed=false,checking=false,queued=false,queuedSnapshot;
         const cleanup=()=>{
             if(closed)return;closed=true;clearTimeout(timeout);clearInterval(heartbeat);

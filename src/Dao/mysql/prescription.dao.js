@@ -6,6 +6,16 @@ const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
+// STG-UX4-ARCH1: an archived patient still belongs to the clinic. Reads keep working;
+// writes answer 409. Neither case is an authentication failure (401 ends the client session).
+// NC1 P2: with a valid session, a denied permission or a missing business context is 403. 401 belongs
+// only to Token.Auth (missing/expired/invalid authentication); the client ends the session on a 401.
+const permissionDenied = message => responseData.forbidden(message, { code: 'PERMISSION_DENIED' });
+const businessContextRequired = message => responseData.forbidden(message, { code: 'BUSINESS_CONTEXT_REQUIRED' });
+const businessNotActive = message => responseData.forbidden(message, { code: 'BUSINESS_NOT_ACTIVE' });
+const patientNotFound = () => responseData.notSuccess('El paciente no pertenece al negocio activo.', { code: 'PATIENT_NOT_FOUND' });
+const patientArchived = action => ({ status: 409, data: { code: 'PATIENT_ARCHIVED' }, message: `El paciente está archivado. Restáuralo para ${action}.` });
+const isArchivedPatient = patient => Number(patient.active) === 0;
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const { resolveProfessional } = require('../../util/professionalContext');
@@ -36,7 +46,7 @@ class PrescriptionDao {
     async getConfig(id_business, doctorProfileId = null, idLogin = null) {
         try {
             if (!id_business) {
-                return responseData.unauthorized('No hay negocio activo para consultar configuracion de recetas.');
+                return businessContextRequired('No hay negocio activo para consultar configuracion de recetas.');
             }
 
             const resolved = await resolveProfessional({ id_business, id_login: idLogin }, doctorProfileId);
@@ -74,12 +84,12 @@ class PrescriptionDao {
     async saveConfig(body) {
         try {
             if (!body.id_business) {
-                return responseData.unauthorized('No hay negocio activo para guardar configuracion de recetas.');
+                return businessContextRequired('No hay negocio activo para guardar configuracion de recetas.');
             }
 
             const canConfig = await this.hasPermission(body.id_login, PERMISSIONS.CONFIG);
             if (!canConfig) {
-                return responseData.unauthorized('No tienes permiso para configurar recetas.');
+                return permissionDenied('No tienes permiso para configurar recetas.');
             }
 
             const resolved = await resolveProfessional(body, body.doctor_profile_id);
@@ -182,12 +192,12 @@ class PrescriptionDao {
         try {
             const paging = listPage(body);
             if (!body.id_business) {
-                return responseData.unauthorized('No hay negocio activo para consultar recetas.');
+                return businessContextRequired('No hay negocio activo para consultar recetas.');
             }
 
             const access = await this.getViewAccess(body.id_login);
             if (!access.canViewOwn && !access.canViewAll) {
-                return responseData.unauthorized('No tienes permiso para consultar recetas.');
+                return permissionDenied('No tienes permiso para consultar recetas.');
             }
 
             const where = [
@@ -206,9 +216,10 @@ class PrescriptionDao {
             };
 
             if (body.id_person) {
-                const patient = await this.getPatient(body.id_person, body.id_business);
+                // Listing an archived patient's prescriptions is a read, like the record.
+                const patient = await this.getPatient(body.id_person, body.id_business, null, { includeArchived: true });
                 if (!patient) {
-                    return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                    return patientNotFound();
                 }
                 where.push(collateEq('p.id_person', ':_id_person'));
             }
@@ -305,7 +316,7 @@ class PrescriptionDao {
         try {
             const access = await this.getViewAccess(body.id_login);
             if (!access.canViewOwn && !access.canViewAll) {
-                return responseData.unauthorized('No tienes permiso para consultar recetas.');
+                return permissionDenied('No tienes permiso para consultar recetas.');
             }
 
             const prescription = await this.getPrescription(body.id_prescription, body.id_business);
@@ -314,7 +325,7 @@ class PrescriptionDao {
             }
 
             if (!access.canViewAll && prescription.issuer_doctor_id !== body.id_login && prescription.created_by !== body.id_login) {
-                return responseData.unauthorized('No tienes permiso para consultar esta receta.');
+                return permissionDenied('No tienes permiso para consultar esta receta.');
             }
 
             const items = await this.getItems(body.id_prescription, body.id_business);
@@ -331,7 +342,7 @@ class PrescriptionDao {
         try {
             if (!body.id_business) {
                 await transaction.rollback();
-                return responseData.unauthorized('No hay negocio activo para guardar recetas.');
+                return businessContextRequired('No hay negocio activo para guardar recetas.');
             }
 
             const payload = body.prescription || body;
@@ -345,13 +356,17 @@ class PrescriptionDao {
             const canSave = await this.hasPermission(body.id_login, permission, transaction);
             if (!canSave) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para guardar recetas.');
+                return permissionDenied('No tienes permiso para guardar recetas.');
             }
 
-            const patient = await this.getPatient(payload.id_person, body.id_business, transaction);
+            const patient = await this.getPatient(payload.id_person, body.id_business, transaction, { includeArchived: true });
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return patientNotFound();
+            }
+            if (isArchivedPatient(patient)) {
+                await transaction.rollback();
+                return patientArchived('guardar recetas');
             }
 
             const doctor = await this.getDoctor(payload.issuer_doctor_id, body.id_business, transaction);
@@ -477,7 +492,7 @@ class PrescriptionDao {
             const canIssue = await this.hasPermission(body.id_login, PERMISSIONS.ISSUE, transaction);
             if (!canIssue) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para emitir recetas.');
+                return permissionDenied('No tienes permiso para emitir recetas.');
             }
 
             // Serialize emission attempts, including a retry after a lost HTTP response.
@@ -506,7 +521,7 @@ class PrescriptionDao {
             const business = await this.getBusiness(body.id_business, transaction);
             if (!business || business.active !== 1 || business.status !== 'active') {
                 await transaction.rollback();
-                return responseData.unauthorized('El negocio no esta activo para emitir recetas.');
+                return businessNotActive('El negocio no esta activo para emitir recetas.');
             }
 
             const items = await this.getItems(body.id_prescription, body.id_business, transaction, true);
@@ -532,11 +547,11 @@ class PrescriptionDao {
             const actor = await this.getDoctor(body.id_login, body.id_business, transaction);
             if (!actor) {
                 await transaction.rollback();
-                return responseData.unauthorized('Solo un doctor con perfil profesional puede emitir recetas.');
+                return permissionDenied('Solo un doctor con perfil profesional puede emitir recetas.');
             }
             if (actor && actor.id_login !== prescription.issuer_doctor_id) {
                 await transaction.rollback();
-                return responseData.unauthorized('No puedes emitir recetas con otro doctor emisor.');
+                return permissionDenied('No puedes emitir recetas con otro doctor emisor.');
             }
 
             const profileValidation = this.validateDoctorProfileForIssue(doctor);
@@ -628,7 +643,7 @@ class PrescriptionDao {
             const canCancel = await this.hasPermission(body.id_login, PERMISSIONS.CANCEL, transaction);
             if (!canCancel) {
                 await transaction.rollback();
-                return responseData.unauthorized('No tienes permiso para cancelar recetas.');
+                return permissionDenied('No tienes permiso para cancelar recetas.');
             }
 
             const prescription = await this.getPrescription(body.id_prescription, body.id_business, transaction, true);
@@ -689,7 +704,7 @@ class PrescriptionDao {
         try {
             const canEdit = await this.hasPermission(body.id_login, PERMISSIONS.EDIT_DRAFT);
             if (!canEdit) {
-                return responseData.unauthorized('No tienes permiso para eliminar borradores.');
+                return permissionDenied('No tienes permiso para eliminar borradores.');
             }
 
             transaction = await sequelize.transaction();
@@ -988,13 +1003,13 @@ class PrescriptionDao {
         return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false, transaction});
     }
 
-    async getPatient(idPerson, idBusiness, transaction = null) {
+    async getPatient(idPerson, idBusiness, transaction = null, { includeArchived = false } = {}) {
         const result = await sequelize.query(
-            `SELECT id_person, name, surname, birthday, age, telephone
+            `SELECT id_person, name, surname, birthday, age, telephone, active
                FROM person
               WHERE ${collateEq('id_person', ':_id_person')}
                 AND ${collateEq('id_business', ':_id_business')}
-                AND active = 1
+                ${includeArchived ? '' : 'AND active = 1'}
               LIMIT 1`,
             {
                 replacements: {

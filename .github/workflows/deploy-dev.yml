@@ -34,6 +34,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run qa:isolated
+      - name: Verify real registration HTTP and MySQL persistence
+        run: npm run qa:registration-http
+      - run: node scripts/qa/nc1-login-surnames-regression.js
 
   deploy:
     needs: test

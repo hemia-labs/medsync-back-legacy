@@ -4,7 +4,7 @@ const express = require('express');
 const MB = 1024 * 1024;
 const GENERAL_LIMIT = MB;
 const AUTH_LIMIT = 32 * 1024;
-const REGISTRATION_PATH = /^\/api\/(?:auth\/register|account\/(?:contact-verifications(?:\/confirm)?|activation\/contact))\/?$/i;
+const REGISTRATION_PATH = /^\/api\/(?:auth\/register|registration\/recover-session|account\/(?:contact-verifications(?:\/confirm)?|activation\/contact))\/?$/i;
 
 // Large bodies are deferred to route middleware, AFTER authentication, CSRF
 // and tenant checks. Public signing has its own rate/token gate before parsing.
@@ -70,16 +70,21 @@ function parse(req, res, next, bytes) {
 function defaultBodyParser(req, res, next) {
     if (policyFor(req)) return next();
     const path = String(req.originalUrl || req.url || '').split('?')[0];
-    if (REGISTRATION_PATH.test(path) || /^\/api\/saas-legal\/central\/accept\/?$/i.test(path)) {
+    if (REGISTRATION_PATH.test(path) || /^\/api\/saas-legal\/(?:central\/accept|integration\/context)\/?$/i.test(path)) {
         return parse(req, res, next, 8 * 1024);
     }
     return parse(req, res, next, /^\/api\/auth(?:\/|$)/i.test(path) ? AUTH_LIMIT : GENERAL_LIMIT);
 }
 
 function protectedBodyParser(req, res, next) {
+    // NC1-AUTH-S1: authentication first. Without an actor this is a session problem (AUTH_ACCESS_INVALID);
+    // with an actor, a route without a protected policy is a route configuration problem, not a session loss.
+    if (!req.tokenDecode || !req.tokenDecode.id_login) {
+        return res.status(401).json({ status: 401, data: { code: 'AUTH_ACCESS_INVALID' }, message: 'Se requiere una sesión activa para cargar este contenido.' });
+    }
     const policy = policyFor(req);
-    if (!policy || policy.publicSignature || !req.tokenDecode || !req.tokenDecode.id_login) {
-        return res.status(401).json({ status: 401, data: null, message: 'Se requiere una sesión activa para cargar este contenido.' });
+    if (!policy || policy.publicSignature) {
+        return res.status(400).json({ status: 400, data: null, code: 'REQUEST_BODY_POLICY_UNAVAILABLE', message: 'Este contenido no se puede cargar en esta ruta.' });
     }
     return parse(req, res, next, policy.bytes);
 }
