@@ -1,5 +1,11 @@
 # medsync-back
 
+## 0.1.1
+
+### Patch Changes
+
+- 0b66d33: Distinguish expired registration sessions and allow explicit CSRF-protected recovery while preserving renewable sessions and registration attempts.
+
 ## 0.1.0
 
 ### Minor Changes
