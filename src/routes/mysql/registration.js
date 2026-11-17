@@ -19,12 +19,14 @@ const Passwords=require('../../services/security/registrationPassword.service');
 const {validateRegistration}=require('../../services/registration/registration.validator');
 const {RegistrationError}=require('../../services/registration/errors');
 const attemptSecurity=require('../../services/registration/registrationSecurity');
+const registrationSession=require('../../services/registration/registrationSession');
 
 const messages={
     INVALID_REGISTRATION:'Revisa los datos de registro.',
     REGISTRATION_NOT_COMPLETED:'No fue posible completar el registro. Intenta iniciar sesion o recuperar tu acceso.',
     LEGAL_VERSION_CHANGED:'Los documentos cambiaron. Consulta y acepta las versiones vigentes.',
     ACCOUNT_ALREADY_AUTHENTICATED:'Ya tienes una sesion abierta.',
+    REGISTRATION_SESSION_EXPIRED:'Tu sesion anterior termino. Puedes continuar el registro sin borrar los datos capturados.',
     CONTACT_CODE_INVALID:'El codigo no es valido o ya vencio. Revisa el codigo o solicita uno nuevo.',
     CONTACT_CHANNEL_UNAVAILABLE:'La verificacion por telefono no esta disponible. Verifica tu correo.',
     CONTACT_REAUTHENTICATION_REQUIRED:'Para cambiar un contacto verificado se requiere verificar nuevamente tu identidad.',
@@ -84,9 +86,13 @@ function createRouter(options={}) {
         if(!req.csrf?.checked || req.csrf.contextType!==type) return sendError(res,new RegistrationError('CSRF_FORBIDDEN',403));
         next();
     };
-    const anonymous=(req,res,next)=>{
-        if(req.tokenDecode||req.authTokenPresent||req.authTokenInvalid) return sendError(res,new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409));
-        next();
+    const anonymous=async(req,res,next)=>{
+        try {
+            const state=await registrationSession.state(req,database);
+            if(state==='active') return sendError(res,new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409));
+            req.registrationSessionExpired=state==='expired';
+            next();
+        } catch(error) { sendError(res,error); }
     };
     async function ready(checkPasswords=true) {
         requireConfiguration();
@@ -107,10 +113,24 @@ function createRouter(options={}) {
         const attempt=attemptSecurity.issueAttempt(req,res);
         const legalContext=await legal.context(attempt.secret);
         const csrf=Csrf.issueToken(req);res.cookie(Csrf.csrfCookieName(),csrf.token,Csrf.csrfCookieOptions());
-        res.json({enabled:true,planId:'professional',verificationChannels:['email'],...legalContext,registrationAttemptExpiresAt:attempt.expiresAt});
+        const sessionState=await registrationSession.state(req,database);
+        res.json({enabled:true,planId:'professional',verificationChannels:['email'],...legalContext,registrationAttemptExpiresAt:attempt.expiresAt,sessionState});
+    }));
+    router.post('/registration/recover-session',clean,configuration,optional,origin,csrfProtection(),csrfContext('preauth'),run(async(req,res)=>{
+        if(!req.body || Array.isArray(req.body) || Object.keys(req.body).length) throw new RegistrationError('INVALID_REGISTRATION',400);
+        await limiter.consume([['registration-recovery-ip',req.ip,20,900]]);
+        const state=await registrationSession.state(req,database);
+        if(state==='active') throw new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409);
+        if(state==='expired') registrationSession.clearExpiredCookies(res);
+        const csrf=Csrf.issueToken(req);
+        res.cookie(Csrf.csrfCookieName(),csrf.token,Csrf.csrfCookieOptions());
+        res.json({recovered:true});
     }));
     router.post('/auth/register',clean,configuration,optional,anonymous,origin,csrfProtection(),csrfContext('preauth'),run(async(req,res)=>{
-        if(req.tokenDecode || req.authTokenPresent || req.authTokenInvalid) throw new RegistrationError('ACCOUNT_ALREADY_AUTHENTICATED',409);
+        // Also support a form already open on the previous frontend: this is
+        // the user's original submission, never an automatic replay. Clear
+        // expired credentials only AFTER origin and preauth CSRF validation.
+        if(req.registrationSessionExpired) registrationSession.clearExpiredCookies(res);
         await ready();
         await limiter.consume([['register-ip',req.ip,20,900]]);
         const attempt=attemptSecurity.readAttempt(req);
@@ -136,6 +156,7 @@ function createRouter(options={}) {
             }
         } catch(_) { // The committed account remains recoverable by normal login.
             res.removeHeader('Set-Cookie');
+            if(req.registrationSessionExpired) registrationSession.clearExpiredCookies(res);
         }
         const activation=await contacts.status(actor);
         res.status(result.status).json({accountCreated:true,sessionEstablished,activation});
