@@ -4,6 +4,11 @@ const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
+// STG-UX4-ARCH1: an archived patient still belongs to the clinic. Reads keep working;
+// writes answer 409. Neither case is an authentication failure (401 ends the client session).
+const patientNotFound = () => responseData.notSuccess('El paciente no pertenece al negocio activo.', { code: 'PATIENT_NOT_FOUND' });
+const patientArchived = action => ({ status: 409, data: { code: 'PATIENT_ARCHIVED' }, message: `El paciente está archivado. Restáuralo para ${action}.` });
+const isArchivedPatient = patient => Number(patient.active) === 0;
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const { resolveDocumentLicenseMetadata } = require('../../util/documentLicensing');
@@ -53,13 +58,13 @@ class DocumentDao {
         return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction});
     }
 
-    async getPatient(idPerson, idBusiness) {
+    async getPatient(idPerson, idBusiness, { includeArchived = false } = {}) {
         const result = await sequelize.query(
-            `SELECT id_person, id_business, name, surname, birthday, age, id_signature, name_signature
+            `SELECT id_person, id_business, name, surname, birthday, age, id_signature, name_signature, active
                FROM person
               WHERE ${collateEq('id_person', ':_id_person')}
                 AND ${collateEq('id_business', ':_id_business')}
-                AND active = 1
+                ${includeArchived ? '' : 'AND active = 1'}
               LIMIT 1`,
             {
                 replacements: { _id_person: idPerson, _id_business: idBusiness },
@@ -418,9 +423,10 @@ class DocumentDao {
                 return responseData.forbidden('No tienes permiso para consultar documentos.');
             }
 
-            const patient = await this.getPatient(body.id_person, body.id_business);
+            // Reading the documents of an archived patient is allowed, like reading the record.
+            const patient = await this.getPatient(body.id_person, body.id_business, { includeArchived: true });
             if (!patient) {
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return patientNotFound();
             }
 
             let extra = paging ? documentFilters[body.document_filter || 'ALL'] : '';
@@ -586,9 +592,12 @@ class DocumentDao {
                 return responseData.unauthorized('No tienes permiso para crear documentos.');
             }
 
-            const patient = await this.getPatient(body.id_person, body.id_business);
+            const patient = await this.getPatient(body.id_person, body.id_business, { includeArchived: true });
             if (!patient) {
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return patientNotFound();
+            }
+            if (isArchivedPatient(patient)) {
+                return patientArchived('crear documentos');
             }
 
             transaction = await sequelize.transaction();

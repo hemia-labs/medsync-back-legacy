@@ -6,6 +6,11 @@ const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
+// STG-UX4-ARCH1: an archived patient still belongs to the clinic. Reads keep working;
+// writes answer 409. Neither case is an authentication failure (401 ends the client session).
+const patientNotFound = () => responseData.notSuccess('El paciente no pertenece al negocio activo.', { code: 'PATIENT_NOT_FOUND' });
+const patientArchived = action => ({ status: 409, data: { code: 'PATIENT_ARCHIVED' }, message: `El paciente está archivado. Restáuralo para ${action}.` });
+const isArchivedPatient = patient => Number(patient.active) === 0;
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const { resolveProfessional } = require('../../util/professionalContext');
@@ -206,9 +211,10 @@ class PrescriptionDao {
             };
 
             if (body.id_person) {
-                const patient = await this.getPatient(body.id_person, body.id_business);
+                // Listing an archived patient's prescriptions is a read, like the record.
+                const patient = await this.getPatient(body.id_person, body.id_business, null, { includeArchived: true });
                 if (!patient) {
-                    return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                    return patientNotFound();
                 }
                 where.push(collateEq('p.id_person', ':_id_person'));
             }
@@ -348,10 +354,14 @@ class PrescriptionDao {
                 return responseData.unauthorized('No tienes permiso para guardar recetas.');
             }
 
-            const patient = await this.getPatient(payload.id_person, body.id_business, transaction);
+            const patient = await this.getPatient(payload.id_person, body.id_business, transaction, { includeArchived: true });
             if (!patient) {
                 await transaction.rollback();
-                return responseData.unauthorized('El paciente no pertenece al negocio activo.');
+                return patientNotFound();
+            }
+            if (isArchivedPatient(patient)) {
+                await transaction.rollback();
+                return patientArchived('guardar recetas');
             }
 
             const doctor = await this.getDoctor(payload.issuer_doctor_id, body.id_business, transaction);
@@ -988,13 +998,13 @@ class PrescriptionDao {
         return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:false, transaction});
     }
 
-    async getPatient(idPerson, idBusiness, transaction = null) {
+    async getPatient(idPerson, idBusiness, transaction = null, { includeArchived = false } = {}) {
         const result = await sequelize.query(
-            `SELECT id_person, name, surname, birthday, age, telephone
+            `SELECT id_person, name, surname, birthday, age, telephone, active
                FROM person
               WHERE ${collateEq('id_person', ':_id_person')}
                 AND ${collateEq('id_business', ':_id_business')}
-                AND active = 1
+                ${includeArchived ? '' : 'AND active = 1'}
               LIMIT 1`,
             {
                 replacements: {
