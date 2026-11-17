@@ -35,6 +35,6 @@ const body={id_login:'qa-actor',id_business:'qa-tenant',name:' Formato ',content
     result=await dao.saveTemplate({...body,content_html:'<script>attack()</script>'});assert.equal(result.status,400);assert.equal(writes,0);
     result=await dao.saveTemplate({...body,content_html:'<p>Contenido seguro</p><script>attack()</script>'});
     assert.equal(result.status,200);assert.equal(meta._name,'Formato');assert.equal(version._content_html,'<p>Contenido seguro</p>');assert.equal(transactions,1);
-    dao.hasPermission=async()=>false;result=await dao.saveTemplate(body);assert.equal(result.status,401);assert.equal(transactions,1,'Denied actors never reach writes or a new transaction');
+    dao.hasPermission=async()=>false;result=await dao.saveTemplate(body);assert.equal(result.status,403);assert.equal(result.data.code,'PERMISSION_DENIED');assert.equal(transactions,1,'Denied actors never reach writes or a new transaction');
     console.log('PASS UX12 document formats: meaningful sanitized text/variables/images, empty/invisible/removed content rejected before transaction, normalized name, safe version payload and unchanged permission gate. Mock SQL; no drafts, historical snapshots or database changed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

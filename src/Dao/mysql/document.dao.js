@@ -6,6 +6,9 @@ const sequelize = require('../../db/Sequelize.connection');
 const responseData = require('../../util/responsedata');
 // STG-UX4-ARCH1: an archived patient still belongs to the clinic. Reads keep working;
 // writes answer 409. Neither case is an authentication failure (401 ends the client session).
+// NC1 P2: with a valid session, a denied permission or a missing business context is 403. 401 belongs
+// only to Token.Auth (missing/expired/invalid authentication); the client ends the session on a 401.
+const permissionDenied = message => responseData.forbidden(message, { code: 'PERMISSION_DENIED' });
 const patientNotFound = () => responseData.notSuccess('El paciente no pertenece al negocio activo.', { code: 'PATIENT_NOT_FOUND' });
 const patientArchived = action => ({ status: 409, data: { code: 'PATIENT_ARCHIVED' }, message: `El paciente está archivado. Restáuralo para ${action}.` });
 const isArchivedPatient = patient => Number(patient.active) === 0;
@@ -125,7 +128,7 @@ class DocumentDao {
             const canManage = await this.hasPermission(body.id_login, 'admin.users', transaction);
             const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE, transaction);
             if (!canManage && !canCreate) {
-                return { error: responseData.unauthorized('No puedes seleccionar otro doctor responsable.') };
+                return { error: permissionDenied('No puedes seleccionar otro doctor responsable.') };
             }
         }
 
@@ -265,7 +268,7 @@ class DocumentDao {
         try {
             const canConfig = await this.hasPermission(body.id_login, PERMISSIONS.CONFIG);
             if (!canConfig) {
-                return responseData.unauthorized('No tienes permiso para configurar documentos.');
+                return permissionDenied('No tienes permiso para configurar documentos.');
             }
 
             const validation = validateDocumentTemplate(body);
@@ -589,7 +592,7 @@ class DocumentDao {
             }
             const canCreate = await this.hasPermission(body.id_login, PERMISSIONS.CREATE);
             if (!canCreate) {
-                return responseData.unauthorized('No tienes permiso para crear documentos.');
+                return permissionDenied('No tienes permiso para crear documentos.');
             }
 
             const patient = await this.getPatient(body.id_person, body.id_business, { includeArchived: true });
@@ -788,7 +791,7 @@ class DocumentDao {
             const permission = status === 'FIRMADO' ? PERMISSIONS.SIGN : PERMISSIONS.CANCEL;
             const allowed = await this.hasPermission(body.id_login, permission);
             if (!allowed) {
-                return responseData.unauthorized('No tienes permiso para actualizar este documento.');
+                return permissionDenied('No tienes permiso para actualizar este documento.');
             }
 
             if (status === 'FIRMADO') {
@@ -956,7 +959,7 @@ class DocumentDao {
 
             const canView = await this.hasPermission(body.id_login, PERMISSIONS.VIEW);
             if (!canView) {
-                return responseData.unauthorized('No tienes permiso para auditar este documento.');
+                return permissionDenied('No tienes permiso para auditar este documento.');
             }
 
             const documentRows = await sequelize.query(
