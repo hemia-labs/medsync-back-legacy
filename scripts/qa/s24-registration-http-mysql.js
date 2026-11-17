@@ -145,6 +145,8 @@ async function run() {
             welcomeDeliveries.push(message);
             return {success:true};
         };
+        assert.equal(await sendNextWelcome(db,loginUrl,welcomeSend),false,'Verification alone must not send a trial welcome before plan selection');
+        response=await request(a,'POST','/api/account/setup-welcome/acknowledge',{acknowledged:true,trialWelcome:true});assert.equal(response.status,200);
         const welcomeClaims=await Promise.all([sendNextWelcome(db,loginUrl,welcomeSend),sendNextWelcome(other,loginUrl,welcomeSend)]);
         assert.deepEqual(welcomeClaims.sort(),[false,true]);
         assert.equal(welcomeDeliveries.length,1);
@@ -154,7 +156,7 @@ async function run() {
         assert.equal(welcomeDeliveries[0].variables.loginUrl,loginUrl);
         assert.equal(welcomeDeliveries[0].variables.trialDurationLabel,'15 días');
         assert.match(welcomeDeliveries[0].variables.trialEndsAtLabel,/^\d+ de \S+ de \d{4}$/);
-        pass('welcome email is queued once after verification and claimed once across workers');
+        pass('trial welcome waits for free continuation and is claimed once across workers');
         pass('cross-account challenge denied; concurrent idempotent confirmation starts exactly one 15-day trial; no unverified phone identity; activated contacts protected');
         // Failed session issuance preserves the account, and the original attempt can recover it.
         const c=jar(),ctxC=(await request(c,'GET','/api/registration/context')).body,inputC=payload(ctxC),attemptC=randomUUID();
@@ -177,6 +179,18 @@ async function run() {
         await q('UPDATE registration_contact_challenge SET expires_at=DATE_SUB(NOW(3),INTERVAL 1 SECOND) WHERE challenge_id=:id',{id:expiring.challengeId});
         assert.equal((await request(b,'POST','/api/account/contact-verifications/confirm',{challengeId:expiring.challengeId,code:expiring.code})).status,400);
         pass('email correction invalidates previous code and reserves new destination; expired challenge fails without verifying');
+        await q('UPDATE registration_contact_challenge SET created_at=DATE_SUB(NOW(3),INTERVAL 61 SECOND) WHERE challenge_id=:id',{id:expiring.challengeId});
+        assert.equal((await request(b,'POST','/api/account/contact-verifications',{channel:'email'})).status,202);
+        const paidChoiceChallenge=deliveries.at(-1);
+        response=await request(b,'POST','/api/account/contact-verifications/confirm',{challengeId:paidChoiceChallenge.challengeId,code:paidChoiceChallenge.code});assert.equal(response.status,200);
+        const paidChoiceBusiness=response.body.businessId;
+        assert.equal((await request(b,'POST','/api/account/setup-welcome/acknowledge',{acknowledged:true,trialWelcome:'false'})).status,400);
+        response=await request(b,'POST','/api/account/setup-welcome/acknowledge',{acknowledged:true,trialWelcome:false});assert.equal(response.status,200,JSON.stringify(response.body));
+        assert.ok((await welcomeRows(paidChoiceBusiness))[0].processed_at);
+        assert.equal(await sendNextWelcome(db,loginUrl,()=>{throw Error('Pending paid checkout must not send a trial welcome');}),false);
+        assert.equal((await request(b,'POST','/api/account/setup-welcome/acknowledge',{acknowledged:true})).status,200);
+        assert.equal(await sendNextWelcome(db,loginUrl,()=>{throw Error('Repeated acknowledgment must not restore a suppressed trial welcome');}),false);
+        pass('paid continuation suppresses only its queued trial welcome; invalid choice rejected and legacy replay cannot restore it');
         response=await request(a,'GET','/api/auth/session');assert.equal(response.status,200);assert.equal(response.body.data.authenticated,true);
         response=await request(a,'POST','/api/auth/refreshToken',{});assert.equal(response.status,200,JSON.stringify(response.body));
         assert.equal((await request(a,'GET','/api/account/activation')).status,200);
@@ -253,11 +267,14 @@ async function run() {
         assert.equal(changedNotifications,noticesBefore+1);
         assert.equal((await request(d,'GET','/api/account/activation')).status,401,'Recovery revokes the original registration session');
         response=await request(recovery,'POST','/api/auth/login',{param:inputD.account.email,pwd:newPassword,refresh:true});assert.equal(response.status,200,JSON.stringify(response.body));
+        assert.equal((await request(recovery,'GET','/api/auth/csrf')).status,200);
         response=await request(recovery,'GET','/api/account/activation');assert.equal(response.status,200);assert.equal(response.body.nextAction,'setup_summary');
         assert.equal(response.body.contact.emailVerified,true);assert.equal(response.body.subscriptionStatus,'trial');
         const recoveredTrial={starts:response.body.trialStartsAt,ends:response.body.trialEndsAt};
         assert.equal(Date.parse(recoveredTrial.ends)-Date.parse(recoveredTrial.starts),15*86400000);
         assert.equal((await welcomeRows(recoveredActor.business)).length,1);
+        assert.equal(await sendNextWelcome(db,loginUrl,()=>{throw Error('Recovery alone must not send the trial welcome');}),false);
+        response=await request(recovery,'POST','/api/account/setup-welcome/acknowledge',{acknowledged:true});assert.equal(response.status,200,JSON.stringify(response.body));
         let recoveryWelcomeAttempts=0;
         assert.equal(await sendNextWelcome(db,loginUrl,async message=>{
             recoveryWelcomeAttempts++;
@@ -274,7 +291,7 @@ async function run() {
         pass('HTTP pending registration → expired contact code → password recovery → activation; invalid/expired reset codes denied; atomic rollback; sessions revoked; fresh login; one 15-day trial and no replay renewal');
         for(const plan of ['basic','pro','enterprise','professional']) {
             await q("UPDATE business SET subscription_status='active',plan=:plan WHERE id_business=:business",{...recoveredActor,plan});
-            response=await request(recovery,'GET','/api/account/activation');assert.equal(response.body.commercialState,'activated');assert.equal(response.body.nextAction,'setup_summary');
+            response=await request(recovery,'GET','/api/account/activation');assert.equal(response.body.commercialState,'activated');assert.equal(response.body.nextAction,'home');
             assert.equal(response.body.planId,plan==='professional'?'pro':plan);
             response=await request(recovery,'GET','/api/auth/session');assert.equal(response.body.data.business.registrationActivationConfirmed,true,plan);
         }

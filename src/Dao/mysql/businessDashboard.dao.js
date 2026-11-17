@@ -295,7 +295,7 @@ function replacementsFor(idBusiness, range, access) {
         _doctor_login: access.scope.idLogin || null };
 }
 function dashboardFor(license, access) {
-    const dashboard = getEffectiveDashboardCapabilities(license.plan ? license.plan.code : null);
+    const dashboard = getEffectiveDashboardCapabilities(license.plan ? license.plan.code : null, license.plan && license.plan.billingFeatures);
     const { administrative, clinical, financial } = access.families;
     const team = Boolean(access.administrativeTeam);
     const allowed = { planStatus: team, licenseUsage: team, administrativeAlerts: team, basicActivity: administrative || clinical,

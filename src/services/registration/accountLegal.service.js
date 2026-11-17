@@ -110,7 +110,7 @@ class AccountLegalService {
                 &&d.contentHash===doc.contentHash&&d.requiredAction===doc.requiredAction));
             const needsReview=pending.pendingDocuments.some(d=>d.documentId===doc.documentId);
             return {id_document:'central:'+doc.documentId,document_key:doc.documentKey,title:doc.title,acceptance_scope:'user',
-                description:'Documento de registro administrado en Legal central.',required:true,source:'central',
+                description:'Documento de registro administrado en Legal central.',required:true,source:'central',required_action:doc.requiredAction,
                 current_version:{id_version:doc.documentVersionId,version_number:doc.version,title:doc.title,content_hash:doc.contentHash,
                     content_html:'',acceptance_scope:'user',source:'central'},
                 accepted:!needsReview&&item?this.receipt(item,doc,actor):null,can_accept:false,pending:needsReview};

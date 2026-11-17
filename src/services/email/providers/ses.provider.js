@@ -8,6 +8,7 @@ const { isEmailUrl } = require('../emailUrls');
 const ROUTES = Object.freeze({
     'registration-contact-code': ['EMAIL_REGISTRATION_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'registration-welcome': ['EMAIL_REGISTRATION_WELCOME_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
+    'subscription-welcome': ['EMAIL_REGISTRATION_WELCOME_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-reset-code': ['EMAIL_PASSWORD_RESET_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-change-code': ['EMAIL_PASSWORD_CHANGE_CODE_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
     'password-changed': ['EMAIL_PASSWORD_CHANGED_TEMPLATE', 'EMAIL_FROM_AUTH', 'EMAIL_CONFIGURATION_SET_AUTH'],
@@ -56,6 +57,20 @@ function templateData(type, input = {}) {
         const ttl = Number(variables.ttlMinutes);
         const validTtl = Number.isFinite(ttl) && ttl > 0 ? ttl : 10;
         data = { code: variables.code, ttlMinutes: type === 'password-change-code' ? Math.min(validTtl, 10) : validTtl };
+    } else if (type === 'subscription-welcome') {
+        const fields = ['firstName', 'clinicName', 'planName', 'amountLabel', 'billingIntervalLabel',
+            'paidAmountLabel', 'paymentMethodLabel', 'activatedAtLabel', 'loginUrl'];
+        if (!fields.every(key => typeof variables[key] === 'string' && variables[key].trim() && !CONTROLS.test(variables[key]))
+            || !isEmailUrl(variables.loginUrl, { allowLocalApp: true })) {
+            throw invalid('Los datos del plan contratado no son válidos.', 'EMAIL_SES_MESSAGE_INVALID');
+        }
+        data = Object.fromEntries(fields.map(key => [key, variables[key]]));
+        for (const key of ['nextBillingAtLabel', 'renewalNotice']) {
+            if (variables[key] === undefined || variables[key] === '') continue;
+            if (typeof variables[key] !== 'string' || !variables[key].trim() || CONTROLS.test(variables[key]))
+                throw invalid('Los datos de renovación no son válidos.', 'EMAIL_SES_MESSAGE_INVALID');
+            data[key] = variables[key];
+        }
     } else if (type === 'registration-welcome') {
         const {firstName, clinicName, trialDurationLabel, trialEndsAtLabel, loginUrl} = variables;
         if (![firstName, clinicName, trialDurationLabel, trialEndsAtLabel, loginUrl].every(value => typeof value === 'string' && value.trim() && !CONTROLS.test(value))
@@ -104,7 +119,7 @@ function config() {
     const routes = {};
     for (const [type, [templateKey, fromKey, setKey]] of Object.entries(ROUTES)) {
         // Optional new capability must not break existing transactional templates.
-        if (['registration-contact-code','registration-welcome'].includes(type) && !process.env[templateKey]) continue;
+        if (['registration-contact-code','registration-welcome','subscription-welcome'].includes(type) && !process.env[templateKey]) continue;
         const template = templateKey ? required(templateKey) : null;
         const from = required(fromKey), configurationSet = required(setKey);
         if (template && !/^[A-Za-z0-9_-]{1,64}$/.test(template)) throw invalid(`Revisa la configuración de ${templateKey}.`);

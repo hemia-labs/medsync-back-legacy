@@ -41,7 +41,7 @@ async function run() {
         response=await request(jar,'POST','/api/account/contact-verifications',{channel:'email'},await csrf(jar));assert.equal(response.status,202);
         response=await request(jar,'POST','/api/account/contact-verifications/confirm',{challengeId:response.body.challengeId,code:fixture.deliveries.at(-1).code},await csrf(jar));assert.equal(response.status,200);
         const plans=await request(jar,'GET','/api/account/activation/plans');assert.deepEqual(plans.body,{available:false,offers:[],reason:'provider_unavailable',planId:'professional'});
-        response=await request(jar,'POST','/api/account/activation/checkout',{planId:'professional',paid:true},await csrf(jar));assert.equal(response.status,503);assert.equal(response.body.code,'BILLING_UNAVAILABLE');
+        response=await request(jar,'POST','/api/account/activation/checkout',{planId:'professional',paid:true},await csrf(jar));assert.equal(response.status,400);assert.equal(response.body.code,'INVALID_PAYMENT_REQUEST');
         assert.equal((await request(jar,'GET','/api/account/activation?paid=true')).status,400);
         assert.equal((await request(new Map(),'GET','/api/account/activation')).status,401);
         assert.equal((await request(jar,'GET','/api/account/activation')).body.subscriptionStatus,'pending_activation');assert.equal(preparationCalls,0);

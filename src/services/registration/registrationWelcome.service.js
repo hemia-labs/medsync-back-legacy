@@ -11,9 +11,12 @@ const clean=value=>String(value||'').replace(/[\x00-\x1f\x7f]+/g,' ').trim();
 async function sendNextWelcome(db,loginUrl,send=message=>email.sendTransactionalEmail(message)) {
     // Claim before calling SES. Its SendEmail API has no idempotency key for an ambiguous response.
     const claimed=await db.transaction(async transaction=>{
-        const [event]=await db.query(`SELECT event_id FROM registration_outbox
-            WHERE event_type='registration.trial_welcome' AND processed_at IS NULL
-            ORDER BY created_at,event_id LIMIT 1 FOR UPDATE`,{type:QueryTypes.SELECT,transaction});
+        const [event]=await db.query(`SELECT o.event_id FROM registration_outbox o
+            WHERE o.event_type='registration.trial_welcome' AND o.processed_at IS NULL
+                AND EXISTS(SELECT 1 FROM registration_account a
+                    WHERE a.id_login=o.id_login AND a.id_business=o.id_business
+                        AND a.setup_welcome_acknowledged_at IS NOT NULL)
+            ORDER BY o.created_at,o.event_id LIMIT 1 FOR UPDATE`,{type:QueryTypes.SELECT,transaction});
         if(!event)return null;
         const eventId=event.event_id;
         const [account]=await db.query(`SELECT l.email,l.first_name,l.name,b.name AS clinic_name,
@@ -27,6 +30,7 @@ async function sendNextWelcome(db,loginUrl,send=message=>email.sendTransactional
                 AND b.subscription_status='trial' AND b.plan='pro' AND b.trial_ends_at>NOW()
                 AND b.trial_ends_at>=DATE_ADD(b.trial_starts_at,INTERVAL 1 DAY)
                 AND a.activation_completed_at IS NOT NULL
+                AND a.setup_welcome_acknowledged_at IS NOT NULL
                 AND i.reservation_status='verified' AND i.verified_at IS NOT NULL AND i.expires_at IS NULL`,
         {replacements:{id:eventId},type:QueryTypes.SELECT,transaction});
         await db.query('UPDATE registration_outbox SET processed_at=UTC_TIMESTAMP(3) WHERE event_id=:id',

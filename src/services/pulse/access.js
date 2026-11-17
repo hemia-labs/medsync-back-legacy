@@ -9,7 +9,7 @@ class PulseAccess {
     constructor(db, now = Date.now) { this.db = db; this.now = now; }
     async authorize(principal) {
         if (!principal?.id_login || !principal.id_business || !principal.id_session) throw Object.assign(Error('AUTH_SESSION_INVALID'), { status: 401 });
-        const records = await this.db.query(`SELECT cp.code,b.active,b.plan,b.subscription_status,b.trial_ends_at,l.id_rol,r.code AS roleCode
+        const records = await this.db.query(`SELECT cp.code,b.active,b.status,b.billing_revision,b.billing_access_until,b.plan,b.subscription_status,b.trial_ends_at,l.id_rol,r.code AS roleCode
          FROM login l JOIN rol r ON r.id_rol=l.id_rol AND r.active=1 AND r.code<>'super_admin'
          JOIN business b ON b.id_business=l.id_business
          JOIN \`session\` s ON s.id_login=l.id_login AND s.id_session=:session AND s.active=1 AND s.\`last\`=1

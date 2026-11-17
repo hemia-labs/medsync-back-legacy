@@ -205,6 +205,8 @@ function buildBusinessSessionData(data, decoded) {
         slug: business.slug || decoded.business_slug || null,
         status: business.status || decoded.business_status || null,
         subscriptionStatus: business.subscription_status || decoded.business_subscription_status || null,
+        billingManaged: business.billingManaged === true,
+        billingAccessUntil: business.billingAccessUntil || null,
         registrationWelcomePending: business.registrationWelcomePending === true,
         registrationActivationConfirmed: business.registrationActivationConfirmed === true,
         trialEndsAt: validTrial ? trialEnd.toISOString() : null,

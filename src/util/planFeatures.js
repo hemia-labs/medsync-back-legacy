@@ -96,6 +96,14 @@ function featureNotAllowed({ planCode, feature, requiredPlan }) {
 
 function isAllowedByDefinition(definition, planFeatures) {
     const planCode = planFeatures.plan && planFeatures.plan.code ? planFeatures.plan.code : null;
+    const central = planFeatures.plan && planFeatures.plan.billingFeatures;
+    if (central && definition.allowedPlans) {
+        const feature = Object.keys(FEATURE_DEFINITIONS).find(key => FEATURE_DEFINITIONS[key] === definition);
+        const entitlements = {custom_templates:['clinical_templates.custom','clinical_templates.by_professional_or_specialty'],advanced_documents:['documents.enabled']}[feature];
+        // Premium document templates require an explicit Billing entitlement before they can be sold.
+        return Boolean(entitlements && entitlements.some(key => central[key] === true));
+    }
+    if (central && !definition.capability) return ['dashboard.basic','dashboard.operational','dashboard.admin'].some(key => central[key] === true);
 
     if (definition.allowedPlans) {
         return definition.allowedPlans.includes(planCode);
@@ -137,7 +145,7 @@ async function getBusinessPlanFeatures(idBusiness) {
     }
 
     const planCode = license.plan && license.plan.code ? license.plan.code : null;
-    const dashboard = getEffectiveDashboardCapabilities(planCode);
+    const dashboard = getEffectiveDashboardCapabilities(planCode, license.plan.billingFeatures);
 
     return {
         license,

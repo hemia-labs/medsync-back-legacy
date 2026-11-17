@@ -12,6 +12,19 @@ function createReadiness(db, timeoutMs = 2000) {
             const unique = indexes.filter(row => Number(row.Non_unique) === 0 && row.Column_name === 'code')
                 .some(row => indexes.filter(other => other.Key_name === row.Key_name).length === 1);
             if (!unique) throw Error('PATIENT_CODE_UNIQUE_INDEX_REQUIRED');
+            if (process.env.PAYMENTS_CONNECTION) {
+                const columns = await db.query('SHOW COLUMNS FROM business', { type: QueryTypes.SELECT });
+                if (!['billing_snapshot','billing_revision','billing_access_until'].every(name => columns.some(column => column.Field === name)))
+                    throw Error('PAYMENTS_LICENSE_MIGRATION_REQUIRED');
+                const outbox = await db.query('SHOW COLUMNS FROM payments_welcome_outbox', { type: QueryTypes.SELECT });
+                if (!['subscription_id','id_business','id_login','payment_id','payload','created_at','claimed_at','sent_at','error_code']
+                    .every(name => outbox.some(column => column.Field === name)))
+                    throw Error('PAYMENTS_WELCOME_MIGRATION_REQUIRED');
+                const outboxIndexes = await db.query('SHOW INDEX FROM payments_welcome_outbox', { type: QueryTypes.SELECT });
+                if (!outboxIndexes.some(index => index.Key_name === 'PRIMARY' && index.Column_name === 'subscription_id')
+                    || outboxIndexes.filter(index => index.Key_name === 'PRIMARY').length !== 1)
+                    throw Error('PAYMENTS_WELCOME_MIGRATION_REQUIRED');
+            }
             initialized = true;
         },
         async check() {

@@ -29,6 +29,7 @@ class BusinessDao {
                         status, subscription_status AS subscriptionStatus, trial_starts_at AS trialStartsAt,
                         trial_ends_at AS trialEndsAt, current_period_starts_at AS currentPeriodStartsAt,
                         current_period_ends_at AS currentPeriodEndsAt,
+                        (billing_revision > 0) AS billingManaged,billing_access_until AS billingAccessUntil,
                         plan, active, created_at AS createdAt, updated_at AS updatedAt
                    FROM business
                   WHERE id_business = :_id_business

@@ -8,6 +8,7 @@ const mysql=require('mysql2/promise');
 const {Sequelize}=require('sequelize');
 const tables={
     business:`id_business VARCHAR(50) PRIMARY KEY,name VARCHAR(200),legal_name VARCHAR(200),slug VARCHAR(100),email VARCHAR(254),phone VARCHAR(50),address TEXT,
+        billing_snapshot JSON,billing_revision DECIMAL(65,0) UNSIGNED NOT NULL DEFAULT 0,billing_access_until DATETIME(3),
         status VARCHAR(30),subscription_status VARCHAR(30),trial_starts_at DATETIME,trial_ends_at DATETIME,current_period_starts_at DATETIME,current_period_ends_at DATETIME,
         plan VARCHAR(30),active TINYINT,created_at DATETIME,created_by VARCHAR(50),updated_at DATETIME,updated_by VARCHAR(50),suspended_at DATETIME,cancelled_at DATETIME,status_reason TEXT`,
     rol:`id_rol VARCHAR(50) PRIMARY KEY,code VARCHAR(30),desc_rol VARCHAR(100),active TINYINT`,

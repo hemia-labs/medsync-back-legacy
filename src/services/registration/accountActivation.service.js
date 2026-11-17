@@ -51,7 +51,7 @@ class AccountActivationService {
     }
     async account(actor,transaction) {
         if(!enabled() || !actor?.id_login || !actor?.id_business) throw new RegistrationError('ACTIVATION_FORBIDDEN',403);
-        const [row]=await this.query(`SELECT a.*,b.subscription_status,b.status,b.active,b.plan,b.trial_starts_at,b.trial_ends_at,
+        const [row]=await this.query(`SELECT a.*,b.subscription_status,b.status,b.active,b.plan,b.trial_starts_at,b.trial_ends_at,b.billing_revision,b.billing_access_until,
             EXISTS(SELECT 1 FROM auth_identity i WHERE i.kind='email' AND i.normalized_value=l.email
                 AND i.id_login=l.id_login AND i.reservation_status='verified' AND i.verified_at IS NOT NULL AND i.expires_at IS NULL) email_verified
             FROM registration_account a JOIN login l ON l.id_login=a.id_login AND l.id_business=a.id_business
@@ -70,7 +70,7 @@ class AccountActivationService {
             activationCompletedAt:row.activation_completed_at,setupWelcomeAcknowledgedAt:row.setup_welcome_acknowledged_at,
             destination:null,planId:getSaasPlan(row.plan)?.code||'professional',trialStartsAt:row.trial_starts_at,trialEndsAt:row.trial_ends_at};
         if(row.active!==1 || row.status!=='active' || !['pending_activation','trial','active'].includes(row.subscription_status)
-            || (row.subscription_status==='trial' && !isBusinessOperational(row).allowed)) {
+            || row.subscription_status!=='pending_activation' && !isBusinessOperational(row).allowed) {
             return {...result,nextAction:'restricted',destination:'restricted'};
         }
         if(!row.email_verified) return {...result,nextAction:'verify_contacts'};
@@ -92,18 +92,22 @@ class AccountActivationService {
             : {...result,nextAction:'home',destination:'home'};
     }
     async plans(actor) {await this.account(actor);return commercial.plans();}
-    async checkout(actor) {
+    async checkout(actor,body) {
         const account=await this.account(actor);
         if(!account.email_verified) throw new RegistrationError('CONTACT_VERIFICATION_REQUIRED',409);
-        return commercial.checkout();
+        if(String(account.subscription_status||'').trim().toLowerCase()==='pending_activation')throw new RegistrationError('PAYMENTS_FORBIDDEN',403);
+        return commercial.checkout(actor,body);
     }
     async acknowledge(actor,body) {
-        exact(body,['acknowledged']);
-        if(body.acknowledged!==true) throw new RegistrationError('INVALID_REGISTRATION',400);
+        exact(body,Object.hasOwn(body||{},'trialWelcome')?['acknowledged','trialWelcome']:['acknowledged']);
+        if(body.acknowledged!==true || Object.hasOwn(body,'trialWelcome')&&typeof body.trialWelcome!=='boolean') throw new RegistrationError('INVALID_REGISTRATION',400);
         const tx=await this.db.transaction();
         try {
             const row=await this.account(actor,tx);
             if(!this.confirmed(row)) throw new RegistrationError('ACTIVATION_REQUIRED',409);
+            if(body.trialWelcome===false||row.subscription_status!=='trial')await this.query(`UPDATE registration_outbox SET processed_at=UTC_TIMESTAMP(3)
+                WHERE id_login=:login AND id_business=:business AND event_type='registration.trial_welcome' AND processed_at IS NULL`,
+            {login:row.id_login,business:row.id_business},tx);
             await this.query(`UPDATE registration_account SET setup_welcome_acknowledged_at=COALESCE(setup_welcome_acknowledged_at,NOW(3))
                 WHERE id_login=:login AND id_business=:business`,{login:row.id_login,business:row.id_business},tx);
             const [saved]=await this.query('SELECT setup_welcome_acknowledged_at FROM registration_account WHERE id_login=:login AND id_business=:business',

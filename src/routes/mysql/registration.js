@@ -146,7 +146,7 @@ function createRouter(options={}) {
         await contacts.account(req.tokenDecode);res.json({available:false,offers:[],reason:'provider_unavailable'});
     }));
     router.post('/account/activation/checkout',clean,configuration,authenticate,origin,csrfProtection(),csrfContext('session'),
-        run(async(req,res)=>res.json(await activation.checkout(req.tokenDecode))));
+        run(async(req,res)=>res.json(await activation.checkout(req.tokenDecode,req.body))));
     router.post('/account/setup-welcome/acknowledge',clean,configuration,authenticate,origin,csrfProtection(),csrfContext('session'),
         run(async(req,res)=>res.json(await activation.acknowledge(req.tokenDecode,req.body))));
     const mutations=[['post','/account/contact-verifications','request',202],['post','/account/contact-verifications/confirm','confirm',200],['patch','/account/activation/contact','replace',200]];
