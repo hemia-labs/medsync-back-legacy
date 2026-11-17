@@ -10,7 +10,8 @@ const mysql = require('mysql2/promise'), { Sequelize } = require('sequelize');
 
 test('NC1 identidad integrada: atomic profile + identity save on MySQL', { skip: process.env.NC1_ISOLATED_QA !== '1' }, async () => {
     const database = 'nc1_qa_integrated_' + Date.now();
-    const conn = await mysql.createConnection({ host: '127.0.0.1', port: 33381, user: 'root', password: 'nc1-synthetic-only' });
+    const port = Number(process.env.NC1_ISOLATED_PORT || 33381);
+    const conn = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: 'nc1-synthetic-only' });
     let db;
     try {
         await conn.query('CREATE DATABASE ' + database); await conn.changeUser({ database });
@@ -24,7 +25,7 @@ test('NC1 identidad integrada: atomic profile + identity save on MySQL', { skip:
         await conn.query("INSERT INTO doctor_professional_profile (id_doctor_professional_profile,id_business,id_login,professional_name,signature_image,is_active,can_issue_prescriptions,can_sign_documents) VALUES ('legacy-profile','qa','legacy-doctor','Dra. Nombre Antiguo','consultorios/qa/firma-anterior.png',1,0,0)");
         await conn.query("INSERT INTO person (id_business,id_person,name,surname) VALUES ('qa','patient','Paciente','Antiguo Apellido')");
 
-        db = new Sequelize(database, 'root', 'nc1-synthetic-only', { host: '127.0.0.1', port: 33381, dialect: 'mysql', logging: false, pool: { max: 1, min: 0 } });
+        db = new Sequelize(database, 'root', 'nc1-synthetic-only', { host: '127.0.0.1', port, dialect: 'mysql', logging: false, pool: { max: 1, min: 0 } });
         const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports }; };
         const removed = [], uploads = [];
         let admins = new Set();
@@ -120,5 +121,17 @@ test('NC1 identidad integrada: atomic profile + identity save on MySQL', { skip:
         const patient = await service.save('patient', 'patient', 'qa', 'actor', { givenNames: 'Paciente', firstSurname: 'Uno', secondSurname: null, firstSurnameStatus: 'unknown', secondSurnameStatus: 'absent_declared' }, 0);
         assert.equal(patient.firstSurnameStatus, 'present'); assert.equal(patient.secondSurnameStatus, 'unknown');
         assert.equal((await conn.query("SELECT surname FROM person WHERE id_person='patient'"))[0][0].surname, 'Uno');
+
+        // 10. Clearing the last structured surname must not resurrect the previous search/display value.
+        const clearedPatient = await service.save('patient', 'patient', 'qa', 'actor', { firstSurname: null, secondSurname: null }, 1);
+        assert.equal(clearedPatient.firstSurname, null);
+        assert.equal((await conn.query("SELECT surname FROM person WHERE id_person='patient'"))[0][0].surname, null);
+        await service.save('patient', 'patient', 'qa', 'actor', { curp: null }, 2);
+        assert.equal((await conn.query("SELECT surname FROM person WHERE id_person='patient'"))[0][0].surname, null, 'Unrelated save cannot bring surname back');
+
+        // A legacy surname with no structured capture is retained on an unrelated change.
+        await conn.query("INSERT INTO person (id_business,id_person,name,surname) VALUES ('qa','legacy-patient','Paciente','De la Prueba Antigua')");
+        await service.save('patient', 'legacy-patient', 'qa', 'actor', { curp: null }, 0);
+        assert.equal((await conn.query("SELECT surname FROM person WHERE id_person='legacy-patient'"))[0][0].surname, 'De la Prueba Antigua');
     } finally { if (db) await db.close(); await conn.query('DROP DATABASE IF EXISTS ' + database).catch(() => {}); await conn.end(); }
 });

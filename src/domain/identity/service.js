@@ -73,7 +73,10 @@ function createService(db) {
             await persist(kind,id,business,actor,data,cur.revision,transaction);
             if(kind==='patient') {
                 const surname=[data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
-                await db.query('UPDATE person SET name=COALESCE(:name,name), surname=COALESCE(:surname,surname), birthday=:birthday,age=IF(:birthday IS NULL,NULL,TIMESTAMPDIFF(YEAR,:birthday,CURDATE())), updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_person=:id AND id_business=:business',{replacements:{name:data.givenNames,surname:surname||null,birthday:data.birthDate,actor,id,business},transaction});
+                // An omitted legacy split is preserved; an explicit clear must reach display/search mirrors.
+                const writeName='givenNames' in patch || Boolean(data.givenNames);
+                const writeSurname='firstSurname' in patch || 'secondSurname' in patch || Boolean(surname);
+                await db.query('UPDATE person SET name=IF(:writeName,:name,name), surname=IF(:writeSurname,:surname,surname), birthday=:birthday,age=IF(:birthday IS NULL,NULL,TIMESTAMPDIFF(YEAR,:birthday,CURDATE())), updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_person=:id AND id_business=:business',{replacements:{writeName,writeSurname,name:data.givenNames||null,surname:surname||null,birthday:data.birthDate,actor,id,business},transaction});
             }
             if(kind==='professional') {
                 // professional_name is a derived output of the three names (no titles added, nothing split).
