@@ -4,6 +4,9 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
+    "migration:history-base": "node scripts/migrations/clinical-history-base-template.js",
+    "qa:history-base": "node --test scripts/qa/history-base-template.test.js",
+    "qa:history-base-mysql": "node scripts/qa/history-base-template-mysql.js",
     "changeset": "changeset",
     "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts --offline --no-audit --no-fund",
     "qa:platform-sso": "node --test scripts/qa/platform-sso.test.js",
