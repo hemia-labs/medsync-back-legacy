@@ -35,7 +35,7 @@ function validateRegistration(source) {
     // The previous first_name + last_name and name-only shapes stay accepted for older clients.
     const structured = Object.hasOwn(source.account || {},'first_surname') || Object.hasOwn(source.account || {},'second_surname');
     const split = structured || Object.hasOwn(source.account || {},'first_name') || Object.hasOwn(source.account || {},'last_name');
-    const nameFields = structured ? ['first_name','first_surname','second_surname']
+    const nameFields = structured ? ['first_name','first_surname','second_surname',...(Object.hasOwn(source.account,'last_name') ? ['last_name'] : [])]
         : split ? ['first_name','last_name',...(Object.hasOwn(source.account,'name') ? ['name'] : [])] : ['name'];
     exact(source.account,[...nameFields,'email','password',...(Object.hasOwn(source.account || {},'telephone') ? ['telephone'] : [])]); exact(source.business,['name']);
     const {account,business,legalAcceptances}=source;

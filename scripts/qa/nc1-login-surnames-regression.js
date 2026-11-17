@@ -20,7 +20,8 @@ test('minimums: given names and at least one surname; invalid values rejected, n
   assert.equal(userNames({ first_name: 'Ana', first_surname: 7, second_surname: null }), null);
   assert.equal(userNames({ first_name: 'Ana', first_surname: 'x'.repeat(201), second_surname: null }), null);
   assert.equal(userNames({ first_name: 'A'.repeat(150), first_surname: 'B'.repeat(60), second_surname: null }), null, '200 characters in total');
-  assert.equal(userNames({ first_name: 'Ana', first_surname: 'Pérez', last_name: 'Otra' }), null, 'one capture of surnames per request');
+  assert.equal(userNames({ first_name: 'Ana', first_surname: 'Pérez', last_name: 'Otra' }), null, 'a different last_name contradicts the surnames');
+  assert.equal(userNames({ first_name: 'Ana', first_surname: 'Pérez', second_surname: 'López', last_name: 'Pérez López' }).second_surname, 'López', 'same join accepted (deploy compatibility)');
 });
 
 test('editing: unchanged keys keep stored values; explicit clearing does not bring the old value back', () => {
@@ -48,7 +49,8 @@ test('registration: structured account accepted; extra or partial name keys reje
   assert.equal(old.account.last_name, 'Pérez López'); assert.equal(old.account.first_surname, null);
   const rejects = account => assert.throws(() => validateRegistration({ ...base, account: { email: 'qa.registro@example.invalid', password: 'Clave-segura-QA-2026', ...account } }));
   rejects({ first_name: 'Ana', first_surname: 'Pérez' });                                 // both surname keys required
-  rejects({ first_name: 'Ana', first_surname: 'Pérez', second_surname: '', last_name: 'X' }); // no mixing shapes
+  rejects({ first_name: 'Ana', first_surname: 'Pérez', second_surname: '', last_name: 'X' }); // contradictory last_name
+  assert.equal(validateRegistration({ ...base, account: { first_name: 'Ana', first_surname: 'Pérez', second_surname: '', last_name: 'Pérez', email: 'qa.registro@example.invalid', password: 'Clave-segura-QA-2026' } }).account.first_surname, 'Pérez', 'matching last_name accepted');
   rejects({ first_name: 'Ana', first_surname: '', second_surname: '' });                  // at least one surname
 });
 

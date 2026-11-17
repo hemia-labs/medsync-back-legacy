@@ -16,7 +16,6 @@ function userNames(input, current = null) {
         return { name: current.name, first_name: current.first_name ?? current.name, last_name: current.last_name ?? '', ...keep };
     }
     if (structured) {
-        if (Object.hasOwn(input, 'last_name')) return null; // one capture of surnames per request
         const first = text(input.first_name === undefined ? current?.first_name : input.first_name, 200);
         const pick = key => (input[key] === undefined ? current?.[key] : input[key]);
         const blank = value => value == null || (typeof value === 'string' && !value.trim());
@@ -25,6 +24,8 @@ function userNames(input, current = null) {
         if (['first_surname', 'second_surname'].some((key, i) => !blank(pick(key)) && surnames[i] === null)) return null;
         const last = surnames.filter(Boolean).join(' ');
         if (!first || !last || [...first, ' ', ...last].length > 200) return null;
+        // Clients may also send last_name (so a server without this change still works); it must be the same join.
+        if (Object.hasOwn(input, 'last_name') && text(input.last_name, 200) !== last) return null;
         return { first_name: first, last_name: last, name: first + ' ' + last, first_surname: surnames[0], second_surname: surnames[1] };
     }
     if (separated) {
