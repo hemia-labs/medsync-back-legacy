@@ -77,9 +77,14 @@ function defaultBodyParser(req, res, next) {
 }
 
 function protectedBodyParser(req, res, next) {
+    // NC1-AUTH-S1: authentication first. Without an actor this is a session problem (AUTH_ACCESS_INVALID);
+    // with an actor, a route without a protected policy is a route configuration problem, not a session loss.
+    if (!req.tokenDecode || !req.tokenDecode.id_login) {
+        return res.status(401).json({ status: 401, data: { code: 'AUTH_ACCESS_INVALID' }, message: 'Se requiere una sesión activa para cargar este contenido.' });
+    }
     const policy = policyFor(req);
-    if (!policy || policy.publicSignature || !req.tokenDecode || !req.tokenDecode.id_login) {
-        return res.status(401).json({ status: 401, data: null, message: 'Se requiere una sesión activa para cargar este contenido.' });
+    if (!policy || policy.publicSignature) {
+        return res.status(400).json({ status: 400, data: null, code: 'REQUEST_BODY_POLICY_UNAVAILABLE', message: 'Este contenido no se puede cargar en esta ruta.' });
     }
     return parse(req, res, next, policy.bytes);
 }

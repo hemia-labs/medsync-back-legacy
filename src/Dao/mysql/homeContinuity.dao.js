@@ -54,8 +54,12 @@ function action(label, path, permission) {
 
 class HomeContinuityDao {
     async summary(idBusiness, idLogin, options = {}) {
-        if (!idBusiness || !idLogin) {
-            return responseData.unauthorized('No hay sesion activa para consultar continuidad clinica.');
+        // NC1-AUTH-S1/S2: authentication first; a valid session that only lacks the business is a context problem.
+        if (!idLogin) {
+            return responseData.unauthorized('No hay sesion activa para consultar continuidad clinica.', { code: 'AUTH_ACCESS_INVALID' });
+        }
+        if (!idBusiness) {
+            return responseData.forbidden('No hay consultorio asociado a la sesion.', { code: 'BUSINESS_CONTEXT_REQUIRED' });
         }
 
         try {

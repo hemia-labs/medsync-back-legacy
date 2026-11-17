@@ -14,7 +14,9 @@ function createPulseController(service) {
             return res.status(200).send({ status: 200, data, message: 'Pulso consultado; alcance y calidad indicados en la lectura.' });
         } catch (error) {
             const status = [400,401,403,429,503].includes(error.status) ? error.status : 503;
-            return res.status(status).send({ status, data: null, message: status === 401 ? 'La sesion ya no esta activa.' : status === 403 ? 'No tienes acceso a esta lectura o accion.' : status === 400 ? 'Parametros o cursor no validos; actualiza la lectura.' : 'No pudimos verificar el Pulso. Puedes reintentar.', code: status === 503 ? 'PULSE_UNAVAILABLE' : undefined });
+            // NC1-AUTH-S1: the error's code survives serialization (canonical data.code; root code kept for compatibility).
+            const code = (status === error.status && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? error.code : null) || (status === 503 ? 'PULSE_UNAVAILABLE' : null);
+            return res.status(status).send({ status, data: code ? { code } : null, message: status === 401 ? 'La sesion ya no esta activa.' : status === 403 ? 'No tienes acceso a esta lectura o accion.' : status === 400 ? 'Parametros o cursor no validos; actualiza la lectura.' : 'No pudimos verificar el Pulso. Puedes reintentar.', ...(code ? { code } : {}) });
         }
     };
 }

@@ -63,6 +63,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "2.31.1",
+    "acorn": "8.15.0",
     "nodemon": "3.1.14"
   },
   "overrides": {

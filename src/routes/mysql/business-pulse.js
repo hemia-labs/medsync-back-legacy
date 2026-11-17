@@ -7,7 +7,9 @@ function createRouter(service, auth = Token.Auth, operational = requireTenantOpe
     router.use((req, res, next) => {
         res.set('Cache-Control', 'no-store');
         const send = res.send;
-        res.send = function (body) { if (this.statusCode >= 400 && body && typeof body === 'object' && body.status) body = { status: this.statusCode, data: null, message: body.message || 'No pudimos autorizar esta lectura.', ...((body.code || body.data?.code) ? { code: body.code || body.data.code } : {}) }; return send.call(this, body); };
+        // NC1-AUTH-S1: errors are reduced to status/message/code. The code (Token.Auth, access, service) is kept in
+        // data.code (canonical, read by the client handler) and at the root (compatibility with the Pulso contract).
+        res.send = function (body) { if (this.statusCode >= 400 && body && typeof body === 'object' && body.status) { const code = body.data?.code || body.code; body = { status: this.statusCode, data: code ? { code } : null, message: body.message || 'No pudimos autorizar esta lectura.', ...(code ? { code } : {}) }; } return send.call(this, body); };
         next();
     });
     for (const path of ['/snapshot','/incidents','/history','/appointment-result']) router.get(path, auth, operational, controller);
