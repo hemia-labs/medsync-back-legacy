@@ -6,7 +6,7 @@ const path = require('node:path');
 const tests = [
     'nc1-identity.test', 'nc1-emergency-contact.test', 'nc1-emergency-contact-http.test',
     'platform-sso.test', 's18-session-revocation-http-regression',
-    'account-legal-regression',
+    'account-legal-regression', 'legal-evidence-permanent-rejection',
     'registration-recovery-regression',
     'registration-plans-regression',
     'private-images-regression',

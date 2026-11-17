@@ -24,7 +24,7 @@ async function run({useInstalledSdk=true}={}){
         if(sql.includes('FROM registration_outbox')){
             assert.doesNotMatch(sql,/registration\.created/);
             assert.equal(params.login,actor.id_login);assert.equal(params.business,actor.id_business);
-            return synced?[]:[{event_id:'pending-event'}];
+            return synced?[]:events.size?[...events.values()].map(event=>({event_id:event.event_id,legal_evidence_payload:event.legal_evidence_payload})):[{event_id:'pending-event',legal_evidence_payload:{confirmations:[{documentVersionId:doc.documentVersionId}]}}];
         }
         if(sql.includes('INSERT INTO registration_outbox')){
             assert.ok(options.transaction);
@@ -157,6 +157,7 @@ async function run({useInstalledSdk=true}={}){
         historyItems=[receipt];pending=false;
         assert.equal((await dao.centralContext(actor)).code,'LEGAL_VERSION_STALE');
         manifest.documents.push(privacy);reviewDocs=[privacy];
+        actor.role='assistant';
         const publicSnapshotsBeforeReview=snapshotCalls;
         const review=await dao.centralContext(actor);assert.equal(review.status,200);
         assert.deepEqual(review.data.legalDocuments.map(d=>d.documentKey),['aviso_de_privacidad']);
@@ -174,9 +175,10 @@ async function run({useInstalledSdk=true}={}){
         assert.equal((await dao.current(actor)).data.pending_count,0,'Queued central evidence leaves no local pending licence');
         historyItems=[receipt];pending=false;synced=true;
         assert.equal((await dao.history(actor)).data.acceptances[0].evidence_id,receipt.evidenceId);
+        actor.role='admin';
         Object.assign(legal.env,{LEGAL_ACCOUNT_CATALOG_ENABLED:'true',LEGAL_CONTEXT_CALLER_ID:'legal-service',LEGAL_CONTEXT_AUDIENCE:'medsync-api',
             LEGAL_CONTEXT_INTROSPECTION_URL:'http://localhost:4000/oauth/introspect'});
-        const contract={...privacy,documentKey:'agreement_qa',title:'Agreement',requiredAction:'accept'};
+        const contract={...privacy,documentId:randomUUID(),documentVersionId:randomUUID(),documentKey:'agreement_qa',title:'Agreement',requiredAction:'accept'};
         const info={...privacy,documentId:randomUUID(),documentVersionId:randomUUID(),documentKey:'read_only_qa',requiredAction:'informational'};
         sets=[{documentSetKey:'account_contracts',name:'Contracts',revision:manifest.revision,evidenceScope:'organization',verification:'verified_session',documents:[contract,info]}];
         const contractVersion=await central.document(actor,contract.documentVersionId,undefined,'account_contracts');
@@ -188,13 +190,42 @@ async function run({useInstalledSdk=true}={}){
         assert.equal(account.data.documents.find(d=>d.document_key===contract.documentKey).central_can_review,true);
         assert.equal(account.data.documents.find(d=>d.document_key===info.documentKey).informational,true);
         assert.equal((await dao.notice(actor)).data.pending_count,1);
+        synced=false;// Queued personal evidence must not mark the organization contract as syncing.
+        const unrelated=(await dao.current(actor)).data.documents.find(d=>d.document_key===contract.documentKey);
+        assert.equal(unrelated.pending,true);assert.equal(unrelated.sync_pending,undefined);
+        assert.equal((await dao.notice(actor)).data.pending_count,1);
+        assert.equal((await dao.centralContext(actor,'account_contracts')).status,200);synced=true;
         const organizationReview=await dao.centralContext(actor,'account_contracts');
         assert.equal(organizationReview.data.acceptanceScope,'business');
         const submission={...input,documentSetKey:'account_contracts',idempotencyKey:randomUUID(),legalContext:organizationReview.data.legalContext,
             legalAcceptances:[{documentKey:contract.documentKey,versionId:contract.documentVersionId,acknowledged:true}]};
         actor.role='assistant';
+        assert.deepEqual((await dao.notice(actor)).data,{pending_count:0,business_pending:false,central_sync_pending:false,pending_unknown:false});
+        const assistantContract=(await dao.current(actor)).data.documents.find(d=>d.document_key===contract.documentKey);
+        assert.equal(assistantContract.pending,true);
+        assert.equal(assistantContract.central_can_review,false);
+        pending=true;
+        assert.deepEqual((await dao.notice(actor)).data,{pending_count:1,business_pending:false,central_sync_pending:false,pending_unknown:false});
+        reviewDocs=[manifest.documents[0],privacy];
+        const assistantReview=await dao.centralContext(actor);
+        assert.equal(assistantReview.status,200);
+        assert.equal(assistantReview.data.acceptanceScope,'user');
+        const assistantSubmission={legalContext:assistantReview.data.legalContext,idempotencyKey:randomUUID(),
+            legalAcceptances:assistantReview.data.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))};
+        assert.equal((await dao.acceptCentral(actor,assistantSubmission)).status,202);
+        const assistantEvent=events.get(assistantSubmission.idempotencyKey);
+        const assistantEvidence=JSON.parse(assistantEvent.legal_evidence_payload);
+        assert.deepEqual(assistantEvidence.confirmations.map(c=>[c.documentVersionId,c.action]),
+            [[doc.documentVersionId,'accept'],[privacy.documentVersionId,'acknowledge']]);
+        assert.equal(assistantEvidence.sessionId,undefined);
+        assistantEvent.processed_at=new Date();
+        synced=true;
+        pending=false;
         assert.equal((await dao.centralContext(actor,'account_contracts')).status,403);
         assert.equal((await dao.acceptCentral(actor,submission)).status,403);
+        actor.role='business_admin';
+        assert.deepEqual((await dao.notice(actor)).data,{pending_count:1,business_pending:true,central_sync_pending:false,pending_unknown:false});
+        assert.equal((await dao.centralContext(actor,'account_contracts')).status,200);
         actor.role='admin';
         assert.equal((await dao.acceptCentral(actor,{...submission,documentSetKey:'registration'})).code,'LEGAL_VERSION_STALE');
         assert.equal((await dao.acceptCentral(actor,submission)).status,202);

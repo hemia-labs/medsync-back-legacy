@@ -60,9 +60,23 @@ class AccountLegalService {
     async syncPending(actor,transaction=null) {
         const [event]=await this.db.query(`SELECT event_id FROM registration_outbox WHERE id_login=:login AND id_business=:business
             AND legal_evidence_payload IS NOT NULL AND processed_at IS NULL
-            AND (legal_error_code IS NULL OR legal_error_code<>'LEGAL_REPRESENTATIVE_REJECTED') LIMIT 1`,
+            AND (legal_error_code IS NULL OR legal_error_code NOT IN ('LEGAL_REPRESENTATIVE_REJECTED','LEGAL_EVIDENCE_REJECTED')) LIMIT 1`,
         {replacements:{login:actor.id_login,business:actor.id_business},transaction,type:QueryTypes.SELECT});
         return Boolean(event);
+    }
+    // Versions whose confirmation is queued for Legal but not delivered yet: only those documents report "sync pending".
+    async queuedVersions(actor,transaction=null) {
+        const rows=await this.db.query(`SELECT legal_evidence_payload FROM registration_outbox WHERE id_login=:login AND id_business=:business
+            AND legal_evidence_payload IS NOT NULL AND processed_at IS NULL
+            AND (legal_error_code IS NULL OR legal_error_code NOT IN ('LEGAL_REPRESENTATIVE_REJECTED','LEGAL_EVIDENCE_REJECTED'))`,
+        {replacements:{login:actor.id_login,business:actor.id_business},transaction,type:QueryTypes.SELECT});
+        const versions=new Set();
+        for(const row of rows){
+            let payload=row.legal_evidence_payload;
+            try{if(typeof payload==='string')payload=JSON.parse(payload);}catch(_){payload=null;}
+            for(const item of Array.isArray(payload?.confirmations)?payload.confirmations:[])if(item?.documentVersionId)versions.add(item.documentVersionId);
+        }
+        return versions;
     }
     owner(actor,key=registration) {
         if(!actor.id_session)throw new RegistrationError('LEGAL_CONTEXT_FORBIDDEN',403);
@@ -78,6 +92,8 @@ class AccountLegalService {
         if(snapshot?.documentSetKey!==key||!Array.isArray(snapshot.documents)
             ||!snapshot.documents.every(validDoc))throw unavailable();
         if(!snapshot.documents.length)throw new RegistrationError('LEGAL_VERSION_STALE',409);
+        const queued=await this.queuedVersions(actor);
+        if(snapshot.documents.some(doc=>queued.has(doc.documentVersionId)))throw new RegistrationError('LEGAL_SYNC_PENDING',409);
         return {...await this.legal.contextFromSnapshot(owner,snapshot),acceptanceScope:organization?'business':'user'};
     }
     async enqueue(actor,source,transaction) {
@@ -101,13 +117,14 @@ class AccountLegalService {
                 ||payload.confirmations.length!==prepared.confirmations.length||!prepared.confirmations.every((confirmation,index)=>
                     ['documentVersionId','contentHash','action','confirmed'].every(key=>payload.confirmations[index]?.[key]===confirmation[key])))
                 throw new RegistrationError('LEGAL_IDEMPOTENCY_CONFLICT',409);
-            if(existing.legal_error_code==='LEGAL_REPRESENTATIVE_REJECTED')throw new RegistrationError('LEGAL_REPRESENTATIVE_REJECTED',409);
+            if(['LEGAL_REPRESENTATIVE_REJECTED','LEGAL_EVIDENCE_REJECTED'].includes(existing.legal_error_code))throw new RegistrationError(existing.legal_error_code,409);
             return {eventId:existing.event_id,queued:!existing.processed_at,evidenceId:existing.legal_evidence_id||null};
         }
         const set=await this.accountSet(actor,key);
         const organization=set.evidenceScope==='organization';
         if(organization&&!canRepresent(actor))throw new RegistrationError('LEGAL_CONTEXT_FORBIDDEN',403);
-        if(await this.syncPending(actor,transaction))throw new RegistrationError('LEGAL_SYNC_PENDING',409);
+        const queued=await this.queuedVersions(actor,transaction);
+        if(prepared.confirmations.some(item=>queued.has(item.documentVersionId)))throw new RegistrationError('LEGAL_SYNC_PENDING',409);
         const payload={...prepared,idempotencyKey:source.idempotencyKey,subjectId:actor.id_login,organizationId:actor.id_business,
             ...(organization||set.verification==='verified_session'?{sessionId:actor.id_session}:{})};
         await this.db.query(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at,legal_evidence_payload)
@@ -151,10 +168,12 @@ class AccountLegalService {
     }
     async notice(actor) {
         const personal=await this.pending(actor);
-        const sets=await this.accountSets(actor);
+        const sets=(await this.accountSets(actor)).filter(set=>set.evidenceScope!=='organization'||canRepresent(actor));
         const pending=await Promise.all(sets.map(set=>this.pending(actor,set.documentSetKey)));
-        return {count:personal.pendingDocuments.length+pending.reduce((sum,result)=>sum+result.pendingDocuments.length,0),
-            businessPending:pending.some((result,index)=>sets[index].evidenceScope==='organization'&&result.pendingDocuments.length>0)};
+        const queued=await this.queuedVersions(actor);
+        const awaiting=result=>result.pendingDocuments.filter(doc=>!queued.has(doc.documentVersionId));
+        return {count:awaiting(personal).length+pending.reduce((sum,result)=>sum+awaiting(result).length,0),
+            businessPending:pending.some((result,index)=>sets[index].evidenceScope==='organization'&&awaiting(result).length>0)};
     }
     receipt(item,doc,actor,set) {
         const scope=set?.evidenceScope==='organization'?'business':'user';
