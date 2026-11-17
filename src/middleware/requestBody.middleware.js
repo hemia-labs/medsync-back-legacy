@@ -4,7 +4,7 @@ const express = require('express');
 const MB = 1024 * 1024;
 const GENERAL_LIMIT = MB;
 const AUTH_LIMIT = 32 * 1024;
-const REGISTRATION_PATH = /^\/api\/(?:auth\/register|account\/(?:contact-verifications(?:\/confirm)?|activation\/contact))\/?$/i;
+const REGISTRATION_PATH = /^\/api\/(?:auth\/register|registration\/recover-session|account\/(?:contact-verifications(?:\/confirm)?|activation\/contact))\/?$/i;
 
 // Large bodies are deferred to route middleware, AFTER authentication, CSRF
 // and tenant checks. Public signing has its own rate/token gate before parsing.
