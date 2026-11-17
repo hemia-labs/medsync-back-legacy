@@ -99,7 +99,7 @@ class SaasLegalDao {
             if(centralConfigured) {
                 try {
                     const pending = await this.central.notice(actor);
-                    if(!syncPending) centralCount = pending.count;
+                    centralCount = pending.count;
                     centralBusinessPending = pending.businessPending;
                 } catch(_) { pendingUnknown = true; }
             }
@@ -116,7 +116,8 @@ class SaasLegalDao {
             let documents = [], centralAvailable = true;
             if(centralConfigured) {
                 try {
-                    documents = (await this.central.current(actor)).map(doc => syncPending && doc.pending
+                    const queued = syncPending ? await this.central.queuedVersions(actor) : new Set();
+                    documents = (await this.central.current(actor)).map(doc => doc.pending && queued.has(doc.current_version?.id_version)
                         ? {...doc, pending:false, sync_pending:true} : doc);
                 }
                 catch(_) { centralAvailable = false; }
@@ -166,7 +167,6 @@ class SaasLegalDao {
             const actor=await this.actor(context);
             if(!actor)return fail(403,'LEGAL_CONTEXT_FORBIDDEN','No hay una cuenta activa en el consultorio.');
             if(!this.central.configured())return fail(503,'LEGAL_SERVICE_UNAVAILABLE','Legal central no está configurado.');
-            if(await this.central.syncPending(actor))return fail(409,'LEGAL_SYNC_PENDING','Tus confirmaciones ya están pendientes de sincronizar. Actualiza los documentos.');
             return ok(await this.central.review(actor,key));
         }catch(error) {
             if(error instanceof RegistrationError)return fail(error.status,error.code,'No se pudo preparar la revisión. Actualiza los documentos y reintenta.');
