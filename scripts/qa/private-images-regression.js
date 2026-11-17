@@ -81,7 +81,7 @@ dao.get=async()=>({status:200,success:true,data:{logoUrl:rows[0]?.logo_url}});
  user.getProfessionalProfile=async()=>({status:200,success:true,data:{...profile}});
  const body={id_login:'doctor',target_id_login:'doctor',id_business:'tenant'};
  const uploadsBefore=uploads.length;
- assert.equal((await user.saveProfessionalProfile({...body,target_id_login:'other',signature_image:image})).status,401);
+ assert.equal((await user.saveProfessionalProfile({...body,target_id_login:'other',signature_image:image})).status,403);
  assert.equal(uploads.length,uploadsBefore,'Unauthorized profile fails before AWS');
  assert.equal((await user.saveProfessionalProfile({...body,signature_image:logo.Key})).status,400,'Cannot forge another saved reference');
  events=[];deletes=[];
