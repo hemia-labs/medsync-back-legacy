@@ -1,4 +1,5 @@
 const { userNames } = require('../../util/userNames');
+const { writeLoginSurnames, withLoginSurnames } = require('../../util/loginSurnames');
 const { beginLicenseMutation } = require('../../util/licenseMutation');
 const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
@@ -54,7 +55,8 @@ async function addUserNames(rows, business, superAdmin) {
         { replacements: { ids, superAdmin: superAdmin ? 1 : 0, business: business || null }, type: QueryTypes.SELECT }
     );
     const byId = new Map(names.map(row => [row.id_login, row]));
-    return rows.map(row => ({ ...row, first_name: byId.get(row.id_login)?.first_name || row.name || '', last_name: byId.get(row.id_login)?.last_name || '' }));
+    // NC1 identidad simple: first_surname / second_surname travel with the names (null before the migration).
+    return withLoginSurnames(sequelize, rows.map(row => ({ ...row, first_name: byId.get(row.id_login)?.first_name || row.name || '', last_name: byId.get(row.id_login)?.last_name || '' })));
 }
 
 /**
@@ -165,6 +167,7 @@ class UserDao{
                 transaction, type: QueryTypes.INSERT
             }
         );
+        await writeLoginSurnames(sequelize, idLogin, names, transaction);
 
         await seedDashboardPermissions(body.id_business, idLogin, transaction);
 
@@ -218,7 +221,8 @@ async updateUser(body,id_login) {
         const target = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login);
         if (!target || !target.id_business) return responseData.forbidden('Usuario no disponible para gestion de consultorio.');
         transaction = await beginLicenseMutation(sequelize, target.id_business);
-        const currentState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login, transaction);
+        const loadedState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login, transaction);
+        const currentState = loadedState ? await withLoginSurnames(sequelize, loadedState, transaction) : loadedState;
         if (!currentState) {
             return responseData.bad_request('Usuario invalido para este negocio.');
         }
@@ -284,12 +288,13 @@ async updateUser(body,id_login) {
         });
 
         if (!result || !Number(result[1])) return responseData.notSuccess('Usuario no disponible.');
+        await writeLoginSurnames(sequelize, id_login, names, transaction);
         await seedDashboardPermissions(targetBusiness, id_login, transaction);
         await seedTracingPermissions(targetBusiness, id_login, transaction);
         const rows = await sequelize.query('SELECT id_login, id_rol, name, first_name, last_name, email, telephone, id_business FROM login WHERE id_login = :login AND id_business = :business', {
             replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
         });
-        response = responseData.success(rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
+        response = responseData.success(rows[0] ? await withLoginSurnames(sequelize, rows[0], transaction) : rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
         if (response && response.status === 200) { await transaction.commit(); transaction = null; }
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);

@@ -31,8 +31,12 @@ function validateRegistration(source) {
     if (!serialized || Buffer.byteLength(serialized)>8192) throw new RegistrationError('REGISTRATION_VALIDATION_FAILED');
     exact(source,['account','business','legalAcceptances',...(Object.hasOwn(source||{},'legalContext')?['legalContext']:[])]);
     if(Object.hasOwn(source,'legalContext')&&(typeof source.legalContext!=='string'||source.legalContext.length>6100)) throw new RegistrationError('REGISTRATION_VALIDATION_FAILED');
-    const split = Object.hasOwn(source.account || {},'first_name') || Object.hasOwn(source.account || {},'last_name');
-    const nameFields = split ? ['first_name','last_name',...(Object.hasOwn(source.account,'name') ? ['name'] : [])] : ['name'];
+    // NC1 identidad simple: first_name + first_surname + second_surname (both surname keys present; one may be empty).
+    // The previous first_name + last_name and name-only shapes stay accepted for older clients.
+    const structured = Object.hasOwn(source.account || {},'first_surname') || Object.hasOwn(source.account || {},'second_surname');
+    const split = structured || Object.hasOwn(source.account || {},'first_name') || Object.hasOwn(source.account || {},'last_name');
+    const nameFields = structured ? ['first_name','first_surname','second_surname']
+        : split ? ['first_name','last_name',...(Object.hasOwn(source.account,'name') ? ['name'] : [])] : ['name'];
     exact(source.account,[...nameFields,'email','password',...(Object.hasOwn(source.account || {},'telephone') ? ['telephone'] : [])]); exact(source.business,['name']);
     const {account,business,legalAcceptances}=source;
     const names=userNames(account);
