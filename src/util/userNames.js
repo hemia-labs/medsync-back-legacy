@@ -29,6 +29,14 @@ function userNames(input, current = null) {
         return { first_name: first, last_name: last, name: first + ' ' + last, first_surname: surnames[0], second_surname: surnames[1] };
     }
     if (separated) {
+        // A full legacy DTO may carry its unchanged empty last_name when only contact/profile data changes.
+        // Preserve that recorded name literally; do not infer surnames or relax validation for a changed name.
+        if (current && !current.first_surname && !current.second_surname && current.last_name === '' &&
+            (input.first_name === undefined || input.first_name === current.first_name) &&
+            (input.last_name === undefined || input.last_name === current.last_name) &&
+            (input.name === undefined || input.name === current.name) && text(current.name, 500)) {
+            return { name: current.name, first_name: current.first_name, last_name: '', ...keep };
+        }
         const first = text(input.first_name === undefined ? current?.first_name : input.first_name, 200);
         const last = text(input.last_name === undefined ? current?.last_name : input.last_name, 200);
         if (!first || !last || [...first, ' ', ...last].length > 200) return null;

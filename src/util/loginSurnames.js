@@ -7,12 +7,11 @@ const { QueryTypes } = require('sequelize');
 let cache = null;
 async function hasLoginSurnames(db, transaction = null) {
     if (cache && (cache.value || Date.now() - cache.at < 60000)) return cache.value;
-    let value = false;
-    try {
-        const rows = await db.query("SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='login' AND COLUMN_NAME IN ('first_surname','second_surname')",
-            { type: QueryTypes.SELECT, transaction });
-        value = Number(rows && rows[0] && rows[0].total) === 2;
-    } catch (_) { value = false; }
+    // A failed metadata query is not proof of an old schema. Propagate so callers roll back,
+    // instead of acknowledging a structured save while silently omitting both columns.
+    const rows = await db.query("SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='login' AND COLUMN_NAME IN ('first_surname','second_surname')",
+        { type: QueryTypes.SELECT, transaction });
+    const value = Number(rows && rows[0] && rows[0].total) === 2;
     cache = { value, at: Date.now() };
     return value;
 }

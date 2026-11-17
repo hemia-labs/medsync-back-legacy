@@ -49,6 +49,12 @@ test('NC1 login surnames: migration, users and registration on MySQL', { skip: p
         // 1. Before the migration: the application keeps working with last_name only.
         let audit = await migration.audit(conn);
         assert.deepEqual(audit, { ready: true, alreadyApplied: false, presentColumns: [] });
+        await conn.query('ALTER TABLE login ADD COLUMN first_surname INT NULL');
+        await assert.rejects(migration.apply(conn,path.join(backups,'incompatible')), /LOGIN_SURNAMES_INCOMPATIBLE_COLUMNS/);
+        assert.equal(fs.existsSync(path.join(backups,'incompatible')),false,'incompatible schema rejected before backup or mutation');
+        await conn.query('ALTER TABLE login DROP COLUMN first_surname');
+        surnames.resetLoginSurnamesCache();
+        await assert.rejects(surnames.writeLoginSurnames({ query: async()=>{throw Error('metadata unavailable');} },'qa',{first_surname:'Prueba'},null), /metadata unavailable/);
         surnames.resetLoginSurnamesCache();
         let created = await create('antes', { first_name: 'Ana', first_surname: 'Pérez', second_surname: 'López' });
         assert.equal(created.status, 200, JSON.stringify(created));
@@ -71,6 +77,16 @@ test('NC1 login surnames: migration, users and registration on MySQL', { skip: p
         const id = await createdId('despues@example.invalid');
         let saved = await row(id);
         assert.deepEqual([saved.first_name, saved.first_surname, saved.second_surname, saved.last_name, saved.name], ['María José', 'De la Cruz', null, 'De la Cruz', 'María José De la Cruz']);
+
+        // A different partition is a real change even when joined names and all other columns are identical.
+        // Freeze NOW on the single Sequelize connection to reproduce 0 changed rows deterministically.
+        await db.query('SET timestamp = 1794898800');
+        await db.query("UPDATE login SET updated_at=NOW(),updated_by='actor' WHERE id_login=:id", { replacements: { id } });
+        const repartition = await dao.updateUser({ id_login: 'actor', id_business: 'qa', first_surname: 'De la', second_surname: 'Cruz' }, id);
+        assert.equal(repartition.status, 200, 'same joined surname must not produce a false 404');
+        assert.deepEqual([(await row(id)).first_surname,(await row(id)).second_surname], ['De la','Cruz']);
+        await dao.updateUser({ id_login: 'actor', id_business: 'qa', first_surname: 'De la Cruz', second_surname: null }, id);
+        await db.query('SET timestamp = 0');
 
         let updated = await dao.updateUser({ id_login: 'actor', id_business: 'qa', second_surname: 'López Ensayo' }, id);
         assert.equal(updated.status, 200, JSON.stringify(updated));

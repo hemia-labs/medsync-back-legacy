@@ -300,7 +300,14 @@ async updateUser(body,id_login) {
             plain: true
         });
 
-        if (!result || !Number(result[1])) return responseData.notSuccess('Usuario no disponible.');
+        if (!result || !Number(result[1])) {
+            // MySQL reports changed rows: repartitioning surnames can leave the joined name unchanged.
+            // Confirm existence within the authorized business before the structured update, under a row lock.
+            const existing = await sequelize.query('SELECT id_login FROM login WHERE id_login=:login AND id_business=:business FOR UPDATE', {
+                replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
+            });
+            if (!existing.length) return responseData.notSuccess('Usuario no disponible.');
+        }
         await writeLoginSurnames(sequelize, id_login, names, transaction);
         await seedDashboardPermissions(targetBusiness, id_login, transaction);
         await seedTracingPermissions(targetBusiness, id_login, transaction);

@@ -13,6 +13,7 @@ async function audit(db) {
     const [columns] = await db.query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='login' AND COLUMN_NAME IN ('name','first_name','last_name','first_surname','second_surname')");
     const names = new Set(columns.map(row => row.COLUMN_NAME));
     const surnames = columns.filter(row => COLUMNS.includes(row.COLUMN_NAME));
+    if (surnames.some(row => row.COLUMN_TYPE !== 'varchar(500)' || row.IS_NULLABLE !== 'YES')) throw Error('LOGIN_SURNAMES_INCOMPATIBLE_COLUMNS');
     return {
         // S25 (first_name/last_name) must already exist: this migration builds on it.
         ready: ['name', 'first_name', 'last_name'].every(name => names.has(name)),
@@ -31,7 +32,9 @@ async function apply(db, backupDirectory) {
     const missing = COLUMNS.filter(name => !report.presentColumns.includes(name));
     // DDL commits implicitly; additive nullable columns do not touch existing rows.
     if (missing.length) await db.query('ALTER TABLE login ' + missing.map(name => `ADD COLUMN ${name} VARCHAR(500) NULL DEFAULT NULL`).join(','));
-    return audit(db);
+    const after = await audit(db);
+    if (!after.alreadyApplied) throw Error('LOGIN_SURNAMES_APPLY_INCOMPLETE');
+    return after;
 }
 
 // Reversal keeps every captured value in a backup file before dropping the columns.
@@ -55,7 +58,9 @@ async function main() {
     if (applying && reverting) throw Error('LOGIN_SURNAMES_ONE_ACTION');
     const db = await mysql.createConnection({ host: config.HOSTMYSQL, port: config.PORTMYSQL, user: config.USERMYSQL, password: config.PASSWORDMYSQL, database: config.DATABASEMYSQL, connectTimeout: 10000 });
     try {
-        const backup = path.resolve(__dirname, '../../.schema-backups/login-surnames-' + Date.now());
+        const backupArg = args.indexOf('--backup-directory');
+        if (backupArg >= 0 && (!args[backupArg + 1] || args[backupArg + 1].startsWith('--'))) throw Error('LOGIN_SURNAMES_BACKUP_DIRECTORY_REQUIRED');
+        const backup = backupArg >= 0 ? path.resolve(args[backupArg + 1]) : path.resolve(__dirname, '../../_schema_backups/login-surnames-' + Date.now());
         const result = applying ? await apply(db, backup) : reverting ? await revert(db, backup) : await audit(db);
         console.log(JSON.stringify({ readOnly: !applying && !reverting, ...result, ...(applying || reverting ? { backup } : {}) }));
     } finally { await db.end(); }

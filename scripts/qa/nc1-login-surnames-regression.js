@@ -38,6 +38,9 @@ test('older clients: last_name still accepted; a changed last_name drops the str
   assert.equal(userNames({ first_name: 'Ana', last_name: 'Pérez López' }, current).second_surname, 'López', 'same last_name keeps them');
   const legacy = { name: 'Nombre Antiguo Completo', first_name: 'Nombre Antiguo Completo', last_name: '' };
   assert.deepEqual(userNames({}, legacy), { name: legacy.name, first_name: legacy.first_name, last_name: '', first_surname: null, second_surname: null });
+  assert.deepEqual(userNames({ first_name: legacy.first_name, last_name: '', phone: '5500000099' }, legacy),
+    { ...legacy, first_surname: null, second_surname: null }, 'editing contact preserves an unchanged legacy name with no surname');
+  assert.equal(userNames({ first_name: 'Changed', last_name: '' }, legacy), null, 'changed names still require a surname');
 });
 
 test('registration: structured account accepted; extra or partial name keys rejected; old shapes kept', () => {
