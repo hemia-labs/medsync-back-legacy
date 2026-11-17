@@ -28,7 +28,9 @@ class LegalRegistrationService {
     configuration() {
         const env=this.env,base=endpoint(env.LEGAL_API_URL),issuer=endpoint(env.HEMIA_ID_URL);
         if(!uuid.test(env.LEGAL_APPLICATION_ID||'')||!env.HEMIA_CLIENT_ID||!env.HEMIA_CLIENT_SECRET) throw unavailable();
-        return {base,issuer,applicationId:env.LEGAL_APPLICATION_ID,clientId:env.HEMIA_CLIENT_ID,secret:env.HEMIA_CLIENT_SECRET};
+        const registrationSetKey=env.LEGAL_REGISTRATION_SET_KEY??'registration';
+        if(!/^[a-z][a-z0-9_-]{1,79}$/.test(registrationSetKey))throw unavailable();
+        return {base,issuer,applicationId:env.LEGAL_APPLICATION_ID,clientId:env.HEMIA_CLIENT_ID,secret:env.HEMIA_CLIENT_SECRET,registrationSetKey};
     }
     legalClient(config) {
         if(!this.client) {
@@ -58,7 +60,7 @@ class LegalRegistrationService {
         let snapshot;
         try {
             snapshot=await this.legalClient(config).getDocumentSet({
-                applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX',
+                applicationId:config.applicationId,documentSetKey:config.registrationSetKey,locale:'es-MX',
             });
         } catch(_) {throw unavailable();}
         return this.contextFromSnapshot(attemptSecret,snapshot);
