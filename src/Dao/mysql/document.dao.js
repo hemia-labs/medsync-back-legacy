@@ -952,7 +952,9 @@ class DocumentDao {
 
     async auditAction(body) {
         try {
-            const allowedEvents = ['VIEWED', 'PRINTED', 'SIGNED', 'REFUSAL_REGISTERED'];
+            // Client observations cannot assert clinical outcomes. SIGNED and
+            // REFUSAL_REGISTERED are emitted by their authoritative commands.
+            const allowedEvents = ['VIEWED', 'PRINTED'];
             if (!allowedEvents.includes(body.event_type)) {
                 return responseData.bad_request('Evento de documento no valido.');
             }
