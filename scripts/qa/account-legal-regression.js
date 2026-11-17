@@ -6,13 +6,13 @@ require.cache[databasePath]={id:databasePath,filename:databasePath,loaded:true,e
 const {SaasLegalDao}=require('../../src/Dao/mysql/saasLegal.dao');
 const {AccountLegalService}=require('../../src/services/registration/accountLegal.service');
 const {LegalRegistrationService}=require('../../src/services/registration/legalRegistration.service');
-async function run({useInstalledSdk=true}={}){
+async function run({useInstalledSdk=true,registrationSetKey='registration'}={}){
     const actor={id_login:'owner',id_business:'clinic',id_session:'session',name:'Synthetic user',role:'admin'};
     const doc={documentId:randomUUID(),documentVersionId:randomUUID(),documentKey:'terminos_y_condiciones',title:'Terms',version:'1.0.0',
         contentHash:createHash('sha256').update('<p>Original terms</p>').digest('hex'),requiredAction:'accept',blocking:true,requireReacceptance:true,deadline:null};
     const receipt={evidenceId:randomUUID(),snapshotToken:randomUUID(),recorded:true,occurredAt:'2026-11-01T10:00:00Z',receivedAt:'2026-11-01T10:00:01Z',
         documents:[doc],confirmations:[{documentVersionId:doc.documentVersionId,contentHash:doc.contentHash,action:'accept',confirmed:true}]};
-    const manifest={applicationId:randomUUID(),documentSetKey:'registration',revision:randomUUID(),snapshotToken:randomUUID(),expiresAt:new Date(Date.now()+600000).toISOString(),
+    const manifest={applicationId:randomUUID(),documentSetKey:registrationSetKey,revision:randomUUID(),snapshotToken:randomUUID(),expiresAt:new Date(Date.now()+600000).toISOString(),
         documents:[{...doc,artifacts:{html:{url:'https://files.example/terms',expiresAt:new Date(Date.now()+600000).toISOString(),contentType:'text/html',size:21,sha256:doc.contentHash}}}]};
     let synced=true,outage=false,denied=false,pending=false,reviewDocs=null,html='<p>Original terms</p>',historyItems=[receipt],nextCursor=null;
     const events=new Map();
@@ -52,7 +52,7 @@ async function run({useInstalledSdk=true}={}){
             assert.equal(options.body.get('resource'),'http://localhost:3017');assert.equal(options.body.get('audience'),'legal-api');
             return Response.json({access_token:'synthetic-read-token',token_type:'Bearer',expires_in:300,scope:'legal.integration.acceptances.prepare'});
         }
-        if(url.includes('/document-sets/registration')){snapshotCalls++;return Response.json(manifest);}
+        if(url.includes('/document-sets/'+registrationSetKey)){snapshotCalls++;return Response.json(manifest);}
         if(url.includes('/integrations/')){
             readCalls++;assert.equal(new Headers(options.headers).get('authorization'),'Bearer synthetic-read-token');
             const input=JSON.parse(options.body);
@@ -73,11 +73,11 @@ async function run({useInstalledSdk=true}={}){
                 if(url.endsWith('/evidence/history'))return Response.json({items:organizationHistory,nextCursor:null});
                 return Response.json({documentSetKey:input.documentSetKey,revision:manifest.revision,pendingDocuments:organizationPending});
             }
-            assert.equal(input.documentSetKey,'registration');
+            assert.equal(input.documentSetKey,registrationSetKey);
             if(url.endsWith('/evidence/history')){historyCalls++;return Response.json({items:historyItems,nextCursor});}
             if(url.endsWith('/pending/prepare'))return Response.json({...manifest,documents:reviewDocs??(pending?manifest.documents:[])});
             assert.ok(url.endsWith('/pending/evaluate'),'Only read-only Legal operations are called');
-            return Response.json({documentSetKey:'registration',revision:manifest.revision,pendingDocuments:pending?[doc]:[],allowed:!pending});
+            return Response.json({documentSetKey:registrationSetKey,revision:manifest.revision,pendingDocuments:pending?[doc]:[],allowed:!pending});
         }
         if(url.includes('/documents/')){
             const item=manifest.documents.find(d=>url.includes('/documents/'+d.documentKey+'/versions/'+d.version+'?locale=es-MX'));
@@ -88,13 +88,14 @@ async function run({useInstalledSdk=true}={}){
         assert.equal(url,'https://files.example/terms');assert.equal(options.redirect,'error');artifactCalls++;return new Response(html);
     };
     const legal=new LegalRegistrationService(db,{env:{LEGAL_API_URL:'http://localhost:3017',HEMIA_ID_URL:'http://localhost:4000',
+        ...(registrationSetKey==='registration'?{}:{LEGAL_REGISTRATION_SET_KEY:registrationSetKey}),
         HEMIA_CLIENT_ID:'synthetic-client',HEMIA_CLIENT_SECRET:'synthetic-secret',LEGAL_APPLICATION_ID:manifest.applicationId,LEGAL_DOCUMENT_ORIGINS:'https://files.example'}});
     const machine=useInstalledSdk?null:{async request(_destination,route,options){
         return global.fetch('http://localhost:3017/'+route,{...options,redirect:'error',
             headers:{...options.headers,authorization:'Bearer synthetic-read-token'}});
     }};
     if(!useInstalledSdk)legal.client={async getDocumentSet(){
-        return (await global.fetch('http://localhost:3017/document-sets/registration')).json();
+        return (await global.fetch('http://localhost:3017/document-sets/'+registrationSetKey)).json();
     }};
     const central=new AccountLegalService(db,{legal,machine});
     const dao=new SaasLegalDao(db,central);

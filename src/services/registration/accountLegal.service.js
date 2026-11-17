@@ -25,6 +25,8 @@ class AccountLegalService {
         return Boolean(this.legal.env.LEGAL_APPLICATION_ID?.trim());
     }
     catalogEnabled() { return this.legal.env.LEGAL_ACCOUNT_CATALOG_ENABLED==='true'; }
+    // Keep the public MedSync key stable while isolating the central set by environment.
+    centralSetKey(config,key) { return key===registration?(config.registrationSetKey||registration):key; }
     async authorizeContext(authorization) {
         const token=/^Bearer ([^\s]{1,8192})$/i.exec(authorization||'')?.[1];
         const env=this.legal.env;
@@ -41,9 +43,10 @@ class AccountLegalService {
     }
     async accountSets(actor) {
         if(!this.catalogEnabled())return [];
+        const centralRegistration=this.centralSetKey(this.legal.configuration(),registration);
         const value=await this.read('account-catalog',actor,null,null);
         if(!Array.isArray(value?.sets)||new Set(value.sets.map(set=>set?.documentSetKey)).size!==value.sets.length
-            ||!value.sets.every(set=>typeof set?.documentSetKey==='string'&&setKeyPattern.test(set.documentSetKey)&&set.documentSetKey!==registration
+            ||!value.sets.every(set=>typeof set?.documentSetKey==='string'&&setKeyPattern.test(set.documentSetKey)&&set.documentSetKey!==registration&&set.documentSetKey!==centralRegistration
                 &&uuid.test(set.revision||'')&&typeof set.name==='string'&&['individual','organization'].includes(set.evidenceScope)
                 &&['collector_attested','verified_session'].includes(set.verification)
                 &&Array.isArray(set.documents)&&set.documents.length<=100&&set.documents.every(doc=>
@@ -134,6 +137,7 @@ class AccountLegalService {
     }
     async read(route,actor,cursor,key=registration,withSession=false,documentVersionId) {
         const config=this.legal.configuration();
+        const centralKey=this.centralSetKey(config,key);
         if(!this.machine) {
             // Reuse the installed public MachineClient used by @hemia/legal 0.1.
             const {MachineClient}=createRequire(require.resolve('@hemia/legal'))('@hemia/auth');
@@ -143,10 +147,15 @@ class AccountLegalService {
         }
         const response=await this.machine.request('legalRead','v1/legal/integrations/'+route,{method:'POST',
             headers:{accept:'application/json','content-type':'application/json'},
-            body:JSON.stringify({applicationId:config.applicationId,...(key?{documentSetKey:key}:{}),subjectId:actor.id_login,
+            body:JSON.stringify({applicationId:config.applicationId,...(key?{documentSetKey:centralKey}:{}),subjectId:actor.id_login,
                 organizationId:actor.id_business,locale:'es-MX',...(cursor?{cursor}:{}),...(withSession?{sessionId:actor.id_session}:{}),
                 ...(documentVersionId?{documentVersionId}:{})})});
-        return JSON.parse((await body(response,2*1024*1024)).toString('utf8'));
+        const value=JSON.parse((await body(response,2*1024*1024)).toString('utf8'));
+        if(key&&Object.hasOwn(value,'documentSetKey')) {
+            if(value.documentSetKey!==centralKey)throw unavailable();
+            return {...value,documentSetKey:key};
+        }
+        return value;
     }
     async history(actor,cursor,key=registration) {
         if(cursor&&!uuid.test(cursor))throw unavailable();
@@ -220,7 +229,7 @@ class AccountLegalService {
     }
     async current(actor) {
         const config=this.legal.configuration();
-        const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX'});
+        const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:this.centralSetKey(config,registration),locale:'es-MX'});
         const pending=await this.pending(actor);
         if(pending.revision!==snapshot.revision||!snapshot.documents.every(validDoc)
             ||!pending.pendingDocuments.every(p=>snapshot.documents.some(d=>d.documentId===p.documentId
@@ -257,7 +266,7 @@ class AccountLegalService {
         const history=await this.history(actor,cursor,key);
         let doc=history.items.flatMap(item=>item.documents).find(d=>d.documentVersionId===versionId);
         if(!doc) {
-            const snapshot=key===registration?await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:key,locale:'es-MX'}):set;
+            const snapshot=key===registration?await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:this.centralSetKey(config,key),locale:'es-MX'}):set;
             doc=snapshot.documents.find(d=>d.documentVersionId===versionId);
         }
         if(!doc||!validDoc(doc)&&!(doc.requiredAction==='informational'&&validDoc({...doc,requiredAction:'acknowledge'})))throw unavailable();
@@ -267,7 +276,7 @@ class AccountLegalService {
     }
     async publicCurrent(key) {
         const config=this.legal.configuration();
-        const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:'registration',locale:'es-MX'});
+        const snapshot=await this.legal.legalClient(config).getDocumentSet({applicationId:config.applicationId,documentSetKey:this.centralSetKey(config,registration),locale:'es-MX'});
         const keys=publicDocumentKeys[key];
         const matches=snapshot.documents.filter(doc=>keys.includes(doc.documentKey));
         if(!matches.length)return null;
