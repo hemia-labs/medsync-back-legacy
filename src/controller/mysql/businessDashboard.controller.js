@@ -2,6 +2,7 @@ const MESSAGES = require('../../util/common.messages.util');
 const httpResponseHelper = require('../../util/httpResponse');
 const HttpStatus = require('../../util/httpStatusCode');
 const BusinessDashboardDao = require('../../Dao/mysql/businessDashboard.dao');
+const responseData = require('../../util/responsedata');
 
 function hasTenantOverride(req) {
     const sources = [req.query, req.params, req.body];
@@ -47,14 +48,18 @@ class BusinessDashboardController extends httpResponseHelper {
             return null;
         }
 
-        const idBusiness = req.tokenDecode && req.tokenDecode.id_business ? req.tokenDecode.id_business : null;
+        // NC1-AUTH-S1/S2: authentication first (401 AUTH_ACCESS_INVALID); a valid session without business is 403 context.
+        if (!req.tokenDecode || !req.tokenDecode.id_login) {
+            const response = responseData.unauthorized('Token invalido o no enviado.', { code: 'AUTH_ACCESS_INVALID' });
+            res.status(response.status).send(response);
+            return null;
+        }
+
+        const idBusiness = req.tokenDecode.id_business ? req.tokenDecode.id_business : null;
 
         if (!idBusiness) {
-            res.status(HttpStatus.UNAUTHORIZED).send({
-                status: HttpStatus.UNAUTHORIZED,
-                data: null,
-                message: 'No hay negocio asociado a la sesion.'
-            });
+            const response = responseData.forbidden('No hay negocio asociado a la sesion.', { code: 'BUSINESS_CONTEXT_REQUIRED' });
+            res.status(response.status).send(response);
             return null;
         }
 

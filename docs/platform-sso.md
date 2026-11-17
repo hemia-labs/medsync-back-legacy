@@ -39,6 +39,8 @@ No se exponen los tokens del proveedor ni se imprimen códigos/claims. El saniti
 
 `node --test scripts/qa/platform-sso.test.js`: criptografía real y servidor HTTP, cuentas/SQL sintéticos, sin conexiones MySQL. Incluye rechazo de token, identidad, estado, bloqueo, rollback, flags y cookies. `node scripts/qa/s18-session-revocation-http-regression.js` comprueba compatibilidad D2/bearer y revocación. También ejecutar las regresiones de CSRF y autorización.
 
+`npm run qa:platform-sso-mysql`: integración con MySQL real aislado. Requiere `QA_SSO_MYSQL_PORT` en loopback, distinto de 3306, y una instancia desechable con root sin contraseña. Crea y elimina su propia base `qa_platform_sso_*`; nunca carga archivos env de la aplicación. Comprueba el contrato existente de `refresh_token` (`last`/`revoked_at`, sin columna `active`), cierre de sesiones previas, preservación de otros usuarios y rollback completo si falla la auditoría. El workflow Platform SSO MySQL regression ejecuta estos casos con un servicio efímero.
+
 Pendiente en destino: registrar cliente, identificar sub/correo/id_login autorizados, configurar secretos/origins y validar login real/caducidad/revocación y operaciones con datos de aceptación. No se aplicó migración ni configuración de producción. No retirar el panel legacy antes de ese corte.
 
 Rollback: desactivar `PLATFORM_SSO_ENABLED`, volver al release anterior si corresponde. No hay cambios de esquema que revertir.

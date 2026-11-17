@@ -32,8 +32,11 @@ async function run(){
     };
     central.read=async(route,owner)=>{
         assert.equal(owner.id_login,actor.id_login);assert.equal(owner.id_business,actor.id_business);
-        return route==='evidence/history'?{items:received,nextCursor:null}:{documentSetKey:'registration',revision:manifest.revision,
-            pendingDocuments:manifest.documents.filter(d=>!received.some(r=>r.confirmations.some(c=>c.documentVersionId===d.documentVersionId)))};
+        if(route==='evidence/history')return {items:received,nextCursor:null};
+        const pendingDocuments=manifest.documents.filter(d=>!received.some(r=>r.confirmations.some(c=>c.documentVersionId===d.documentVersionId)));
+        if(route==='pending/prepare')return {...manifest,documentSetKey:'registration',documents:pendingDocuments};
+        assert.equal(route,'pending/evaluate');
+        return {documentSetKey:'registration',revision:manifest.revision,pendingDocuments};
     };
     let server;
     const checks=[],pass=name=>{checks.push(name);console.log('PASS '+name);};
@@ -41,9 +44,8 @@ async function run(){
         await q("INSERT INTO business(id_business,name,status,subscription_status,active) VALUES(:business,'QA','active','active',1)",{business:actor.id_business});
         await q("INSERT INTO login(id_login,id_business,id_rol,name,email,active) VALUES(:login,:business,'admin','QA','legal-qa@example.test',1)",{login:actor.id_login,business:actor.id_business});
         await q('INSERT INTO `session`(id_session,id_login,active,`last`) VALUES(:session,:login,1,1)',{session:actor.id_session,login:actor.id_login});
-        const original=randomUUID();
-        await q(`INSERT INTO registration_outbox(event_id,attempt_id,event_type,id_login,id_business,created_at,processed_at,legal_evidence_payload)
-            VALUES(:id,:id,'registration.created',:login,:business,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'{}')`,{id:original,login:actor.id_login,business:actor.id_business});
+        // Existing account without a registration.created event or central evidence.
+        assert.equal((await q('SELECT COUNT(*) n FROM registration_outbox'))[0].n,0);
         const app=express();app.use(cookies());app.use(require('../../src/middleware/requestBody.middleware').defaultBodyParser);
         app.use('/api/saas-legal',require('../../src/routes/mysql/saas-legal'));
         app.use((error,req,res,next)=>res.status(500).json({code:'QA_UNEXPECTED_ERROR'}));
@@ -62,6 +64,10 @@ async function run(){
         const context=async()=>{const res=await http('GET','/central/context');assert.equal(res.status,200,JSON.stringify(res.body));return res.body.data;};
         const input=ctx=>({legalContext:ctx.legalContext,idempotencyKey:randomUUID(),legalAcceptances:ctx.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))});
         assert.equal((await http('GET','/central/context',undefined,{anonymous:true})).status,401);
+        assert.equal((await http('GET','/notice',undefined,{anonymous:true})).status,401);
+        const initialNotice=await http('GET','/notice');
+        assert.equal(initialNotice.status,200);
+        assert.deepEqual(initialNotice.body.data,{pending_count:2,business_pending:false,central_sync_pending:false,pending_unknown:false});
         const review=await context(),body=input(review);
         assert.equal((await http('POST','/central/accept',body,{noCsrf:true})).status,403);
         assert.equal((await http('POST','/central/accept',body,{origin:'https://evil.invalid'})).status,403);
@@ -88,6 +94,7 @@ async function run(){
         assert.equal((await http('GET','/central/context')).body.code,'LEGAL_SYNC_PENDING');
         assert.equal((await http('POST','/central/accept',{...body,idempotencyKey:randomUUID()})).body.code,'LEGAL_SYNC_PENDING');
         const pending=await http('GET','/');assert.equal(pending.body.data.central_sync_pending,true);
+        assert.deepEqual((await http('GET','/notice')).body.data,{pending_count:0,business_pending:false,central_sync_pending:true,pending_unknown:false});
         assert.equal(pending.body.data.pending_count,0);assert.equal(pending.body.data.documents.filter(d=>d.source==='central').length,2);assert.ok(pending.body.data.documents.filter(d=>d.source==='central').every(d=>d.sync_pending&&!d.accepted));
         pass('concurrent same-key sends commit one event; pending updates suppress reacceptance without inventing a central receipt');
         failDelivery=true;await legal.flush();
@@ -105,6 +112,7 @@ async function run(){
         pass('provider outage/retry and expired committed replay preserve payload; confirmed receipt appears in history after delivery');
         manifest.expiresAt=new Date(now+3600000).toISOString();manifest.snapshotToken=randomUUID();manifest.documents[0]={...manifest.documents[0],documentVersionId:randomUUID(),version:'2.0.0'};
         const next=await context(),nextBody=input(next);
+        assert.deepEqual(next.legalDocuments.map(d=>d.versionId),[manifest.documents[0].documentVersionId]);
         assert.equal((await http('POST','/central/accept',{...nextBody,idempotencyKey:body.idempotencyKey})).body.code,'LEGAL_IDEMPOTENCY_CONFLICT');
         const transaction=db.transaction.bind(db);db.transaction=async(...args)=>{const tx=await transaction(...args);const commit=tx.commit.bind(tx);tx.commit=async()=>{await tx.rollback();throw Error('synthetic commit failure');};return tx;};
         assert.equal((await http('POST','/central/accept',nextBody)).status,500);db.transaction=transaction;
@@ -114,7 +122,7 @@ async function run(){
         assert.equal((await http('POST','/central/accept',nextBody)).status,202);
         const [saved]=await q('SELECT legal_evidence_payload FROM registration_outbox WHERE event_id=:id',{id:nextBody.idempotencyKey});
         const sent=typeof saved.legal_evidence_payload==='string'?JSON.parse(saved.legal_evidence_payload):saved.legal_evidence_payload;
-        assert.ok(sent.confirmations.some(c=>c.documentVersionId===displayedVersion));assert.ok(!sent.confirmations.some(c=>c.documentVersionId===manifest.documents[0].documentVersionId));
+        assert.deepEqual(sent.confirmations.map(c=>c.documentVersionId),[displayedVersion]);
         assert.equal(received.length,1,'A failed commit or a later publication never records an undisplayed version');
         await q('UPDATE login SET active=0 WHERE id_login=:id',{id:actor.id_login});assert.equal((await http('POST','/central/accept',nextBody)).status,401);
         pass('immutable displayed versions, conflicting key, SQL rollback/retry and revoked account; no configured DB or live Legal writes');

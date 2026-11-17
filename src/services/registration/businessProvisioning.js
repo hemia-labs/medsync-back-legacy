@@ -1,4 +1,5 @@
 'use strict';
+const { writeLoginSurnames } = require('../../util/loginSurnames');
 const { QueryTypes } = require('sequelize');
 const { randomUUID } = require('node:crypto');
 const { seedDashboardPermissions } = require('../../util/dashboardAccess');
@@ -35,6 +36,9 @@ class BusinessProvisioning {
         const names = { _first_name: values._first_name === undefined ? values._name : values._first_name, _last_name: values._last_name || '' };
         await this.query(`INSERT INTO login (id_login,id_business,id_rol,name,first_name,last_name,email,telephone,password,locked,active,created_at,created_by)
             VALUES (:_id_login,:_id_business,:_id_rol,:_name,:_first_name,:_last_name,:_email,:_telephone,:_password,0,1,NOW(),:_created_by)`, {...values,...names}, transaction);
+        // NC1 identidad simple: structured surnames, only when the nc1-login-surnames columns exist.
+        if (values._first_surname !== undefined || values._second_surname !== undefined)
+            await writeLoginSurnames(this.db, values._id_login, { first_surname: values._first_surname ?? null, second_surname: values._second_surname ?? null }, transaction);
         await seedDashboardPermissions(values._id_business, values._id_login, transaction, this.db);
         await seedTracingPermissions(values._id_business, values._id_login, transaction, this.db);
     }

@@ -65,7 +65,7 @@ class RegistrationService {
                 _trial_starts_at:null,_trial_ends_at:null,_trial_days:0,_plan:null,_active:1,_created_by:idLogin},transaction);
             await this.provisioning.defaults(idBusiness,idLogin,transaction);
             await this.provisioning.administrator({_id_login:idLogin,_id_business:idBusiness,_id_rol:roles[0].id_rol,
-                _name:input.account.name,_first_name:input.account.first_name,_last_name:input.account.last_name,_email:input.account.email,_telephone:input.account.telephone,_password:passwordHash,_created_by:idLogin},transaction);
+                _name:input.account.name,_first_name:input.account.first_name,_last_name:input.account.last_name,_first_surname:input.account.first_surname,_second_surname:input.account.second_surname,_email:input.account.email,_telephone:input.account.telephone,_password:passwordHash,_created_by:idLogin},transaction);
             if(require('./accountActivation.service').enabled()) await this.query(
                 'INSERT INTO registration_account(id_login,id_business) VALUES (:login,:business)',
                 {login:idLogin,business:idBusiness},transaction,QueryTypes.INSERT);

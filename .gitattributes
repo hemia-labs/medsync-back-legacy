@@ -1,1 +1,2 @@
 scripts/ops/*.sh text eol=lf
+scripts/qa/nc1-identity.docker.sh text eol=lf

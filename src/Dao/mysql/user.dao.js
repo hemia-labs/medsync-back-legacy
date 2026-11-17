@@ -1,4 +1,5 @@
 const { userNames } = require('../../util/userNames');
+const { writeLoginSurnames, withLoginSurnames } = require('../../util/loginSurnames');
 const { beginLicenseMutation } = require('../../util/licenseMutation');
 const privateImages = require('../../services/aws/privateImages');
 const effectivePermissions = require('../../util/effectivePermissions');
@@ -8,6 +9,22 @@ const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
+// NC1 P2: with a valid session, a denied permission is 403. 401 belongs only to Token.Auth
+// (missing/expired/invalid authentication); the client ends the session on a 401.
+const permissionDenied = message => responseData.forbidden(message, { code: 'PERMISSION_DENIED' });
+// NC1 identidad integrada: the professional profile and its identity are one form and one atomic save.
+const identityService = require('./identity.dao');
+const IDENTITY_META = ['contractVersion','updatedAt','provenance','qualityIssues','catalogValidation','curpSex'];
+const identityError = error => error && error.status && error.code
+    ? { status: error.status, data: { code: error.code, field: error.field || null }, message: error.message }
+    : null;
+async function profileIdentity(profileId, idBusiness, transaction) {
+    const current = await identityService.read('professional', profileId, idBusiness, transaction);
+    const view = identityService.view(current.data, current.revision, current.updatedAt);
+    IDENTITY_META.forEach(key => delete view[key]);
+    if (view.curp) delete view.curp.validationStatus;
+    return view;
+}
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
 const { encript } = require('../../util/bcrypt')
@@ -47,11 +64,12 @@ async function addUserNames(rows, business, superAdmin) {
     const ids = rows.map(row => row.id_login).filter(Boolean);
     if (!ids.length) return rows;
     const names = await sequelize.query(
-        'SELECT id_login,first_name,last_name FROM login WHERE id_login IN (:ids) AND (:superAdmin=1 OR id_business=:business)',
+        'SELECT id_login,first_name,last_name FROM login WHERE id_login IN (:ids) AND (:superAdmin = 1 OR id_business=:business)',
         { replacements: { ids, superAdmin: superAdmin ? 1 : 0, business: business || null }, type: QueryTypes.SELECT }
     );
     const byId = new Map(names.map(row => [row.id_login, row]));
-    return rows.map(row => ({ ...row, first_name: byId.get(row.id_login)?.first_name || row.name || '', last_name: byId.get(row.id_login)?.last_name || '' }));
+    // NC1 identidad simple: first_surname / second_surname travel with the names (null before the migration).
+    return withLoginSurnames(sequelize, rows.map(row => ({ ...row, first_name: byId.get(row.id_login)?.first_name || row.name || '', last_name: byId.get(row.id_login)?.last_name || '' })));
 }
 
 /**
@@ -162,6 +180,7 @@ class UserDao{
                 transaction, type: QueryTypes.INSERT
             }
         );
+        await writeLoginSurnames(sequelize, idLogin, names, transaction);
 
         await seedDashboardPermissions(body.id_business, idLogin, transaction);
 
@@ -215,7 +234,8 @@ async updateUser(body,id_login) {
         const target = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login);
         if (!target || !target.id_business) return responseData.forbidden('Usuario no disponible para gestion de consultorio.');
         transaction = await beginLicenseMutation(sequelize, target.id_business);
-        const currentState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login, transaction);
+        const loadedState = await LicenseUsageDao.getLicenseUserState(body.is_super_admin ? null : body.id_business, id_login, transaction);
+        const currentState = loadedState ? await withLoginSurnames(sequelize, loadedState, transaction) : loadedState;
         if (!currentState) {
             return responseData.bad_request('Usuario invalido para este negocio.');
         }
@@ -280,13 +300,21 @@ async updateUser(body,id_login) {
             plain: true
         });
 
-        if (!result || !Number(result[1])) return responseData.notSuccess('Usuario no disponible.');
+        if (!result || !Number(result[1])) {
+            // MySQL reports changed rows: repartitioning surnames can leave the joined name unchanged.
+            // Confirm existence within the authorized business before the structured update, under a row lock.
+            const existing = await sequelize.query('SELECT id_login FROM login WHERE id_login=:login AND id_business=:business FOR UPDATE', {
+                replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
+            });
+            if (!existing.length) return responseData.notSuccess('Usuario no disponible.');
+        }
+        await writeLoginSurnames(sequelize, id_login, names, transaction);
         await seedDashboardPermissions(targetBusiness, id_login, transaction);
         await seedTracingPermissions(targetBusiness, id_login, transaction);
         const rows = await sequelize.query('SELECT id_login, id_rol, name, first_name, last_name, email, telephone, id_business FROM login WHERE id_login = :login AND id_business = :business', {
             replacements: { login: id_login, business: targetBusiness }, type: QueryTypes.SELECT, transaction
         });
-        response = responseData.success(rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
+        response = responseData.success(rows[0] ? await withLoginSurnames(sequelize, rows[0], transaction) : rows[0], Messages.DATA_SAVE_SUCCESSFULLY);
         if (response && response.status === 200) { await transaction.commit(); transaction = null; }
     } catch (error) {
             response = SequelizeException(error, Messages.DATA_SAVE_ERROR);
@@ -363,7 +391,7 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null, transaction
         if (actorLogin && actorLogin !== idLogin) {
             const canManageUsers = await this.hasPermission(actorLogin, 'admin.users', transaction);
             if (!canManageUsers) {
-                return responseData.unauthorized('No tienes permiso para consultar este perfil profesional.');
+                return permissionDenied('No tienes permiso para consultar este perfil profesional.');
             }
         }
 
@@ -389,7 +417,9 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null, transaction
             }
         );
 
-        return responseData.success(result[0] || null, Messages.DATA_GET_SUCCESSFULLY);
+        const profile = result[0] || null;
+        if (profile) profile.identity = await profileIdentity(profile.id_doctor_professional_profile, idBusiness, transaction);
+        return responseData.success(profile, Messages.DATA_GET_SUCCESSFULLY);
     } catch (error) {
         return SequelizeException(error, Messages.DATA_GET_ERROR);
     }
@@ -405,7 +435,14 @@ async saveProfessionalProfile(body) {
 
         const canManageUsers = await this.hasPermission(body.id_login, 'admin.users');
         if (body.id_login !== targetLogin && !canManageUsers) {
-            return responseData.unauthorized('No tienes permiso para editar este perfil profesional.');
+            return permissionDenied('No tienes permiso para editar este perfil profesional.');
+        }
+
+        // Integrated form: identity patch + its revision travel with the profile and are written in the same
+        // transaction. The display name is then derived from the three names, never captured separately.
+        const withIdentity = body.identity !== undefined;
+        if (withIdentity && (!body.identity || typeof body.identity !== 'object' || Array.isArray(body.identity) || !Number.isSafeInteger(body.identity_expected_revision))) {
+            return responseData.bad_request('Identidad inválida para guardar el perfil profesional.', { code: 'IDENTITY_INVALID', field: 'identity' });
         }
 
         const hasProfessionalPhone = Object.prototype.hasOwnProperty.call(body, 'professional_phone');
@@ -441,7 +478,7 @@ async saveProfessionalProfile(body) {
                FROM doctor_professional_profile
               WHERE id_login COLLATE utf8mb4_unicode_ci = :_id_login COLLATE utf8mb4_unicode_ci
                 AND id_business COLLATE utf8mb4_unicode_ci = :_id_business COLLATE utf8mb4_unicode_ci
-              LIMIT 1`,
+              LIMIT 1 FOR UPDATE`,
             {
                 replacements: {
                     _id_login: targetLogin,
@@ -485,6 +522,13 @@ async saveProfessionalProfile(body) {
             }
         }
 
+        if(!withIdentity && existing[0] && profileField('professional_name') !== currentFlags.professional_name) {
+            const [identity] = await sequelize.query(`SELECT given_names,first_surname,second_surname FROM professional_identity
+                WHERE id_business=:business AND id_doctor_professional_profile=:id`,{replacements:{business:body.id_business,id:existing[0].id_doctor_professional_profile},transaction,type:QueryTypes.SELECT});
+            if(identity && (identity.given_names || identity.first_surname || identity.second_surname)) {
+                return {status:409,data:{code:'IDENTITY_CONFLICT'},message:'El nombre tiene identidad estructurada. Recarga el perfil y modifica el nombre desde Identidad.'};
+            }
+        }
         previousSignature = currentFlags.signature_image;
         let signature = profileField('signature_image');
         if (signature !== (previousSignature || null)) {
@@ -500,7 +544,7 @@ async saveProfessionalProfile(body) {
             _id_doctor_professional_profile: existing[0] ? existing[0].id_doctor_professional_profile : uuidv4(),
             _id_business: body.id_business,
             _id_login: targetLogin,
-            _professional_name: profileField('professional_name'),
+            _professional_name: withIdentity ? (currentFlags.professional_name || null) : profileField('professional_name'),
             _professional_license: profileField('professional_license'),
             _university: profileField('university'),
             _specialty: profileField('specialty'),
@@ -551,6 +595,12 @@ async saveProfessionalProfile(body) {
         await seedDashboardPermissions(body.id_business, targetLogin, transaction);
 
         await seedTracingPermissions(body.id_business, targetLogin, transaction);
+        if (withIdentity) {
+            // Throws on revision conflict (409), field validation (400) or restricted personnel types (403);
+            // the catch below rolls back the profile write as well, including a just-created profile.
+            await identityService.saveIn(transaction, 'professional', replacements._id_doctor_professional_profile, body.id_business,
+                body.id_login, body.identity, body.identity_expected_revision, canManageUsers);
+        }
         const result = await this.getProfessionalProfile(targetLogin, body.id_business, body.id_login, transaction);
         if (result.status !== 200) return result;
         commitAttempted = true;
@@ -559,7 +609,7 @@ async saveProfessionalProfile(body) {
         if (previousSignature !== signature) await privateImages.remove(previousSignature, body.id_business);
         return result;
     } catch (error) {
-        return SequelizeException(error, Messages.DATA_SAVE_ERROR);
+        return identityError(error) || SequelizeException(error, Messages.DATA_SAVE_ERROR);
     } finally {
         if (transaction && !transaction.finished) await transaction.rollback();
         if (uploaded && !committed) {

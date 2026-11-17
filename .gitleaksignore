@@ -1,0 +1,9 @@
+# Reviewed production promotion 2026-11-17. Exact historical fingerprints only.
+# A prose comment documenting public AUTH_* response codes, not a credential.
+3ab30894edbb458ab3d871e5035a8c1e8e6f3341:scripts/qa/nc1-auth-s1-s3-regression.js:generic-api-key:4
+# Synthetic registration fixtures in isolated/stubbed QA, never operational credentials.
+7e7c68da93a3fe68805849b69a65d70c2df3607e:scripts/qa/nc1-login-surnames-regression.js:generic-api-key:53
+2a46e13984f1b63996c78dfd696f0b791c582b4c:scripts/qa/nc1-login-surnames-mysql.test.js:generic-api-key:46
+2a46e13984f1b63996c78dfd696f0b791c582b4c:scripts/qa/nc1-login-surnames-regression.js:generic-api-key:44
+2a46e13984f1b63996c78dfd696f0b791c582b4c:scripts/qa/nc1-login-surnames-regression.js:generic-api-key:47
+2a46e13984f1b63996c78dfd696f0b791c582b4c:scripts/qa/nc1-login-surnames-regression.js:generic-api-key:49

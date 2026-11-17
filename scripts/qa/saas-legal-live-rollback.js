@@ -55,7 +55,7 @@ const ok = response => { assert.equal(response.status, 200, response.message); a
             }
         };
         const { SaasLegalDao } = require('../../src/Dao/mysql/saasLegal.dao');
-        const dao = new SaasLegalDao(adapter);
+        const dao = new SaasLegalDao(adapter, { configured: () => false });
         const context = name => ({ id_login: actors[name], id_business: name === 'super' ? undefined : name === 'other' ? businesses[1] : businesses[0],
             rol: name === 'super' ? 'super_admin' : name === 'admin' ? adminRole.code : 'doctor' });
         const publish = async (key, html) => {
@@ -72,38 +72,34 @@ const ok = response => { assert.equal(response.status, 200, response.message); a
         stage = 'unpublished';
         assert.equal(ok(await dao.current(context('user'))).pending_count, 0, 'Restricted tenant can read legal metadata');
         assert.equal((await dao.publicDocument('terms_conditions')).status, 404);
-        assert.equal((await dao.publish(context('super'), 'terms_conditions', { expected_revision: 1 })).status, 400);
+        for(const key of ['terms_conditions', 'privacy_notice']) {
+            assert.equal((await dao.saveDraft(context('super'), key, { title: 'QA', description: '', content_html: '', required: true, expected_revision: 1 })).code, 'LEGAL_CENTRAL_REQUIRED');
+            assert.equal((await dao.publish(context('super'), key, { expected_revision: 1 })).code, 'LEGAL_CENTRAL_REQUIRED');
+        }
         stage = 'first-publication';
-        const first = await publish('terms_conditions', '<p>Primer texto QA. Sin validez legal.</p>'), v1 = first.current_version;
+        const first = await publish('license_agreement', '<p>Primer contrato QA. Sin validez legal.</p>'), v1 = first.current_version;
         assert.equal(v1.version_number, 1); assert.match(v1.published_at, /Z$/);
-        assert.equal(ok(await dao.publicDocument('terms_conditions')).document.current_version.id_version, v1.id_version);
-        assert.equal((await dao.publish(context('super'), 'terms_conditions', { expected_revision: first.draft.revision - 1 })).code, 'LEGAL_DRAFT_CONFLICT');
-        const accepted1 = await accept('user', v1.id_version), repeated = await accept('user', v1.id_version);
+        assert.equal((await dao.publish(context('super'), 'license_agreement', { expected_revision: first.draft.revision - 1 })).code, 'LEGAL_DRAFT_CONFLICT');
+        assert.equal((await dao.accept(context('user'), { id_version: v1.id_version, acknowledged: true })).code, 'LEGAL_ADMIN_REQUIRED');
+        const accepted1 = await accept('admin', v1.id_version), repeated = await accept('admin', v1.id_version);
         assert.equal(accepted1.already_accepted, false); assert.equal(repeated.already_accepted, true);
         assert.equal(repeated.acceptance.id_acceptance, accepted1.acceptance.id_acceptance);
-        assert.equal(ok(await dao.current(context('second'))).pending_count, 1);
-        assert.equal(ok(await dao.history(context('second'))).acceptances.length, 0);
+        assert.equal(ok(await dao.current(context('second'))).pending_count, 0);
+        assert.equal(ok(await dao.history(context('second'))).acceptances.length, 1);
         stage = 'second-publication-and-history';
-        const second = await publish('terms_conditions', '<p>Segundo texto QA revisado. Sin validez legal.</p>'), v2 = second.current_version;
+        const second = await publish('license_agreement', '<p>Segundo contrato QA revisado. Sin validez legal.</p>'), v2 = second.current_version;
         assert.equal(v2.version_number, 2); assert.notEqual(v1.content_hash, v2.content_hash);
-        assert.equal((await dao.accept(context('user'), { id_version: v1.id_version, acknowledged: true })).code, 'LEGAL_VERSION_STALE');
+        assert.equal((await dao.accept(context('admin'), { id_version: v1.id_version, acknowledged: true })).code, 'LEGAL_VERSION_STALE');
         assert.equal(ok(await dao.current(context('user'))).pending_count, 1);
-        await accept('user', v2.id_version);
+        await accept('admin', v2.id_version);
         const ownHistory = ok(await dao.history(context('user'))).acceptances;
         assert.equal(ownHistory.length, 2); assert.equal(ownHistory.find(row => row.id_version === v1.id_version).version.content_html, v1.content_html);
         assert.equal(ownHistory.find(row => row.id_version === v1.id_version).content_hash, v1.content_hash);
         assert.equal(ok(await dao.history(context('other'))).acceptances.length, 0);
-        await accept('other', v2.id_version);
-        const otherHistory = ok(await dao.history(context('other'))).acceptances;
-        assert.equal(otherHistory.length, 1); assert.equal(otherHistory[0].id_business, businesses[1]);
-        assert.equal(otherHistory[0].accepted_by_id, actors.other);
         stage = 'business-scope';
-        const license = await publish('license_agreement', '<p>Contrato ficticio QA sin validez legal.</p>');
-        assert.equal((await dao.accept(context('user'), { id_version: license.current_version.id_version, acknowledged: true })).code, 'LEGAL_ADMIN_REQUIRED');
-        await accept('admin', license.current_version.id_version);
         assert.ok(ok(await dao.current(context('second'))).documents.find(row => row.document_key === 'license_agreement').accepted);
-        assert.equal(ok(await dao.history(context('second'))).acceptances.length, 1);
-        assert.equal(ok(await dao.history(context('other'))).acceptances.length, 1, 'Another tenant never inherits the contract acceptance');
+        assert.equal(ok(await dao.history(context('second'))).acceptances.length, 2);
+        assert.equal(ok(await dao.current(context('other'))).pending_count, 1, 'Another tenant never inherits the contract acceptance');
         assert.equal((await dao.publicDocument('license_agreement')).status, 404);
         stage = 'immutability-triggers';
         const triggerRejected = async sql => {
@@ -115,7 +111,7 @@ const ok = response => { assert.equal(response.status, 200, response.message); a
         await triggerRejected(`DELETE FROM saas_legal_versions WHERE id_version='${v2.id_version}'`);
         await triggerRejected(`UPDATE saas_legal_acceptances SET accepted_by_name=accepted_by_name WHERE id_acceptance='${accepted1.acceptance.id_acceptance}'`);
         await triggerRejected(`DELETE FROM saas_legal_acceptances WHERE id_acceptance='${accepted1.acceptance.id_acceptance}'`);
-        const frozen = ok(await dao.adminVersion(context('super'), 'terms_conditions', v1.id_version)).version;
+        const frozen = ok(await dao.adminVersion(context('super'), 'license_agreement', v1.id_version)).version;
         assert.deepEqual(frozen, v1, 'Version evidence survives rejected writes/deletes');
         stage = 'outer-rollback';
         await connection.rollback(); outerTransaction = false;
@@ -127,7 +123,7 @@ const ok = response => { assert.equal(response.status, 200, response.message); a
                 assert.equal(Number(rows[0].total), 0, 'Rollback removed every QA ' + table + ' record');
             }
         }
-        console.log('PASS SaaS legal SQL: one connection + savepoints; unpublished seed, publications v1/v2, revision/stale-version conflicts, explicit reacceptance/idempotency, actual admin-only contract, per-user/tenant frozen history, immutable UPDATE/DELETE triggers and complete outer rollback. No legal records or fixtures persisted.');
+        console.log('PASS SaaS legal SQL: retired writes denied, contract publications v1/v2, conflicts, idempotency, admin-only acceptance, tenant-scoped history, immutable triggers and complete outer rollback.');
     } catch(error) {
         console.error(JSON.stringify({ check: 'saas-legal-live-rollback', stage, code: error.code || error.name || 'QA_FAILED', assertion: error.name === 'AssertionError' ? error.message.split('\n')[0] : undefined }));
         process.exitCode = 1;
