@@ -54,8 +54,15 @@ function createService(db) {
         data.legacySurname=cur.data.legacySurname||body.person.surname;
         if(creating||body.identity!==undefined||(cur.revision&&legacyChanged))await persist('patient',id,body.id_business,body.id_login,data,cur.revision,transaction,creating?hash(body):cur.row&&cur.row.request_hash);
     }
+    // NC1 identidad integrada: same write inside a caller's transaction, so the professional profile and its
+    // identity commit or roll back together. save() keeps its own transaction for PATCH /identity/*.
     async function save(kind,id,business,actor,patch,expectedRevision,canManage=false) {
-        return db.transaction(async transaction=>{
+        return db.transaction(transaction=>saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage));
+    }
+    async function saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage=false) {
+        if(!transaction)throw new Error('Identity writes require a transaction');
+        if(!patch||typeof patch!=='object'||Array.isArray(patch))C.fail('identity');
+        {
             const creating=kind==='establishment'&&!id;
             if(creating) {await query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE',{business},transaction);id=randomUUID();}
             else await parent(kind,id,business,transaction,true);
@@ -68,14 +75,17 @@ function createService(db) {
                 const surname=[data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
                 await db.query('UPDATE person SET name=COALESCE(:name,name), surname=COALESCE(:surname,surname), birthday=:birthday,age=IF(:birthday IS NULL,NULL,TIMESTAMPDIFF(YEAR,:birthday,CURDATE())), updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_person=:id AND id_business=:business',{replacements:{name:data.givenNames,surname:surname||null,birthday:data.birthDate,actor,id,business},transaction});
             }
-            if(kind==='professional' && data.givenNames && (data.firstSurnameStatus!=='unknown'&&data.secondSurnameStatus!=='unknown')) {
+            if(kind==='professional') {
+                // professional_name is a derived output of the three names (no titles added, nothing split).
+                // Without structured names the legacy value stays; clearing structured names clears it too.
                 const name=[data.givenNames,data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
+                const hadNames=Boolean(cur.revision)&&[cur.data.givenNames,cur.data.firstSurname,cur.data.secondSurname].some(Boolean);
                 if(name.length>250)C.fail('givenNames');
-                await db.query('UPDATE doctor_professional_profile SET professional_name=:name,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_doctor_professional_profile=:id AND id_business=:business',{replacements:{name,actor,id,business},transaction});
+                if(name||hadNames)await db.query('UPDATE doctor_professional_profile SET professional_name=:name,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_doctor_professional_profile=:id AND id_business=:business',{replacements:{name:name||null,actor,id,business},transaction});
             }
             return {id,...C.view(data,cur.revision+1)};
-        });
+        }
     }
-    return {read,save,patientWrite,view:C.view};
+    return {read,save,saveIn,patientWrite,view:C.view};
 }
 module.exports={createService,hash};
