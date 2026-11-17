@@ -20,7 +20,8 @@ const tests = [
     'allergy-status-regression', 'clinical-history-usability-regression',
     'clinical-template-permission-status-regression', 'ux13-professional-phone-regression',
     'document-html-security-regression', 'co11-professional-domain-regression',
-    'co25-csrf-regression', 'co25-csrf-http-regression', 'co25-a2-policy-regression'
+    'co25-csrf-regression', 'co25-csrf-http-regression', 'co25-a2-policy-regression',
+    'nc1-auth-s1-s3-regression'
 ];
 for (const test of tests) {
     console.log(`TEST ${test}`);

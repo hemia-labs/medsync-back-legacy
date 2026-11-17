@@ -67,9 +67,15 @@ class BusinessController extends httpResponseHelper {
     updateCurrent = async(req, res) => {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
-            const canConfig = await isTenantAdministrator(req.tokenDecode ? req.tokenDecode.id_login : null, getBusinessIdFromToken(req.tokenDecode), 'admin.config');
+            // NC1-AUTH-S1/S2: no actor is authentication (401); a denied admin.config is permission (403), before any write.
+            if (!req.tokenDecode || !req.tokenDecode.id_login) {
+                response = responseData.unauthorized('Token invalido o no enviado.', { code: 'AUTH_ACCESS_INVALID' });
+                res.status(response.status).send(response);
+                return;
+            }
+            const canConfig = await isTenantAdministrator(req.tokenDecode.id_login, getBusinessIdFromToken(req.tokenDecode), 'admin.config');
             if (!canConfig) {
-                response = this.HttpError(HttpStatus.UNAUTHORIZED, 'No tienes permiso para modificar informacion del consultorio.');
+                response = responseData.forbidden('No tienes permiso para modificar informacion del consultorio.', { code: 'PERMISSION_DENIED' });
                 res.status(response.status).send(response);
                 return;
             }

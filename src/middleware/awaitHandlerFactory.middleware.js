@@ -1,8 +1,6 @@
 const SessionDao = require('../Dao/mysql/session.Dao.js');
-const HttpResponseHelper = require('../util/httpResponse');
-const httpResponseHelper = new HttpResponseHelper();
+const responseData = require('../util/responsedata');
 const MESSAGES = require('../util/common.messages.util');
-const HttpStatus = require('../util/httpStatusCode');
 const SecurityConfig = require('../config/security');
 const securityLogger = require('../services/security/securityLogger.service');
 
@@ -17,14 +15,16 @@ const awaitHandlerFactory = (middleware, isAuth = true) => {
         try {
 
             if( SecurityConfig.isActiveSessionRequired() && req.tokenDecode ) {/*La ruta previa ya fue validada, determinar el uso del middleware */
-                 let response = httpResponseHelper.HttpNotAutorized(HttpStatus.UNAUTHORIZED, MESSAGES.UNAUTHORIZED)
+                 // NC1-AUTH-S1: a missing or revoked session is identifiable by the client (data.code).
+                 // A failed check (DB/network) throws and goes to next(error): it is never reported as a revocation.
+                 const response = responseData.unauthorized(MESSAGES.UNAUTHORIZED, { code: 'AUTH_SESSION_INVALID' });
                  if(!req.tokenDecode.id_login || !req.tokenDecode.id_session) {
                     securityLogger.record('auth.session.revoked_access_attempt', req, {
                         id_login: req.tokenDecode.id_login || null,
                         id_session_present: Boolean(req.tokenDecode.id_session),
                         reason: 'missing_session_claims'
                     });
-                    res.status(HttpStatus.UNAUTHORIZED).send(response);
+                    res.status(response.status).send(response);
                     return;
                  }
 
@@ -36,7 +36,7 @@ const awaitHandlerFactory = (middleware, isAuth = true) => {
                         id_session_present: true,
                         reason: 'inactive_or_revoked_session'
                     });
-                    res.status(HttpStatus.UNAUTHORIZED).send(response);
+                    res.status(response.status).send(response);
                     return;
                  }
             }

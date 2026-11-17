@@ -57,7 +57,7 @@ function requireAnyPermission(permissions, options = {}) {
     return async function requirePermissionMiddleware(req, res, next) {
         try {
             if (!req.tokenDecode || !req.tokenDecode.id_login) {
-                const response = responseData.unauthorized('Token invalido o no enviado.');
+                const response = responseData.unauthorized('Token invalido o no enviado.', { code: 'AUTH_ACCESS_INVALID' });
                 res.status(response.status).send(response);
                 return;
             }
