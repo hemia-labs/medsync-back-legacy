@@ -13,4 +13,4 @@ for i in $(seq 1 60); do
 done
 [ "$ready" = 1 ] || { echo 'Isolated MySQL unavailable' >&2; exit 1; }
 docker exec "$container" mysql -uroot -pnc1-synthetic-only -N -e 'SELECT VERSION()'
-NC1_ISOLATED_QA=1 node --test scripts/qa/nc1-identity.test.js scripts/qa/nc1-identity-mysql.test.js scripts/qa/nc1-patient-flows.test.js scripts/qa/nc1-professional-flow.test.js scripts/qa/nc1-login-surnames-mysql.test.js scripts/qa/nc1-installation.test.js
+NC1_ISOLATED_QA=1 node --test scripts/qa/nc1-identity.test.js scripts/qa/nc1-identity-mysql.test.js scripts/qa/nc1-patient-flows.test.js scripts/qa/nc1-professional-flow.test.js scripts/qa/nc1-identity-integrated-mysql.test.js scripts/qa/nc1-login-surnames-mysql.test.js scripts/qa/nc1-installation.test.js

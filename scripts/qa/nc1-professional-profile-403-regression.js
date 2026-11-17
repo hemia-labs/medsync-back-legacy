@@ -16,7 +16,7 @@ const logins = {
     'qa-other-doctor': { id_login: 'qa-other-doctor', id_business: 'qa-clinic', rol: 'doctor' },
     'qa-foreign-doctor': { id_login: 'qa-foreign-doctor', id_business: 'qa-other-clinic', rol: 'doctor' }
 };
-const profiles = Object.fromEntries(Object.values(logins).map(l => [l.id_login, { id_login: l.id_login, id_business: l.id_business, professional_name: 'QA ' + l.id_login, rol: l.rol }]));
+const profiles = Object.fromEntries(Object.values(logins).map(l => [l.id_login, { id_doctor_professional_profile: 'qa-pp-' + l.id_login, id_login: l.id_login, id_business: l.id_business, professional_name: 'QA ' + l.id_login, rol: l.rol }]));
 let queries = [], transactions = 0, rollbacks = 0, commits = 0;
 const db = {
     async transaction() {
@@ -27,6 +27,12 @@ const db = {
         queries.push(sql);
         const r = options.replacements || {};
         if (/FROM business WHERE id_business = :business FOR UPDATE/.test(sql)) return ['qa-clinic', 'qa-other-clinic'].includes(r.business) ? [{ id_business: r.business }] : [];
+        // NC1 identidad integrada: the profile read also loads its identity (none stored for these rows).
+        if (/FROM doctor_professional_profile WHERE id_doctor_professional_profile=:id AND id_business=:business/.test(sql)) {
+            const row = Object.values(profiles).find(p => p.id_doctor_professional_profile === r.id && p.id_business === r.business);
+            return row ? [{ ...row }] : [];
+        }
+        if (/FROM professional_identity/.test(sql)) return [];
         if (/FROM doctor_professional_profile dpp/.test(sql)) {
             const row = profiles[r._id_login];
             return row && row.id_business === r._id_business ? [{ ...row }] : [];
