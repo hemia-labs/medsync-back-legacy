@@ -1552,7 +1552,7 @@
     "scope": "<anonymous/module>",
     "snippet": "res.status(result.status).json({accountCreated:true,sessionEstablished,activation})",
     "hash": "afeb3091dbd6c790524d44208eb68f2f752e33d84c0b79fcb68cc44f5cba7856",
-    "context": "6b069472d47a1ef73b66ddee81f3ef0e55d13acab449785abb460da20170dfa5",
+    "context": "57435a37f136db4756a0be1b6bac1ad8f1cb168f06d228e652229ab1efb2786b",
     "count": 1,
     "reason": "Registration/activation control contract: explicit root code and Token.Auth code preservation; existing registration HTTP tests."
   },

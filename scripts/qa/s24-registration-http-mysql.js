@@ -63,7 +63,12 @@ async function run() {
             return {status:response.status,body:data,sets,headers:response.headers};
         }
         let seq=100;
-        const payload=context=>({account:{name:'QA correo',telephone:'556'+String(seq++).padStart(7,'0'),email:'r2c'+seq+'@example.test',password:' Clave extensa de prueba privada '+seq+' '},
+        const nameShape=process.env.REGISTRATION_QA_NAME_SHAPE||'structured';
+        const nameInputs={structured:{first_name:'QA',first_surname:'Registro',second_surname:'Sintético',last_name:'Registro Sintético'},
+            optional:{first_name:'QA',first_surname:'Registro',second_surname:'',last_name:'Registro'},
+            split:{first_name:'QA',last_name:'Registro Sintético'},legacy:{name:'QA correo'}};
+        assert.ok(nameInputs[nameShape],'known synthetic name shape');
+        const payload=context=>({account:{...nameInputs[nameShape],telephone:'556'+String(seq++).padStart(7,'0'),email:'r2c'+seq+'@example.test',password:' Clave extensa de prueba privada '+seq+' '},
             business:{name:'Consultorio R2C'},legalContext:context.legalContext,legalAcceptances:context.legalDocuments.map(d=>({documentKey:d.documentKey,versionId:d.versionId,acknowledged:true}))});
         const a=jar();process.env.REGISTRATION_ENABLED='false';
         let response=await request(a,'GET','/api/registration/context');assert.equal(response.body.enabled,false);assert.equal(a.size,0);
@@ -85,6 +90,10 @@ async function run() {
         response=await request(a,'POST','/api/auth/register',input,headers);
         assert.equal(response.status,201,JSON.stringify(response.body));assert.equal(response.body.sessionEstablished,true,JSON.stringify(response.body));
         const actor={id_login:response.body.activation.accountId,id_business:response.body.activation.businessId};
+        const [storedName]=await q('SELECT first_name,last_name,first_surname,second_surname,name FROM login WHERE id_login=:id',{id:actor.id_login});
+        if(nameShape==='structured')assert.deepEqual(storedName,{first_name:'QA',last_name:'Registro Sintético',first_surname:'Registro',second_surname:'Sintético',name:'QA Registro Sintético'});
+        if(nameShape==='optional')assert.deepEqual(storedName,{first_name:'QA',last_name:'Registro',first_surname:'Registro',second_surname:null,name:'QA Registro'});
+        pass('real HTTP and RegistrationService preserve '+nameShape+' names through both validations and MySQL persistence');
         assert.ok(a.has('s24_qa_at')&&a.has('s24_qa_rt'));
         assert.ok(response.sets.filter(s=>s.startsWith('s24_qa_at=')||s.startsWith('s24_qa_rt=')).every(s=>s.includes('HttpOnly')));
         assert.ok(!/password|refresh_token|csrfToken|"token"/.test(JSON.stringify(response.body)));
