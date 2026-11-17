@@ -1,5 +1,11 @@
 # medsync-back
 
+## 0.1.2
+
+### Patch Changes
+
+- b647ae5: Fix structured-name registration by preserving the public request through independent route and service validation.
+
 ## 0.1.1
 
 ### Patch Changes
