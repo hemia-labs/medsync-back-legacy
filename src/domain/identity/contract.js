@@ -60,10 +60,10 @@ function validate(kind, patch, current = {}, { creating = false } = {}) {
             }
         }
     }
-    for (const k of ['firstSurname','secondSurname']) {
-        const status = next[k+'Status'] || 'unknown';
-        if (status === 'present' ? !next[k] : next[k] != null) fail(k);
-    }
+    // NC1 identidad simple: names are three plain values. The surname status is derived, never captured:
+    // a value is «present», an empty field stays «unknown» (empty is not a declaration of absence).
+    // Statuses sent by older clients are accepted but ignored.
+    if (kind !== 'establishment') for (const k of ['firstSurname','secondSurname']) next[k+'Status'] = next[k] ? 'present' : 'unknown';
     if (creating && kind === 'patient' && !next.biologicalSex) fail('biologicalSex','BIOLOGICAL_SEX_REQUIRED');
     if (kind === 'establishment' && !next.displayName) fail('displayName');
     if (next.validFrom && next.validTo && next.validTo <= next.validFrom) fail('validTo');
