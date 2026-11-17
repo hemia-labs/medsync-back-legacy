@@ -23,6 +23,12 @@ function machineErrorResponse(res,error,code,message) {
     const body={status:[400,403,409].includes(error?.status)?error.status:503,code,message};
     return res.status(body.status).json(body);
 }
+function createLegalContextHandler(service=configuredPayments()) {
+    return async(req,res)=>{
+        try {res.json(await service.legalContext({authorization:req.get('authorization')},req.body));}
+        catch(error){machineErrorResponse(res,error,'LEGAL_CONTEXT_UNAVAILABLE','No se pudo validar el contexto de contratación.');}
+    };
+}
 function createRouter(options={}) {
     const router=express.Router(),service=options.service||configuredPayments();
     const authenticate=options.authenticate||Token.Auth,csrf=options.csrf||csrfProtection();
@@ -35,10 +41,7 @@ function createRouter(options={}) {
     router.get('/webhooks/license',delivery(req=>service.probe(machineHeaders(req),req.query.productCode)));
     router.post('/webhooks/license',delivery(req=>service.receive(machineHeaders(req),req.body)));
     // Machine authentication is separate from browser cookies/CSRF and runs first.
-    router.post('/legal/context',async(req,res)=>{
-        try {res.json(await service.legalContext({authorization:req.get('authorization')},req.body));}
-        catch(error){machineErrorResponse(res,error,'LEGAL_CONTEXT_UNAVAILABLE','No se pudo validar el contexto de contratación.');}
-    });
+    router.post('/legal/context',createLegalContextHandler(service));
     router.use(authenticate);
     const mutation=(req,res,next)=>{
         if(!Security.getCsrfAllowedOrigins().includes(req.get('origin')))return errorResponse(res,new RegistrationError('CSRF_FORBIDDEN',403));
@@ -88,4 +91,6 @@ function createRouter(options={}) {
     router.post('/legal/accept',mutation,run(req=>service.acceptLegal(req.tokenDecode,req.body)));
     return router;
 }
-module.exports=createRouter();module.exports.createRouter=createRouter;
+module.exports=createRouter();
+module.exports.createRouter=createRouter;
+module.exports.createLegalContextHandler=createLegalContextHandler;
