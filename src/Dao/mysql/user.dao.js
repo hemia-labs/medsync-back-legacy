@@ -8,6 +8,9 @@ const { QueryTypes } = require('sequelize');
 const sequelize = require('../../db/Sequelize.connection');
 const SequelizeSP = require('../../util/sequelize.sp.util');
 const responseData = require('../../util/responsedata');
+// NC1 P2: with a valid session, a denied permission is 403. 401 belongs only to Token.Auth
+// (missing/expired/invalid authentication); the client ends the session on a 401.
+const permissionDenied = message => responseData.forbidden(message, { code: 'PERMISSION_DENIED' });
 const Messages = require('../../util/common.messages.util');
 const {SequelizeException, SQLException} = require('../../util/sequelizeException');
 const { encript } = require('../../util/bcrypt')
@@ -363,7 +366,7 @@ async getProfessionalProfile(idLogin, idBusiness, actorLogin = null, transaction
         if (actorLogin && actorLogin !== idLogin) {
             const canManageUsers = await this.hasPermission(actorLogin, 'admin.users', transaction);
             if (!canManageUsers) {
-                return responseData.unauthorized('No tienes permiso para consultar este perfil profesional.');
+                return permissionDenied('No tienes permiso para consultar este perfil profesional.');
             }
         }
 
@@ -405,7 +408,7 @@ async saveProfessionalProfile(body) {
 
         const canManageUsers = await this.hasPermission(body.id_login, 'admin.users');
         if (body.id_login !== targetLogin && !canManageUsers) {
-            return responseData.unauthorized('No tienes permiso para editar este perfil profesional.');
+            return permissionDenied('No tienes permiso para editar este perfil profesional.');
         }
 
         const hasProfessionalPhone = Object.prototype.hasOwnProperty.call(body, 'professional_phone');
