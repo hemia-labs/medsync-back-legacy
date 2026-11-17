@@ -65,7 +65,7 @@ const base = { id_login: 'qa-doctor', target_id_login: 'qa-doctor', id_business:
     assert.equal(authorization.data.professional_phone, 'histórico sin formato', 'Omitted historical phone remains untouched and does not block authorizations');
     assert.equal(authorization.data.can_issue_prescriptions, 1); assert.equal(authorization.data.can_sign_documents, 1);
     permitted = false; const before = queries;
-    assert.equal((await dao.saveProfessionalProfile({ ...base, id_login: 'qa-other', professional_phone: 'abc123' })).status, 401);
+    assert.equal((await dao.saveProfessionalProfile({ ...base, id_login: 'qa-other', professional_phone: 'abc123' })).status, 403);
     assert.equal(queries, before, 'Cross-user permission gate remains before validation or queries');
     console.log('PASS professional phone: optional empty, invalid rejected without queries, formatted international accepted, leading zeroes preserved, normalized writes, clear field errors, unchanged clinical authorization requirements and safe partial authorization updates. No DB or HTTP.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
