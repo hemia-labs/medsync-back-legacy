@@ -32,7 +32,7 @@ const {createRouter}=require('../../src/routes/mysql/registration');
 const input={account:{first_name:'QA',first_surname:'Sintética',second_surname:'',last_name:'Sintética',telephone:'',email:'qa@example.invalid',password:'Synthetic test phrase 123!'},business:{name:'Synthetic clinic'},legalContext:'synthetic',legalAcceptances:[{documentKey:'terms',versionId:'v1',acknowledged:true}]};
 const app=express();app.use(cookies());app.use(require('../../src/middleware/requestBody.middleware').defaultBodyParser);
 app.use('/api',createRouter({database,delivery:{ready:()=>true},legal:{ready:async()=>{},context:async()=>({legalDocuments:[],legalContext:'synthetic'})},
-    registration:{create:async(_input,receipt)=>{creates++;attempts.push(receipt);return {success:true,status:201,data:{idLogin:'qa-created',idBusiness:'qa-new'}};}},login:async()=>({status:503})}));
+    registration:{create:async(source,receipt)=>{require('../../src/services/registration/registration.validator').validateRegistration(source);creates++;attempts.push(receipt);return {success:true,status:201,data:{idLogin:'qa-created',idBusiness:'qa-new'}};}},login:async()=>({status:503})}));
 app.get('/api/qa/csrf',auth.OptionalAuth,(req,res)=>{const token=csrf.issueToken(req);res.cookie('qa_csrf',token.token,csrf.csrfCookieOptions());res.json({ok:true});});
 app.use((error,req,res,next)=>res.status(503).json({code:'REGISTRATION_UNAVAILABLE'}));
 (async()=>{
