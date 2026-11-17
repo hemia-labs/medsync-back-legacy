@@ -138,7 +138,9 @@ function createRouter(options={}) {
         const input=validateRegistration(req.body),id=req.get('Idempotency-Key');
         if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id||'')) throw new RegistrationError('REGISTRATION_ATTEMPT_INVALID');
         await limiter.consume([['register-email',input.account.email,5,900]]);
-        const result=await registration.create(input,{id,secret:attempt.secret});
+        // The service validates its public input independently. Keep the wire
+        // DTO: `input` contains derived name fields that are not public keys.
+        const result=await registration.create(req.body,{id,secret:attempt.secret});
         if(!result.success) throw new RegistrationError(result.code,result.status);
         const actor={id_login:result.data.idLogin,id_business:result.data.idBusiness};
         // A receipt never grants a session. The common login path proves the
