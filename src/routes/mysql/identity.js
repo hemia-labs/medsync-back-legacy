@@ -32,7 +32,7 @@ const handle=(kind,write=false)=>async(req,res)=>{
         let data;
         if(write) {
             if(!req.body||Object.keys(req.body).some(k=>!['identity','expectedRevision'].includes(k)))return res.status(400).send({status:400,message:'Payload inválido.'});
-            data=await identity.save(kind,id,business,actor,req.body.identity,req.body.expectedRevision,kind==='professional'&&await hasPermission(actor,'admin.users'));
+            data=await identity.save(kind,id,business,actor,req.body.identity,req.body.expectedRevision,kind==='professional'&&await hasPermission(actor,'admin.users'),kind==='establishment'&&!id?req.get('Idempotency-Key'):undefined);
         } else {const row=await identity.read(kind,id,business);data=await identity.view(row.data,row.revision,row.updatedAt);}
         res.status(200).send({status:200,data,message:'Identidad guardada o consultada.'});
     } catch(e) {res.status(e.status||500).send({status:e.status||500,message:e.status?e.message:'No se pudo completar la operación.',data:{code:e.code||'IDENTITY_ERROR',field:e.field}});}
