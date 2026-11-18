@@ -40,7 +40,7 @@ function createService(db) {
         const changing=body.identity!==undefined || legacyChanged;
         if(!creating && changing && (cur.revision || body.identity!==undefined) && (!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision!==cur.revision))C.fail('expectedRevision','IDENTITY_CONFLICT',409);
         let data=C.validate('patient',body.identity||{},cur.data,{creating});
-        await catalogs.validate(body.identity||{},transaction);
+        await catalogs.validate(body.identity||{},transaction,data);
         if(body.identity) {
             if('givenNames' in body.identity && data.givenNames!==body.person.name)C.fail('givenNames','IDENTITY_LEGACY_CONFLICT');
             if('birthDate' in body.identity && data.birthDate!==body.person.birthday)C.fail('birthDate','IDENTITY_LEGACY_CONFLICT');
@@ -72,7 +72,7 @@ function createService(db) {
             if(!Number.isSafeInteger(expectedRevision)||expectedRevision!==cur.revision)C.fail('expectedRevision','IDENTITY_CONFLICT',409);
             if(kind==='professional'&&'authorizedPersonnelTypes' in patch&&!canManage)C.fail('authorizedPersonnelTypes','IDENTITY_FORBIDDEN',403);
             const data=C.validate(kind,patch,cur.data);
-            await catalogs.validate(patch,transaction);
+            await catalogs.validate(patch,transaction,data);
             await persist(kind,id,business,actor,data,cur.revision,transaction);
             if(kind==='patient') {
                 const surname=[data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
