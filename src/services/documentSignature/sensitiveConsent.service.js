@@ -68,6 +68,15 @@ function canAuthorize(access, signed, actor) {
 
 const reviewToken = (state, access, actor) => domain.hash([state.token, actor, access.view, access.enabled, access.profile]);
 
+// DATE_FORMAT preserves the exact database representation for evidence hashes.
+// Sequelize uses UTC for this connection; only the public display projection gets
+// an explicit zone. Never change the stored pair's t/u/f or domain input dates.
+const displayInstant = value => {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString();
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value) ? `${value}Z` : value;
+};
+
 function preview(state, access, actor) {
     const candidates = [];
     for (const refusal of state.remainingRefusals) for (const signed of state.documents) {
@@ -78,8 +87,10 @@ function preview(state, access, actor) {
     }
     return { consent_token: state.token, substitution_token: reviewToken(state, access, actor), consent_status: state.status, consent_document_id: state.document?.id_patient_document || null,
         documents: state.documents.map(document => ({ ...document,
-            refusal_at: domain.refusalEvidence(document, state.events).latest?.created_at || null })),
-        pairs: state.pairs, diagnostics: state.diagnostics, candidates };
+            created_at: displayInstant(document.created_at), signed_at: displayInstant(document.signed_at),
+            refusal_at: displayInstant(domain.refusalEvidence(document, state.events).latest?.created_at) })),
+        pairs: state.pairs.map(pair => ({ ...pair, created_at: displayInstant(pair.created_at) })),
+        diagnostics: state.diagnostics, candidates };
 }
 
 async function review(body) {
