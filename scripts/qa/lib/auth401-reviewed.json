@@ -1516,9 +1516,9 @@
     "scope": "<anonymous/module>",
     "snippet": "res.status(e.status||500).send({status:e.status||500,message:e.status?e.message:'No se pudo completar la operación.',data:{code:e.code||'IDENTITY_ERROR',field:e.field}})",
     "hash": "c152231d02a719cfb2f0faf78ff701ef2c1bcf63ae0b5ed8bb347e2afc9bfccd",
-    "context": "b02563d58a6ee92c3220420444b0780ed3ac4ab9d8a62eb8f5e9bf5c9f15f00f",
+    "context": "27ab628b41ac439cd630f75d70f1b03f611e0d156e6d252a006d47897d9b4023",
     "count": 1,
-    "reason": "Identity error serializer forwards e.code; current identity errors are validation/conflict/authorization. Authentication is upstream Token.Auth."
+    "reason": "Identity error serializer forwards e.code; current identity errors are validation/conflict/authorization. Authentication is upstream Token.Auth. CLUES-F1 only forwards Idempotency-Key; reviewed guards and HTTP replay denials, 400/409 mapping and preserved AUTH_SESSION_INVALID envelope in nc1-clues-mysql.test.js."
   },
   {
     "file": "src/routes/mysql/odontogramGlobalAliases.js",

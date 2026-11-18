@@ -126,7 +126,11 @@ test('CLUES-F1/CAT-O1: isolated MySQL and HTTP contract',{skip:process.env.NC1_I
                 '../../middleware/requirePermission.middleware':{requirePermission:()=>((req,res,next)=>req.headers['x-qa-permission']==='no'?res.sendStatus(403):next())},
                 '../../middleware/csrf.middleware':{csrfProtection:()=>((req,res,next)=>req.headers['x-qa-csrf']==='yes'?next():res.sendStatus(403))},
                 '../../util/tenant':{getBusinessIdFromToken:token=>token.id_business},'../../util/effectivePermissions':{hasPermission:async()=>false},
-                '../../db/Sequelize.connection':db,'../../Dao/mysql/identity.dao':{...svc,save:(...args)=>{writes++;return svc.save(...args);}}
+                '../../db/Sequelize.connection':db,'../../Dao/mysql/identity.dao':{...svc,save:(...args)=>{
+                    writes++;
+                    if(args[4].displayName==='QA authentication failure')throw Object.assign(Error('QA session expired'),{status:401,code:'AUTH_SESSION_INVALID'});
+                    return svc.save(...args);
+                }}
             };
             vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../src/routes/mysql/identity.js'),'utf8'),{module,require:name=>stub[name]||require(name)});
             const app=express();app.use(express.json());app.use('/api/identity',module.exports);
@@ -141,6 +145,8 @@ test('CLUES-F1/CAT-O1: isolated MySQL and HTTP contract',{skip:process.env.NC1_I
             const reached=writes;
             for(const [header,value,status] of [['x-qa-session','no',401],['x-qa-operational','no',403],['x-qa-permission','no',403],['x-qa-csrf','no',403]])assert.equal((await post({[header]:value})).status,status);
             assert.equal(writes,reached);
+            const authFailure=await post({},JSON.stringify({identity:{displayName:'QA authentication failure'},expectedRevision:0}));
+            assert.equal(authFailure.status,401);assert.equal((await authFailure.json()).data.code,'AUTH_SESSION_INVALID');
             assert.equal((await post({'Idempotency-Key':'bad key'})).status,400);
             assert.equal((await post({},JSON.stringify({identity:{displayName:'Changed'},expectedRevision:0}))).status,409);
             const exact=await fetch(base+'/catalogs/'+family+'?exactCode='+code,{headers});assert.equal((await exact.json()).data.item.ref.releaseId,'qa-clues-3');
