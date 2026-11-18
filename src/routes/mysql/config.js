@@ -32,4 +32,6 @@ router.get('/clinical-modules/get', Token.Auth, requireTenantOperational, awaitH
 
 router.post('/clinical-modules/save', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), awaitHandlerFactory(ConfigController.clinicalModuleConfigSave));
 
+router.post('/clinical-modules/changes', Token.Auth, csrfProtected, requireTenantOperational, requireTenantAdministrator('admin.config'), awaitHandlerFactory(ConfigController.clinicalModuleChanges));
+
 module.exports = router; 
