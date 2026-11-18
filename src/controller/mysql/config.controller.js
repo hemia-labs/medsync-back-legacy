@@ -137,6 +137,21 @@ clinicalModuleConfigGet = async(req, res, next) =>{
     res.status(response.status).send(response);
   }
 
+clinicalModuleChanges = async(req, res) => {
+    const business = getBusinessIdFromToken(req.tokenDecode);
+    const actor = req.tokenDecode.id_login;
+    if (!business || !actor) return res.status(403).send({ status: 403, message: 'Sesión no disponible.' });
+    try {
+        const data = await require('../../services/clinicalModuleChanges.service').save(business, actor, req.body);
+        return res.status(200).send({ status: 200, data });
+    } catch (error) {
+        if (error.status === 409 || error.status === 422) {
+            return res.status(error.status).send({ status: error.status, message: error.message, data: error.current });
+        }
+        return res.status(500).send({ status: 500, message: 'No se pudo confirmar el guardado. Vuelve a consultar los ajustes.' });
+    }
+}
+
 clinicalModuleConfigSave = async(req, res, next) =>{
         let _body = applyTenantToBody(req, req.body);
     let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);

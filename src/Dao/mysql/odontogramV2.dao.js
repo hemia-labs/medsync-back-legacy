@@ -12,6 +12,10 @@ class OdontogramV2Dao {
         const rows = await this.query(`SELECT odontogram_mode FROM clinical_module_config WHERE ${eq('id_business', ':business')} ${lock ? 'FOR UPDATE' : ''}`, { business }, transaction);
         return rows[0] && rows[0].odontogram_mode || 'v1';
     }
+    async hasCharts(business, transaction = null) {
+        const rows = await this.query('SELECT id_chart FROM odontogram_v2_chart WHERE id_business=:business LIMIT 1', { business }, transaction);
+        return rows.length > 0;
+    }
     async activationMatrix(business,transaction=null) {
         const joins=require('../../util/effectivePermissions').joins();
         const rows=await this.query(`SELECT l.id_login,l.id_rol,r.code AS role_code,cp.code FROM login l

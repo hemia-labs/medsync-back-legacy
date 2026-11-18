@@ -31,7 +31,7 @@ router.get('/capabilities', requireAnyPermission(['px.tab.odontogram','admin.con
 }));
 router.get('/aliases', clinicalPermission('admin.config'), handle(async (req,business) => ({ ...await require('../../services/odontogramAliases.service').state(business), catalog:D.CATALOG })));
 router.put('/aliases', csrf, clinicalPermission('admin.config'), handle((req,business,actor) => require('../../services/odontogramAliases.service').save(business,actor,req.body)));
-router.get('/activation-check',clinicalPermission('admin.config'),handle((req,business)=>dao.activationMatrix(business)));
+router.get('/activation-check',clinicalPermission('admin.config'),handle(async (req,business) => ({ ...await dao.activationMatrix(business), has_charts: await dao.hasCharts(business) })));
 router.get('/preferences',clinicalPermission('admin.config'),handle((req,business)=>require('../../services/odontogramPreferences.service').state(business)));
 router.put('/preferences',csrf,clinicalPermission('admin.config'),handle((req,business,actor)=>require('../../services/odontogramPreferences.service').save(business,actor,req.body)));
 router.put('/mode', csrf, clinicalPermission('admin.config'), handle(async (req, business, actor) => {
@@ -42,9 +42,8 @@ router.put('/mode', csrf, clinicalPermission('admin.config'), handle(async (req,
         await dao.query('SELECT id_person FROM person WHERE id_business COLLATE utf8mb4_unicode_ci = :business COLLATE utf8mb4_unicode_ci ORDER BY id_person FOR UPDATE', { business }, transaction);
         const current = await dao.mode(business, transaction, true);
         if(mode==='v2'&&!(await dao.activationMatrix(business,transaction)).ready)D.fail('Antes de activar la captura, asigna lectura/captura y lectura/finalización a operadores activos en Puestos y accesos.',409,'CO26_OPERATORS_REQUIRED');
-        if (mode === 'v1') {
-            const rows = await dao.query('SELECT id_chart FROM odontogram_v2_chart WHERE id_business=:business LIMIT 1', { business }, transaction);
-            if (rows.length) D.fail('Existen datos CO26; usa solo lectura para conservarlos visibles.', 409);
+        if (mode === 'v1' && await dao.hasCharts(business, transaction)) {
+            D.fail('Ya hay odontogramas por piezas y caras. Elige solo consulta para conservarlos visibles sin editar.', 409, 'CO26_NOTES_MODE_UNAVAILABLE');
         }
         const baseline_count = current === 'v1' && mode !== 'v1' ? await dao.baseline(business, actor, transaction) : 0;
         await dao.query('UPDATE clinical_module_config SET odontogram_mode=:mode WHERE id_business=:business', { business, mode }, transaction);
