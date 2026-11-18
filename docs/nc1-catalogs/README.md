@@ -30,7 +30,7 @@ A selected reference is `{family, releaseId, code}`. Manual capture omits `relea
 
 ## Recovery
 
-Keep references and releases; never delete or rewrite a verified release. For a reviewed bad-source incident, use the existing NC4 `verified -> retired` transition with operator/change identity and timestamp, after checking the exact release ID and impact. Retirement is one way and preserves the historical version; a replacement uses a new ID. No automatic reactivation of an older release. Frontend can revert to its prior version (reference DTO unchanged), and backend can revert without dropping catalog data. Source absence remains unverified rather than preventing capture.
+Keep references and releases; never delete or rewrite a verified release. For a reviewed bad-source incident, use the existing NC4 `verified -> retired` transition with operator/change identity and timestamp, after checking the exact release ID and impact. Retirement is one way and preserves the historical version; a replacement uses a new ID. No automatic reactivation of an older release. NC4 rejects two verified releases of a family with the same validFrom, including a retired one: a replacement needs a later reviewed boundary (for example a new download date), and retiring the newest release without a replacement leaves the family unavailable (unverified) instead of reviving the previous one. Frontend can revert to its prior version (reference DTO unchanged), and backend can revert without dropping catalog data. Source absence remains unverified rather than preventing capture.
 
 ## Verification
 

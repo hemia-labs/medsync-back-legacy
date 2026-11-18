@@ -25,6 +25,9 @@ async function main(){
         assert.equal((await api.view({birthCountry:ref},1)).catalogValidation,'verified');
         await assert.rejects(()=>api.validate({birthCountry:{...ref,code:'002'}},{}),{code:'CATALOG_CODE_NOT_FOUND'});
         assert.equal((await api.search('sis.country',{q:'País'})).items[0].ref.code,'001');
+        // Independent review (Claude, 2026-11-17): accent-insensitive literal search; user wildcards never expand.
+        assert.equal((await api.search('sis.country',{q:'pais qa'})).items[0]?.ref.code,'001','search without accents finds the accented label');
+        for(const q of ['%','_','!','\\'])assert.equal((await api.search('sis.country',{q})).items.length,0,'literal '+q);
         await assert.rejects(()=>conn.query('UPDATE sis_catalog_entry SET label=? WHERE family=?',['changed','sis.country']));
         const conflicting=buildRelease({...manifest,releaseId:'qa-conflict',sha256:'b'.repeat(64)},[{code:'002',label:'QA conflict',attributes:{}}]);
         await assert.rejects(()=>installRelease(conn,conflicting,{verify:true,sourceSha256:'b'.repeat(64)}),{code:'CATALOG_WINDOW_CONFLICT'});
@@ -45,6 +48,9 @@ async function main(){
             const municipalities=await api.search('inegi.municipality',{parent:'01'});assert.equal(municipalities.items.length,11);assert.ok(municipalities.items.every(e=>e.ref.code.startsWith('01')));
             const localities=await api.search('inegi.locality',{parent:'01001',q:'Aguascalientes'});assert.ok(localities.items.some(e=>e.ref.code==='010010001'));
             assert.equal((await api.search('renapo.nationality')).available,false);
+            assert.ok((await api.search('sis.country',{q:'mexico'})).items.some(e=>e.ref.code==='142'),'MÉXICO found without accent');
+            assert.ok((await api.search('inegi.municipality',{parent:'09',q:'alvaro obregon'})).items.some(e=>e.ref.code==='09010'),'Álvaro Obregón found without accent');
+            assert.ok((await api.search('inegi.locality',{parent:'09010'})).items.every(e=>e.ref.code.startsWith('09010')));
             console.log('PASS official snapshots private/local only; geographic hierarchy, leading zeros and absent RENAPO');
         }
     } finally {await conn.end();}

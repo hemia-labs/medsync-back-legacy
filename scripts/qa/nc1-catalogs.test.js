@@ -101,3 +101,15 @@ test('INEGI parser preserves leading zeros, accents and quoted commas, ignores o
     assert.deepEqual(csvPrefix('"01","Un ""nombre""",x',2),['01','Un "nombre"']);
     assert.throws(()=>csvPrefix('"01","broken',2));
 });
+
+// Independent review (Claude, 2026-11-17): MySQL LOCATE is accent-sensitive even under *_ai_ci collations, and LEFT(code)
+// cannot use the primary key. Search uses LIKE with escaped user text and a sargable parent prefix.
+test('search is an accent-insensitive literal LIKE and the parent prefix is index-friendly',async()=>{
+    const db=database([release({family:'inegi.locality',release_id:'qa-loc'})],[]),api=createCatalogs(db);
+    const B='\\';
+    await api.search('inegi.locality',{parent:'09010',q:'50%_off'+B});
+    const {sql,replacements}=db.calls.at(-1);
+    assert.doesNotMatch(sql,/LOCATE\(|LEFT\(code/);assert.match(sql,/label LIKE :like ESCAPE/);assert.match(sql,/code LIKE CONCAT\(:parent,'%'\)/);
+    assert.equal(replacements.like,'%50!%!_off'+B+'%');assert.equal(replacements.parent,'09010');
+    await api.search('inegi.locality',{q:'a!b'});assert.equal(db.calls.at(-1).replacements.like,'%a!!b%');
+});
