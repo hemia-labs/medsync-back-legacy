@@ -159,5 +159,10 @@ test('NC1 identidad integrada: atomic profile + identity save on MySQL', { skip:
         assert.deepEqual(reopenedEstablishment.data.cluesRef,cluesRef);assert.equal(establishment.catalogValidation,'verified');
         await assert.rejects(()=>service.save('establishment',establishment.id,'qa','actor',{displayName:'No guardar',cluesRef:{...cluesRef,code:'QATEST00002'}},1),e=>e.code==='CLUES_NOT_IN_SIS_RELEASE');
         assert.equal((await service.read('establishment',establishment.id,'qa')).data.displayName,'Unidad QA');
+        // CAT-O2: a nested residence PATCH cannot combine a saved foreign country with INEGI.
+        await service.save('patient','patient','qa','actor',{residence:{country:catalogRef}},4);
+        const beforeResidence=(await conn.query("SELECT * FROM patient_identity WHERE id_person='patient'"))[0][0];
+        await assert.rejects(()=>service.save('patient','patient','qa','actor',{givenNames:'No guardar país',residence:{entity:{family:'inegi.state',code:'01'}}},5),e=>e.code==='RESIDENCE_COUNTRY_GEO_MISMATCH'&&e.field==='residence.country');
+        assert.deepEqual((await conn.query("SELECT * FROM patient_identity WHERE id_person='patient'"))[0][0],beforeResidence);
     } finally { if (db) await db.close(); await conn.query('DROP DATABASE IF EXISTS ' + database).catch(() => {}); await conn.end(); }
 });

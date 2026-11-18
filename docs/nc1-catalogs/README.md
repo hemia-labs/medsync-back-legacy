@@ -19,6 +19,8 @@ INEGI uses the downloaded member name as `sourceVersion` and `download_date` as 
 
 A selected reference is `{family, releaseId, code}`. Manual capture omits `releaseId` and stays unverified. An official verified release is usable only in its effective window. A missing source never certifies a reference. A known release with a missing code, mismatched family, sentinel or nonoperating CLUES rejects the write with 400 and field information, within the existing identity/profile transaction. The source/date change does not rewrite an old reference or a closed history. Read quality reports expose `catalogChecks`; editable payloads strip that metadata.
 
+CAT-O2: a residence edit is checked against the merged residence. An officially resolved country other than Mexico (142 in the reviewed SIS country source) cannot coexist with INEGI state/municipality/locality. Missing/manual countries remain unverified and an absent country is never filled in. Unrelated historical edits remain possible; contradictory historical combinations receive a quality issue and never an aggregate verified state. The frontend identifies the country field and preserves the draft. CAT-O1 official CLUES attributes stays assigned to the separate NC1-CLUES-UX redesign, not completed by this API.
+
 ## Controlled staging and installation
 
 1. Review the exact downloaded file and hash against the source inventory. Keep a private backup of existing releases/entries and the target database's NC4 schema before a shared installation. This PR creates no schema; if the NC4 tables/triggers are absent, stop and handle that dependency separately.

@@ -44,12 +44,25 @@ function createCatalogs(db) {
         return { releases, effective, check };
     }
     function missing(error) { return ['ER_NO_SUCH_TABLE', 'ER_BAD_TABLE_ERROR'].includes(error && (error.original || error.parent || error).code); }
-    async function validate(patch, transaction) {
+    // PAIS_2021_Rev_20241101: 142 = MÉXICO. Only a resolved official country can establish a conflict;
+    // missing/manual countries stay unverified, and an absent country is never inferred from INEGI.
+    async function residenceConflict(data, client) {
+        const r = data && data.residence;
+        if (!r || !r.country || !(r.entity || r.municipality || r.locality)) return false;
+        const country = await client.check(r.country);
+        return country.result === 'valid' && r.country.code !== '142';
+    }
+    async function validate(patch, transaction, merged = patch) {
         const client = request(transaction);
         for (const { field, ref } of references(patch)) {
             let result;
             try { result = await client.check(ref); } catch (error) { if (missing(error)) continue; throw error; }
             if (result.result === 'invalid') C.fail(field.replace(/\.\d+$/, ''), result.code);
+        }
+        // Nested PATCH is checked against the merged residence, but unrelated historic edits remain possible.
+        if (patch.residence) {
+            try { if (await residenceConflict(merged, client)) C.fail('residence.country', 'RESIDENCE_COUNTRY_GEO_MISMATCH'); }
+            catch (error) { if (!missing(error)) throw error; }
         }
     }
     async function view(data, revision, updatedAt, transaction) {
@@ -61,8 +74,11 @@ function createCatalogs(db) {
             checks.push({ field, ...value });
             if (value.result !== 'valid') result.qualityIssues.push({ field, code: value.code, severity: 'warning' });
         }
+        let conflict = false;
+        try { conflict = await residenceConflict(data, client); } catch (error) { if (!missing(error)) throw error; }
+        if (conflict) result.qualityIssues.push({field:'residence.country',code:'RESIDENCE_COUNTRY_GEO_MISMATCH',severity:'warning'});
         result.catalogChecks = checks;
-        result.catalogValidation = checks.length && checks.every(c => c.result === 'valid') ? 'verified' : 'unverified';
+        result.catalogValidation = !conflict && checks.length && checks.every(c => c.result === 'valid') ? 'verified' : 'unverified';
         return result;
     }
     async function search(family, input = {}) {

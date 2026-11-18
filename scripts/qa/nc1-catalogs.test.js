@@ -18,6 +18,27 @@ function database(releases=[release()],entries=[entry()]) {
     }};
 }
 
+test('residence country coherence uses merged references without inferring or changing history',async()=>{
+    const cr=release({family:'sis.country',release_id:'qa-countries'});
+    const countries=['142','001'].map(code=>entry({family:'sis.country',release_id:'qa-countries',code}));
+    const api=createCatalogs(database([release(),cr],[entry(),...countries]));
+    const country=code=>({family:'sis.country',releaseId:'qa-countries',code});
+    const foreign={residence:{country:country('001'),entity:ref()}};
+    await assert.rejects(()=>api.validate(foreign,{}),e=>e.status===400&&e.field==='residence.country'&&e.code==='RESIDENCE_COUNTRY_GEO_MISMATCH');
+    await assert.rejects(()=>api.validate({residence:{entity:ref()}},{},foreign),{code:'RESIDENCE_COUNTRY_GEO_MISMATCH'});
+    await api.validate({givenNames:'Historic unrelated edit'},{},foreign);
+    await api.validate({residence:{country:country('142'),entity:ref()}},{});
+    await api.validate({residence:{country:country('001')}},{});
+    await api.validate({residence:{entity:ref()}},{});
+    const manual={residence:{country:{family:'sis.country',code:'001'},entity:ref()}};
+    await api.validate(manual,{});assert.equal((await api.view(manual,1)).catalogValidation,'unverified');
+    const unknown={residence:{country:{...country('001'),releaseId:'missing'},entity:ref()}};
+    await api.validate(unknown,{});
+    const before=JSON.stringify(foreign),view=await api.view(foreign,1);
+    assert.equal(view.catalogValidation,'unverified');assert.ok(view.qualityIssues.some(x=>x.code==='RESIDENCE_COUNTRY_GEO_MISMATCH'));
+    assert.equal(JSON.stringify(foreign),before);
+});
+
 test('catalog HTTP route preserves tenant guard, bounded query, no-store and error envelope',async()=>{
     const express=require('express'),catalogs=createCatalogs(database());let searches=0,failSearch=false;
     const module={exports:{}};
