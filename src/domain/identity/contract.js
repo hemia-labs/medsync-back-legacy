@@ -70,6 +70,7 @@ function validate(kind, patch, current = {}, { creating = false } = {}) {
     const r = next.residence || {};
     if (r.entity && r.municipality && !r.municipality.code.startsWith(r.entity.code)) fail('residence.municipality');
     if (r.municipality && r.locality && !r.locality.code.startsWith(r.municipality.code)) fail('residence.locality');
+    if (r.entity && r.locality && !r.locality.code.startsWith(r.entity.code)) fail('residence.locality');
     return next;
 }
 function legacy(person) { return { givenNames: person.name || null, birthDate: person.birthday ? (person.birthday instanceof Date ? person.birthday.toISOString().slice(0,10) : String(person.birthday).slice(0,10)) : null, legacySurname: person.surname || null, firstSurname:null,secondSurname:null,firstSurnameStatus:'unknown',secondSurnameStatus:'unknown' }; }

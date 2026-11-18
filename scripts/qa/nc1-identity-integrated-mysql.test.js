@@ -133,5 +133,31 @@ test('NC1 identidad integrada: atomic profile + identity save on MySQL', { skip:
         await conn.query("INSERT INTO person (id_business,id_person,name,surname) VALUES ('qa','legacy-patient','Paciente','De la Prueba Antigua')");
         await service.save('patient', 'legacy-patient', 'qa', 'actor', { curp: null }, 0);
         assert.equal((await conn.query("SELECT surname FROM person WHERE id_person='legacy-patient'"))[0][0].surname, 'De la Prueba Antigua');
+        // NC1-CATALOGS: install a test-only reference release and exercise actual domain writes/rollback.
+        await require('../migrations/nc4-catalogs').install(conn,()=>{});
+        const manifest={releaseId:'qa-country',family:'sis.country',sourceCatalogName:'Isolated QA only',sourceUrl:null,sourceVersion:'QA',downloadedAt:new Date().toISOString(),sha256:'c'.repeat(64),encoding:'utf-8',validFrom:'2020-01-01',validTo:null,validityBasis:'download_date',provenance:'official',status:'staged',verifiedAt:null,columnMapping:{}};
+        const release=require('../../src/domain/sisCatalog/release').buildRelease(manifest,[{code:'001',label:'País sintético QA',attributes:{}}]);
+        await require('../../src/domain/sisCatalog/installRelease').installRelease(conn,release,{verify:true,sourceSha256:manifest.sha256});
+        const catalogRef={family:'sis.country',releaseId:'qa-country',code:'001'};
+        const catalogPatient=await service.save('patient','patient','qa','actor',{birthCountry:catalogRef},3);
+        assert.equal(catalogPatient.catalogValidation,'verified');assert.deepEqual(catalogPatient.birthCountry,catalogRef);
+        const patientBefore=(await conn.query("SELECT * FROM patient_identity WHERE id_person='patient'"))[0][0];
+        await assert.rejects(()=>service.save('patient','patient','qa','actor',{givenNames:'No guardar',birthCountry:{...catalogRef,code:'999'}},4),e=>e.code==='CATALOG_CODE_NOT_FOUND'&&e.field==='birthCountry');
+        assert.deepEqual((await conn.query("SELECT * FROM patient_identity WHERE id_person='patient'"))[0][0],patientBefore);
+        const profileBeforeCatalog=await profileRow('new-doctor'), identityBeforeCatalog=await identityRow(createdId);
+        const failedCatalog=await save({university:'No guardar catálogo',identity:{birthCountry:{...catalogRef,code:'999'}},identity_expected_revision:identityBeforeCatalog.revision});
+        assert.equal(failedCatalog.status,400);assert.equal(failedCatalog.data.code,'CATALOG_CODE_NOT_FOUND');
+        assert.deepEqual(await profileRow('new-doctor'),profileBeforeCatalog);assert.deepEqual(await identityRow(createdId),identityBeforeCatalog);
+        await assert.rejects(()=>service.save('patient','patient','foreign','actor',{birthCountry:catalogRef},4),e=>e.status===404);
+        await conn.query('CREATE TABLE business (id_business VARCHAR(50) PRIMARY KEY)');await conn.query("INSERT INTO business VALUES ('qa')");
+        const cluesManifest={...manifest,releaseId:'qa-clues',family:'sis.establishments',sha256:'d'.repeat(64)};
+        const cluesRelease=require('../../src/domain/sisCatalog/release').buildRelease(cluesManifest,[{code:'QATEST00001',label:'Unidad QA',attributes:{en_operacion:'1'}}]);
+        await require('../../src/domain/sisCatalog/installRelease').installRelease(conn,cluesRelease,{verify:true,sourceSha256:cluesManifest.sha256});
+        const cluesRef={family:'sis.establishments',releaseId:'qa-clues',code:'QATEST00001'};
+        const establishment=await service.save('establishment',null,'qa','actor',{displayName:'Unidad QA',cluesRef},0);
+        const reopenedEstablishment=await service.read('establishment',establishment.id,'qa');
+        assert.deepEqual(reopenedEstablishment.data.cluesRef,cluesRef);assert.equal(establishment.catalogValidation,'verified');
+        await assert.rejects(()=>service.save('establishment',establishment.id,'qa','actor',{displayName:'No guardar',cluesRef:{...cluesRef,code:'QATEST00002'}},1),e=>e.code==='CLUES_NOT_IN_SIS_RELEASE');
+        assert.equal((await service.read('establishment',establishment.id,'qa')).data.displayName,'Unidad QA');
     } finally { if (db) await db.close(); await conn.query('DROP DATABASE IF EXISTS ' + database).catch(() => {}); await conn.end(); }
 });
