@@ -144,3 +144,25 @@ test('install CLI reports the exact stop reason without secrets',()=>{
     let r=run(['--bogus']);assert.equal(r.status,1);assert.equal(r.stderr.trim(),'UNKNOWN_ARGUMENT');
     r=run(['--dir']);assert.equal(r.status,1);assert.doesNotMatch(r.stderr,/PASSWORD|HOSTMYSQL|at /);
 });
+
+
+test('catalog search executes Sequelize replacement compilation before the driver',async()=>{
+    const {Sequelize}=require('sequelize');
+    const db=new Sequelize('qa_catalogs','qa','synthetic',{dialect:'mysql',logging:false});
+    const queries=[];const OriginalQuery=db.dialect.Query;
+    db.connectionManager.getConnection=async()=>({});
+    db.connectionManager.releaseConnection=async()=>{};
+    db.dialect.Query=class extends OriginalQuery {async run(sql){
+        queries.push(sql);
+        assert.doesNotMatch(sql,/:(?:family|releaseId|q|like|parent|offset)\b/,'every named replacement must reach MySQL as an escaped value');
+        if(sql.includes('FROM sis_catalog_release'))return [release()];
+        return [entry()];
+    }};
+    try {
+        const api=createCatalogs(db);
+        for(const q of ['', 'mexico', "Alvaro %_!' O'QA"]){const result=await api.search('inegi.state',{q,parent:'',offset:0});assert.equal(result.items[0].ref.code,'01');}
+        await api.search('inegi.locality',{q:'',parent:'09010',offset:30});
+        const searches=queries.filter(sql=>sql.includes('FROM sis_catalog_entry'));
+        assert.equal(searches.length,4);assert.ok(searches[3].includes("CONCAT('09010','%')"));assert.ok(searches[3].includes('OFFSET 30'));
+    }finally{db.dialect.Query=OriginalQuery;await db.close();}
+});
