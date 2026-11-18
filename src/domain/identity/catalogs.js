@@ -80,13 +80,16 @@ function createCatalogs(db) {
             }
             const rows = await client.releases(family), release = rows.find(r => client.effective(rows, r, C.today()));
             if (!release) return { available: false, items: [], hasMore: false };
-            // Locate by literal substring, never interpolate user SQL/wildcards. Bound every page.
+            // Literal substring, never user SQL/wildcards: %, _ and the escape character are escaped. LIKE follows the
+            // label collation (accent/case-insensitive); MySQL LOCATE stays accent-sensitive. The parent is digits only
+            // (validated above), so its prefix LIKE uses the primary-key range. Bound every page.
+            const like = '%' + q.replace(/[!%_]/g, '!$&') + '%';
             const entries = await query(`SELECT code,label,attributes_json FROM sis_catalog_entry
                 WHERE family=:family AND release_id=:releaseId AND is_sentinel=0
                 AND (family<>'sis.establishments' OR JSON_UNQUOTE(JSON_EXTRACT(attributes_json,'$.en_operacion'))='1')
-                AND (:q='' OR LOCATE(:q,label)>0 OR LOCATE(:q,CONVERT(code USING utf8mb4))>0)
-                AND (:parent='' OR LEFT(code,CHAR_LENGTH(:parent))=:parent)
-                ORDER BY code LIMIT 31 OFFSET :offset`, { family, releaseId: release.release_id, q, parent, offset });
+                AND (:q='' OR label LIKE :like ESCAPE '!' OR CONVERT(code USING utf8mb4) LIKE :like ESCAPE '!')
+                AND (:parent='' OR code LIKE CONCAT(:parent,'%'))
+                ORDER BY code LIMIT 31 OFFSET :offset`, { family, releaseId: release.release_id, q, like, parent, offset });
             return { available: true, source: { releaseId: release.release_id, sourceVersion: release.source_version, sourceUrl: release.source_url, validityBasis: release.validity_basis, validFrom: civil(release.valid_from) },
                 items: entries.slice(0, 30).map(e => ({ ref: { family, releaseId: release.release_id, code: e.code }, label: e.label })), hasMore: entries.length > 30 };
         } catch (error) { if (missing(error)) return { available: false, items: [], hasMore: false }; throw error; }
