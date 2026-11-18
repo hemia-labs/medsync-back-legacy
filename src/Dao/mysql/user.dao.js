@@ -14,13 +14,13 @@ const responseData = require('../../util/responsedata');
 const permissionDenied = message => responseData.forbidden(message, { code: 'PERMISSION_DENIED' });
 // NC1 identidad integrada: the professional profile and its identity are one form and one atomic save.
 const identityService = require('./identity.dao');
-const IDENTITY_META = ['contractVersion','updatedAt','provenance','qualityIssues','catalogValidation','curpSex'];
+const IDENTITY_META = ['contractVersion','updatedAt','provenance','qualityIssues','catalogValidation','catalogChecks','curpSex'];
 const identityError = error => error && error.status && error.code
     ? { status: error.status, data: { code: error.code, field: error.field || null }, message: error.message }
     : null;
 async function profileIdentity(profileId, idBusiness, transaction) {
     const current = await identityService.read('professional', profileId, idBusiness, transaction);
-    const view = identityService.view(current.data, current.revision, current.updatedAt);
+    const view = await identityService.view(current.data, current.revision, current.updatedAt, transaction);
     IDENTITY_META.forEach(key => delete view[key]);
     if (view.curp) delete view.curp.validationStatus;
     return view;

@@ -922,7 +922,7 @@
     "scope": "getPxById",
     "snippet": "this.HttpError(error.status, error.message)",
     "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
-    "context": "9d024149339c13837739f8915b16fb6d373a1f2cc242bd31eee5d91eb401d1cc",
+    "context": "14fded288b3460397edc2517b2b47dde91f3bf76c4ba2fe23fb60fbfc9e12a35",
     "count": 1,
     "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
   },
@@ -1516,7 +1516,7 @@
     "scope": "<anonymous/module>",
     "snippet": "res.status(e.status||500).send({status:e.status||500,message:e.status?e.message:'No se pudo completar la operación.',data:{code:e.code||'IDENTITY_ERROR',field:e.field}})",
     "hash": "c152231d02a719cfb2f0faf78ff701ef2c1bcf63ae0b5ed8bb347e2afc9bfccd",
-    "context": "bb2dca061ea19b1c2ff2db386b0c405d2fb81ad9896a0de75adafc3ffb61b8de",
+    "context": "b02563d58a6ee92c3220420444b0780ed3ac4ab9d8a62eb8f5e9bf5c9f15f00f",
     "count": 1,
     "reason": "Identity error serializer forwards e.code; current identity errors are validation/conflict/authorization. Authentication is upstream Token.Auth."
   },
@@ -1636,5 +1636,14 @@
     "context": null,
     "count": 1,
     "reason": "unauthorized helper definition/export: data is forwarded; each call site is checked separately."
+  },
+  {
+    "file": "src/routes/mysql/identity.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(e.status||503).send({status:e.status||503,message:e.status?e.message:'No se pudo consultar el catálogo. Conservamos la captura.',data:{code:e.code||'CATALOG_UNAVAILABLE',field:e.field}})",
+    "hash": "d9f597ed3677092279fc71024c9410c3efa8f26adaa2e3f4236b87f29b699342",
+    "context": "39336edfd1403d08104f39b04d07729c90d72585246d343f52d329d75b22bdcb",
+    "count": 1,
+    "reason": "Catalog read errors are validation 400 or database 503, code preserved. Token.Auth authenticates upstream; no auth work inside this handler."
   }
 ]
