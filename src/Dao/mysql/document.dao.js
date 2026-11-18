@@ -17,6 +17,7 @@ const { SequelizeException } = require('../../util/sequelizeException');
 const { resolveDocumentLicenseMetadata } = require('../../util/documentLicensing');
 const { assertPlanFeature } = require('../../util/planFeatures');
 const documentRequirements = require('../../services/documentSignature/documentRequirements.service');
+const sensitiveConsent = require('../../services/documentSignature/sensitiveConsent.service');
 const { validateSignatureImage } = require('../../services/documentSignature/signatureImage.service');
 const { sanitizeDocumentHtml, renderDocumentTemplate, safeDocumentForDisplay } = require('../../services/documentSignature/documentHtml.service');
 const { validateDocumentTemplate } = require('../../validators/documentTemplate.validator');
@@ -807,6 +808,8 @@ class DocumentDao {
             }
 
             transaction = await sequelize.transaction();
+            // Patient first: consent substitution/finalization/sign/refusal/cancel share this mutex.
+            await sensitiveConsent.lockDocumentPatient(body.id_patient_document, body.id_business, transaction);
             const documentRows = await sequelize.query(
                 `SELECT pd.*,
                         dt.requires_patient_signature, dt.requires_tutor_signature, dt.requires_doctor_signature,
