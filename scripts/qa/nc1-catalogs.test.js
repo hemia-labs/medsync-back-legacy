@@ -110,6 +110,18 @@ test('only missing schema is optional, a database outage is not called validatio
     assert.equal((await api.view({residence:{entity:ref()}},1)).catalogValidation,'unverified');
     code='ECONNREFUSED';await assert.rejects(()=>api.validate({residence:{entity:ref()}},{}));
 });
+
+test('new versioned CLUES assignments cannot claim current validation when the source is missing or superseded',async()=>{
+    const family='sis.establishments',code='QATEST00001',patch={cluesRef:{family,code,releaseId:'qa-old'}};
+    const api=createCatalogs(database([release({family,release_id:'qa-old'}),release({family,release_id:'qa-new',valid_from:'2021-01-01'})],
+        [entry({family,release_id:'qa-old',code,attributes_json:{en_operacion:'1'}})]));
+    await assert.rejects(()=>api.validate(patch,{},patch,{freshClues:true}),{status:409,code:'CATALOG_RELEASE_CHANGED'});
+    await api.validate(patch,{},patch); // Retaining a historical reference on unrelated editing is still supported.
+    const missing=createCatalogs({query:async()=>{throw Object.assign(Error('missing'),{code:'ER_NO_SUCH_TABLE'});}});
+    await assert.rejects(()=>missing.validate(patch,{},patch,{freshClues:true}),{status:503,code:'CATALOG_UNAVAILABLE'});
+    assert.equal((await missing.search(family,{exactCode:code})).available,false);
+    assert.equal((await missing.view(patch,1)).catalogAttributes,null);
+});
 test('transaction is used for validation and server quality reads',async()=>{
     const db=database(),transaction={qa:true},api=createCatalogs(db);await api.validate({residence:{entity:ref()}},transaction);await api.view({residence:{entity:ref()}},1,null,transaction);
     assert.ok(db.calls.every(call=>call.transaction===transaction));
