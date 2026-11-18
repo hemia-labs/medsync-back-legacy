@@ -7,7 +7,7 @@ const LIMITS = Object.freeze({ entries: 2000, entryBytes: 256 * 1024 * 1024, tot
 
 function fail(message) { throw Object.assign(new Error(message), { code: 'XLSX_INVALID' }); }
 
-function readZip(buffer) {
+function readZip(buffer, selectedName = null) {
     if (!Buffer.isBuffer(buffer) || buffer.length < 22) fail('Archivo XLSX vacío o truncado.');
     let eocd = -1;
     for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i--) {
@@ -30,12 +30,14 @@ function readZip(buffer) {
         const local = buffer.readUInt32LE(offset + 42);
         const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
         offset += 46 + nameLength + extraLength + commentLength;
+        // Large official geographic archives also contain KML/DBF. Only the explicitly selected CSV is inflated.
+        if (selectedName && name !== selectedName) continue;
         if (size > LIMITS.entryBytes || (total += size) > LIMITS.totalBytes) fail('Contenido descomprimido excesivo.');
         entries.set(name, { method, compressed, size, local });
     }
     return {
         names: [...entries.keys()],
-        read(name) {
+        read(name, encoding = 'utf-8') {
             const e = entries.get(name);
             if (!e) return null;
             if (buffer.readUInt32LE(e.local) !== 0x04034b50) fail('Cabecera local dañada.');
@@ -46,7 +48,7 @@ function readZip(buffer) {
             else if (e.method === 8) data = zlib.inflateRawSync(raw, { maxOutputLength: LIMITS.entryBytes });
             else fail('Compresión ZIP no soportada: ' + e.method);
             if (data.length !== e.size) fail('Tamaño descomprimido inconsistente en ' + name);
-            return data.toString('utf8');
+            return new TextDecoder(encoding, { fatal: true }).decode(data);
         }
     };
 }

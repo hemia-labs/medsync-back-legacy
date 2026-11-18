@@ -4,6 +4,7 @@ const S=require('./storage');
 const {randomUUID,createHash}=require('node:crypto');
 const hash = body => createHash('sha256').update(JSON.stringify([body.person,body.address||{},body.identity])).digest('hex');
 function createService(db) {
+    const catalogs=require('./catalogs').createCatalogs(db);
     const query=(sql,replacements,transaction)=>db.query(sql,{replacements,transaction,type:'SELECT'});
     async function parent(kind,id,business,transaction,lock=false) {
         if(typeof id!=='string'||!id.length||id.length>50||!business)C.fail('id');
@@ -39,6 +40,7 @@ function createService(db) {
         const changing=body.identity!==undefined || legacyChanged;
         if(!creating && changing && (cur.revision || body.identity!==undefined) && (!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision!==cur.revision))C.fail('expectedRevision','IDENTITY_CONFLICT',409);
         let data=C.validate('patient',body.identity||{},cur.data,{creating});
+        await catalogs.validate(body.identity||{},transaction,data);
         if(body.identity) {
             if('givenNames' in body.identity && data.givenNames!==body.person.name)C.fail('givenNames','IDENTITY_LEGACY_CONFLICT');
             if('birthDate' in body.identity && data.birthDate!==body.person.birthday)C.fail('birthDate','IDENTITY_LEGACY_CONFLICT');
@@ -70,6 +72,7 @@ function createService(db) {
             if(!Number.isSafeInteger(expectedRevision)||expectedRevision!==cur.revision)C.fail('expectedRevision','IDENTITY_CONFLICT',409);
             if(kind==='professional'&&'authorizedPersonnelTypes' in patch&&!canManage)C.fail('authorizedPersonnelTypes','IDENTITY_FORBIDDEN',403);
             const data=C.validate(kind,patch,cur.data);
+            await catalogs.validate(patch,transaction,data);
             await persist(kind,id,business,actor,data,cur.revision,transaction);
             if(kind==='patient') {
                 const surname=[data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
@@ -86,9 +89,9 @@ function createService(db) {
                 if(name.length>250)C.fail('givenNames');
                 if(name||hadNames)await db.query('UPDATE doctor_professional_profile SET professional_name=:name,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_doctor_professional_profile=:id AND id_business=:business',{replacements:{name:name||null,actor,id,business},transaction});
             }
-            return {id,...C.view(data,cur.revision+1)};
+            return {id,...await catalogs.view(data,cur.revision+1,null,transaction)};
         }
     }
-    return {read,save,saveIn,patientWrite,view:C.view};
+    return {read,save,saveIn,patientWrite,view:catalogs.view,catalogs};
 }
 module.exports={createService,hash};
