@@ -14,4 +14,5 @@ async function main() {
     const conn=await require('mysql2/promise').createConnection({host:config.HOSTMYSQL,port:config.PORTMYSQL,user:config.USERMYSQL,password:config.PASSWORDMYSQL,database:config.DATABASEMYSQL,timezone:'Z'});
     try {console.log(JSON.stringify(await installRelease(conn,release,{verify:Boolean(options['--verify']),sourceSha256:options['--source-sha256']})));} finally {await conn.end();}
 }
-if(require.main===module)main().catch(e=>{console.error(e.code||'CATALOG_INSTALL_FAILED');process.exitCode=1;});
+// Print only a stop code (e.g. CATALOG_REVIEW_ISSUES_FIRST, CATALOG_DATABASE_TARGET_MISMATCH); never messages that may hold config.
+if(require.main===module)main().catch(e=>{console.error(e.code||(/^[A-Z0-9_]{3,64}$/.test(e.message)?e.message:'CATALOG_INSTALL_FAILED'));process.exitCode=1;});
