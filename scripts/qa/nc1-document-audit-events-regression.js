@@ -33,7 +33,7 @@ const test = async (name, fn) => { reset(); try { await fn(); console.log('PASS 
         assert.equal(document.status, 'PENDIENTE_FIRMA');
     });
     await test('other clinical or malformed event names remain rejected', async () => {
-        for (const event of ['SIGNATURE_CAPTURED', 'CONSENT_REPLACED', 'CANCELLED', 'signed', '', null, undefined, ['VIEWED']]) {
+        for (const event of ['REFUSAL_SUPERSEDED', 'SUPERSEDES_REFUSAL', 'SIGNATURE_CAPTURED', 'CONSENT_REPLACED', 'CANCELLED', 'signed', '', null, undefined, ['VIEWED']]) {
             assert.equal((await dao.auditAction(body({ event_type: event }))).status, 400);
         }
         assert.equal(queries.length, 0);

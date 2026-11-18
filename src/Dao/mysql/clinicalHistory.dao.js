@@ -9,6 +9,7 @@ const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
 const ClinicalHistoryTemplateDao = require('./clinicalHistoryTemplate.dao');
 const PatientAllergyDao = require('./patientAllergy.dao');
+const sensitiveConsent = require('../../services/documentSignature/sensitiveConsent.service');
 const { applyCurrentAllergy, protectAllergyCore, STATUS: ALLERGY_STATUS } = require('../../domain/clinicalHistory/allergyStatus');
 const { revisionConflict, professionalSnapshot, historicalIdentityUnavailable } = require('../../domain/clinicalHistory/historyIntegrity');
 
@@ -104,7 +105,7 @@ class ClinicalHistoryDao {
         return await this.lockHistory(history, businessId, transaction) && history.status === STATUS.DRAFT;
     }
     async hasPermission(idLogin, permission, transaction = null) {
-        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction});
+        return effectivePermissions.hasPermission(idLogin, permission, {enabledCatalog:true, transaction, lock: Boolean(transaction)});
     }
 
     async getPatient(patientId, businessId, transaction = null, includeArchived = false) {
@@ -284,38 +285,7 @@ class ClinicalHistoryDao {
     }
 
     async getSensitiveConsent(patientId, businessId, transaction = null) {
-        const rows = await sequelize.query(
-            `SELECT id_patient_document, status, signed_at, refusal_reason, created_at
-               FROM patient_documents
-              WHERE ${collateEq('id_business', ':_id_business')}
-                AND ${collateEq('id_person', ':_id_person')}
-                AND document_type = 'SENSITIVE_DATA_CONSENT'
-                AND active = 1
-                AND status <> 'CANCELADO'
-              ORDER BY
-                CASE status
-                  WHEN 'NO_FIRMADO_POR_NEGATIVA' THEN 1
-                  WHEN 'FIRMADO' THEN 2
-                  WHEN 'PENDIENTE_FIRMA' THEN 3
-                  WHEN 'BORRADOR' THEN 4
-                  ELSE 5
-                END,
-                created_at DESC
-              LIMIT 1`,
-            {
-                replacements: { _id_business: businessId, _id_person: patientId },
-                type: QueryTypes.SELECT,
-                transaction
-            }
-        );
-
-        const document = rows[0] || null;
-        return {
-            document,
-            status: document ? document.status : 'SIN_CONSENTIMIENTO',
-            signedDocument: document && document.status === 'FIRMADO' ? document : null,
-            refusalDocument: document && document.status === 'NO_FIRMADO_POR_NEGATIVA' ? document : null
-        };
+        return sensitiveConsent.load(patientId, businessId, transaction);
     }
 
     async addEvent(historyId, businessId, patientId, userId, eventType, metadata = null, transaction = null) {
@@ -553,6 +523,8 @@ class ClinicalHistoryDao {
                 patient,
                 history: this.hydrate(history, await PatientAllergyDao.getCurrent(history ? history.patient_id : body.patient_id, body.id_business)),
                 consent_status: consent.status,
+                consent_token: consent.token,
+                has_later_signed_consent: consent.hasLaterSignedConsent,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
             }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
@@ -665,6 +637,8 @@ class ClinicalHistoryDao {
                 history: this.hydrate(history, await PatientAllergyDao.getCurrent(history.patient_id, body.id_business, transaction)),
                 consent_document: linkedConsent,
                 consent_status: consent.status,
+                consent_token: consent.token,
+                has_later_signed_consent: consent.hasLaterSignedConsent,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
             }, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
@@ -862,7 +836,7 @@ class ClinicalHistoryDao {
         const transaction = await sequelize.transaction();
         try {
             // Authorization precedes even the history's existence/state/revision.
-            const finalizer = await this.validateFinalizer(body, transaction);
+            let finalizer = await this.validateFinalizer(body);
             if (finalizer.error) { await transaction.rollback(); return finalizer.error; }
             const history = await this.getHistoryById(body.id_clinical_history, body.id_business, transaction);
             if (!history) {
@@ -886,6 +860,9 @@ class ClinicalHistoryDao {
             }
             const conflict = revisionConflict(history, body.expected_revision);
             if (conflict) { await transaction.rollback(); return conflict; }
+            // Patient/history first, then current grants/profile: no inverse lock order.
+            finalizer = await this.validateFinalizer(body, transaction);
+            if (finalizer.error) { await transaction.rollback(); return finalizer.error; }
             const responsible = history.doctor_responsible_user_id
                 ? await this.getDoctorProfile(body.id_business, history.doctor_responsible_user_id, transaction)
                 : finalizer.profile;
@@ -905,6 +882,13 @@ class ClinicalHistoryDao {
             }
 
             const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
+            // Compatibility for older clients is limited to serialization at close time.
+            // New clients send the whole reviewed set; invalid/empty is not omission.
+            if (Object.hasOwn(body, 'expected_consent_token') && (body.expected_consent_token !== consent.token
+                || body.expected_consent_document_id !== (consent.document ? consent.document.id_patient_document : null)
+                || body.expected_consent_status !== consent.status)) {
+                await transaction.rollback(); return sensitiveConsent.conflict();
+            }
             await sequelize.query(`UPDATE clinical_histories SET clinical_snapshot_json = :snapshot, template_snapshot_json = :schema,
                 responsible_snapshot_json = :responsible, finalizer_snapshot_json = :finalizer, revision = revision + 1
                 WHERE ${collateEq('id_clinical_history', ':history')} AND ${collateEq('business_id', ':business')} AND status = 'DRAFT'`,

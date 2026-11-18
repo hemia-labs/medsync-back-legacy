@@ -25,7 +25,7 @@ async function rows(idLogin, options = {}) {
           ${options.enabledCatalog ? 'AND cp.is_active = 1' : ''}
           ${options.permission ? `AND ${eq('cp.code', ':_permission')}` : ''}
           ${options.admin ? `AND ${eq('l.id_business', ':_id_business')} AND r.code IN ('admin', 'business_admin')` : ''}
-        ${options.permission || options.admin ? 'LIMIT 1' : 'ORDER BY cp.value, cp.sec'}`, {
+        ${options.permission || options.admin ? 'LIMIT 1' : 'ORDER BY cp.value, cp.sec'} ${options.lock && options.transaction ? 'FOR SHARE' : ''}`, {
         replacements: {_id_login:idLogin,...(options.permission ? {_permission:options.permission} : {}),...(options.admin ? {_id_business:options.business} : {})},
         type: QueryTypes.SELECT, transaction:options.transaction || null
     });

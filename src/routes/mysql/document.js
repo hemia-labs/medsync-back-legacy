@@ -11,6 +11,8 @@ const { protectedBodyParser } = require('../../middleware/requestBody.middleware
 const csrfProtected = csrfProtection();
 
 router.get('/templates', Token.Auth, requireTenantOperational, awaitHandlerFactory(DocumentController.Templates));
+router.get('/consent/:id_person', Token.Auth, requireTenantOperational, awaitHandlerFactory(DocumentController.ConsentReview));
+router.post('/consent/supersede-refusal', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentController.SubstituteRefusal));
 router.post('/template/save', Token.Auth, csrfProtected, requireTenantOperational, protectedBodyParser, awaitHandlerFactory(DocumentController.SaveTemplate));
 router.post('/signature-request/create', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentSignatureRequestController.Create));
 router.post('/signature-request/email', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(DocumentSignatureRequestController.Email));
