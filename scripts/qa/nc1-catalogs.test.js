@@ -113,3 +113,13 @@ test('search is an accent-insensitive literal LIKE and the parent prefix is inde
     assert.equal(replacements.like,'%50!%!_off'+B+'%');assert.equal(replacements.parent,'09010');
     await api.search('inegi.locality',{q:'a!b'});assert.equal(db.calls.at(-1).replacements.like,'%a!!b%');
 });
+
+// Independent review (Claude, 2026-11-17): the operator must see why an import stopped (review issue, hash or target
+// mismatch), not a generic failure. Only the error code is printed: never configuration or credentials.
+test('install CLI reports the exact stop reason without secrets',()=>{
+    const {spawnSync}=require('node:child_process'),path=require('node:path');
+    const cli=path.join(__dirname,'../nc4/install-catalog.js');
+    const run=args=>spawnSync(process.execPath,[cli,...args],{encoding:'utf8',env:{PATH:process.env.PATH}});
+    let r=run(['--bogus']);assert.equal(r.status,1);assert.equal(r.stderr.trim(),'UNKNOWN_ARGUMENT');
+    r=run(['--dir']);assert.equal(r.status,1);assert.doesNotMatch(r.stderr,/PASSWORD|HOSTMYSQL|at /);
+});
