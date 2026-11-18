@@ -145,8 +145,11 @@ clinicalModuleChanges = async(req, res) => {
         const data = await require('../../services/clinicalModuleChanges.service').save(business, actor, req.body);
         return res.status(200).send({ status: 200, data });
     } catch (error) {
-        if (error.status === 409 || error.status === 422) {
-            return res.status(error.status).send({ status: error.status, message: error.message, data: error.current });
+        if (error.status === 409) {
+            return res.status(409).send({ status: 409, message: error.message, data: error.current });
+        }
+        if (error.status === 422) {
+            return res.status(422).send({ status: 422, message: error.message });
         }
         return res.status(500).send({ status: 500, message: 'No se pudo confirmar el guardado. Vuelve a consultar los ajustes.' });
     }
