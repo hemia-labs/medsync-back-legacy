@@ -14,7 +14,7 @@ const tests = [
     'registration-recovery-regression',
     'registration-plans-regression', 'payments.test', 'payments-license.test', 'payments-welcome.test', 'payments-checkout-legal.test', 'payments-updates.test',
     'payments-plan-change.test', 'payments-history.test',
-    'private-images-regression',
+    'private-images-regression', 'shared-document-logo-regression',
     'po18-security-regression', 'request-body-security-regression',
     'issues-hardening-regression', 'issues-upload-regression', 'deploy-release-regression',
     'prescription-issue-regression', 'prescription-output-regression',
