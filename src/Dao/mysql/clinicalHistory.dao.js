@@ -1,4 +1,5 @@
 const privateImages = require('../../services/aws/privateImages');
+const documentLogo = require('../../services/documentLogo');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access');
 const { QueryTypes } = require('sequelize');
@@ -162,9 +163,9 @@ class ClinicalHistoryDao {
         return rows[0] || null;
     }
 
-    async getBusiness(businessId, transaction = null) {
+    async getBusiness(businessId, transaction = null, includeLogo = true) {
         const rows = await sequelize.query(
-            `SELECT id_business, name, legal_name AS legalName, email, phone, address, logo_url AS logoUrl
+            `SELECT id_business, name, legal_name AS legalName, email, phone, address${includeLogo ? ', logo_url AS logoUrl' : ''}
                FROM business
               WHERE ${collateEq('id_business', ':_id_business')}
                 AND active = 1
@@ -176,7 +177,7 @@ class ClinicalHistoryDao {
             }
         );
 
-        if (rows[0]) rows[0].logoUrl = await privateImages.inlineImage(rows[0].logoUrl, businessId);
+        if (rows[0] && includeLogo) rows[0].logoUrl = await privateImages.inlineImage(rows[0].logoUrl, businessId);
         return rows[0] || null;
     }
 
@@ -625,13 +626,16 @@ class ClinicalHistoryDao {
 
             await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context: 'detail' }, transaction);
             const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
-            const business = await this.getBusiness(body.id_business, transaction);
+            const isDraft = history.status === STATUS.DRAFT;
+            const business = await this.getBusiness(body.id_business, transaction, isDraft);
+            const logo = isDraft ? { state: 'current', image: business?.logoUrl || null } : documentLogo.saved(history.document_logo_snapshot_json);
             const doctor = await this.getDoctorForHistory(history, transaction);
             const linkedConsent = await this.getConsentDocumentById(history.consent_document_id, body.id_business, history.patient_id, transaction);
 
             return responseData.success({
                 patient,
                 business,
+                document_logo: logo,
                 doctor,
                 finalizer: parseJson(history.finalizer_snapshot_json) || (history.finalized_by_user_id ? historicalIdentityUnavailable(history.finalized_by_user_id) : null),
                 history: this.hydrate(history, await PatientAllergyDao.getCurrent(history.patient_id, body.id_business, transaction)),
@@ -889,10 +893,12 @@ class ClinicalHistoryDao {
                 || body.expected_consent_status !== consent.status)) {
                 await transaction.rollback(); return sensitiveConsent.conflict();
             }
+            const logoSnapshot = { v: 1, logo: await documentLogo.capture(body.id_business, transaction), captured_at: capturedAt };
             await sequelize.query(`UPDATE clinical_histories SET clinical_snapshot_json = :snapshot, template_snapshot_json = :schema,
-                responsible_snapshot_json = :responsible, finalizer_snapshot_json = :finalizer, revision = revision + 1
+                responsible_snapshot_json = :responsible, finalizer_snapshot_json = :finalizer,
+                document_logo_snapshot_json = :document_logo, revision = revision + 1
                 WHERE ${collateEq('id_clinical_history', ':history')} AND ${collateEq('business_id', ':business')} AND status = 'DRAFT'`,
-                { replacements: { snapshot: stringifyJson(history.clinical_snapshot_json), schema: stringifyJson(history.template_snapshot_json), responsible: stringifyJson(responsibleSnapshot), finalizer: stringifyJson(finalizerSnapshot), history: history.id_clinical_history, business: body.id_business }, transaction });
+                { replacements: { snapshot: stringifyJson(history.clinical_snapshot_json), schema: stringifyJson(history.template_snapshot_json), responsible: stringifyJson(responsibleSnapshot), finalizer: stringifyJson(finalizerSnapshot), document_logo: stringifyJson(logoSnapshot), history: history.id_clinical_history, business: body.id_business }, transaction });
             if (consent.refusalDocument) {
                 await sequelize.query(
                     `UPDATE clinical_histories
@@ -972,6 +978,7 @@ class ClinicalHistoryDao {
             return saved;
         } catch (error) {
             await transaction.rollback();
+            if (error.code === 'DOCUMENT_LOGO_UNAVAILABLE') return { ...responseData.error(error.message), data: { code: error.code } };
             return SequelizeException(error, Messages.DATA_UPDATE_ERROR);
         }
     }

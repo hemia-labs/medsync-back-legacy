@@ -9,6 +9,7 @@ const db = {
         transactions.push(tx); return tx;
     },
     async query(sql, options = {}) {
+        if(sql.startsWith('SELECT logo_url FROM business')) return [{logo_url:null}];
         const tx = options.transaction, values = options.replacements || {};
         if(sql.startsWith('SELECT * FROM person WHERE')) {assert.equal(values.business,'tenant');return [{id_person:'patient',name:'Synthetic',surname:'Patient'}];}
         if(sql.startsWith('SELECT * FROM patient_identity WHERE')) {assert.equal(values.business,'tenant');return [];}

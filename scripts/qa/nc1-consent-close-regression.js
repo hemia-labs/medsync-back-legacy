@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const connection = require.resolve('../../src/db/Sequelize.connection');
 let writes = 0, locked = false, beforeLock, consent, invertedLocks = 0;
 const db = { async transaction() { return { async commit() {}, async rollback() {} }; },
-    async query(sql) { if (sql.startsWith('UPDATE clinical_histories')) { writes++; return []; } throw Error('Unexpected SQL in close harness'); } };
+    async query(sql) {
+        if(sql.startsWith('SELECT logo_url FROM business')) return [{logo_url:null}]; if (sql.startsWith('UPDATE clinical_histories')) { writes++; return []; } throw Error('Unexpected SQL in close harness'); } };
 require.cache[connection] = { id: connection, filename: connection, loaded: true, exports: db };
 const dao = require('../../src/Dao/mysql/clinicalHistory.dao');
 const allergy = require('../../src/Dao/mysql/patientAllergy.dao');
