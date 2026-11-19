@@ -2,7 +2,7 @@
 const {RegistrationError,invalidSession}=require('../registration/errors');
 
 // Checkout notices contain no payment data; subscription streams push committed snapshots.
-// shortcut: process-local delivery; add shared pub/sub before running multiple API workers.
+// Heartbeats recover committed snapshots when another API worker receives the webhook.
 class PaymentUpdates {
     constructor(){this.listeners=new Map();this.total=0;}
     publish(business,snapshot){for(const listener of this.listeners.get(business)||[])listener(snapshot);}
@@ -35,7 +35,7 @@ class PaymentUpdates {
         res.set({'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Accel-Buffering':'no'});
         res.flushHeaders();
         listeners.add(update);this.listeners.set(business,listeners);this.total++;
-        const heartbeat=setInterval(()=>{if(!closed)res.write(': keepalive\n\n');},15000);
+        const heartbeat=setInterval(()=>{if(!closed){res.write(': keepalive\n\n');if(subscription)update();}},15000);
         const timeout=setTimeout(end,duration);
         res.once('close',cleanup);req.once('aborted',cleanup);
         update();

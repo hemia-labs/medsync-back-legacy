@@ -34,12 +34,15 @@ function fixture() {
             if(!events.has(p.subscription))events.set(p.subscription,{subscription_id:p.subscription,id_business:p.business,id_login:p.login,
                 payment_id:p.payment,payload:JSON.parse(p.payload),claimed_at:null,sent_at:null});return [null,1];
         }
-        if(sql.startsWith('SELECT subscription_id'))return [...events.values()].filter(e=>!e.claimed_at).slice(0,1).map(e=>({...e}));
+        if(sql.startsWith('SELECT subscription_id'))return [...events.values()].filter(e=>!e.claimed_at||e.error_code==='EMAIL_DELIVERY_RETRYABLE'&&e.claimed_at.getTime()<=Date.now()-60000).slice(0,1).map(e=>({...e}));
         if(sql.includes('FROM login'))return eligible&&p.login===userId&&p.business===businessId
             &&business.subscription_status==='active'?[{...account,...business}]:[];
-        if(sql.startsWith('UPDATE payments_welcome_outbox SET claimed_at')) {
+        if(sql.startsWith('UPDATE payments_welcome_outbox SET claimed_at=UTC_TIMESTAMP')) {
             if(failClaim)throw Error('synthetic claim failure');
             Object.assign(events.get(p.subscription),{claimed_at:new Date(),error_code:p.error});return [null,1];
+        }
+        if(sql.startsWith("UPDATE payments_welcome_outbox SET error_code='EMAIL_DELIVERY_RETRYABLE'")) {
+            Object.assign(events.get(p.subscription),{error_code:'EMAIL_DELIVERY_RETRYABLE'});return [null,1];
         }
         if(sql.startsWith('UPDATE payments_welcome_outbox SET sent_at')) {
             Object.assign(events.get(p.subscription),{sent_at:p.error?null:new Date(),error_code:p.error});return [null,1];
@@ -48,6 +51,7 @@ function fixture() {
     }};
     const messages=[],send=async message=>{messages.push(message);return {success:true};};
     return {db,projection:new LicenseProjection(db),send,messages,business:()=>business,events:()=>[...events.values()],
+        ageRetries:()=>{for(const e of events.values())if(e.error_code==='EMAIL_DELIVERY_RETRYABLE')e.claimed_at=new Date(Date.now()-61000);},
         eligible:value=>{eligible=value;},failEnqueue:value=>{failEnqueue=value;},failClaim:value=>{failClaim=value;}};
 }
 test('webhook replay, newer confirmations, concurrent workers and a worker restart send one welcome per subscription',async()=>{
@@ -67,6 +71,32 @@ test('license and durable notification commit together and a rolled back enqueue
     f.failEnqueue(false);await f.projection.apply(snapshot());assert.equal(f.events().length,1);
     f.failClaim(true);await assert.rejects(sendNextContractWelcome(f.db,loginUrl,f.send),/claim failure/);assert.equal(f.messages.length,0);assert.equal(f.events()[0].claimed_at,null);
     f.failClaim(false);await sendNextContractWelcome(f.db,loginUrl,f.send);assert.equal(f.messages.length,1);
+});
+test('an explicit SES rejection keeps the paid welcome pending until delivery recovers',async()=>{
+    const f=fixture();await f.projection.apply(snapshot());let calls=0;
+    const previous=console.warn;console.warn=()=>{};
+    try {
+        assert.equal(await sendNextContractWelcome(f.db,loginUrl,async()=>{calls++;return {success:false,retryable:true};}),true);
+        assert.ok(f.events()[0].claimed_at);assert.equal(f.events()[0].error_code,'EMAIL_DELIVERY_RETRYABLE');
+        assert.equal(f.events()[0].sent_at,null);assert.equal(calls,1);
+        assert.equal(await sendNextContractWelcome(f.db,loginUrl,f.send),false,'Backoff must skip this event');
+        f.ageRetries();
+        await Promise.all([sendNextContractWelcome(f.db,loginUrl,f.send),sendNextContractWelcome(f.db,loginUrl,f.send)]);
+        assert.equal(f.messages.length,1);assert.ok(f.events()[0].sent_at);assert.equal(f.events()[0].error_code,null);
+        assert.equal(await sendNextContractWelcome(f.db,loginUrl,f.send),false);
+    }finally{console.warn=previous;}
+});
+test('a rejected welcome never blocks another contract and revalidates eligibility before retry',async()=>{
+    const f=fixture();await f.projection.apply(snapshot());
+    const previous=console.warn;console.warn=()=>{};
+    try {await sendNextContractWelcome(f.db,loginUrl,async()=>({success:false,retryable:true}));}
+    finally {console.warn=previous;}
+    const newer=snapshot('2'),id=randomUUID();newer.subscription.id=id;newer.license.subscriptionId=id;
+    newer.license.billing.checkoutConfirmation.subscriptionId=id;newer.license.billing.checkoutConfirmation.paymentId=randomUUID();
+    await f.projection.apply(newer);await sendNextContractWelcome(f.db,loginUrl,f.send);
+    assert.equal(f.messages.length,1);assert.equal(f.events()[1].subscription_id,id);assert.ok(f.events()[1].sent_at);
+    f.ageRetries();await sendNextContractWelcome(f.db,loginUrl,f.send);
+    assert.equal(f.messages.length,1);assert.equal(f.events()[0].error_code,'RECIPIENT_OR_CONTRACT_UNAVAILABLE');
 });
 test('an unknown SES response is recorded and never retried into a duplicate delivery',async()=>{
     for(const throws of [true,false]) {

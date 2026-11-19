@@ -237,6 +237,21 @@ async function credentials(config) {return typeof config.credentials==='function
         }
         const service=configure();sdkReply={};assertSafeFailure(await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}}),'Missing MessageId');assert.equal(commands.length,1);assertNoSecretLogs();
     });
+    await check('only confirmed SES rejections and local configuration failures permit welcome retries',async()=>{
+        for(const status of [400,401,403,404,429,408,500,503,undefined]) {
+            const service=configure();const failure=new Error('AWS_RAW_ERROR '+synthetic.secret);
+            failure.name='MessageRejected';failure.$metadata={httpStatusCode:status};sdkReply=failure;
+            const result=await service.sendTransactionalEmail({type:'password-changed',to:'patient@example.test',variables:{}});
+            assertSafeFailure(result);assert.equal(result.retryable===true,[400,401,403,404,429].includes(status));
+            assert.equal(commands.length,1);assertNoSecretLogs();
+        }
+        const service=configure({EMAIL_REGISTRATION_WELCOME_TEMPLATE:undefined});
+        const result=await service.sendTransactionalEmail({type:'subscription-welcome',to:'patient@example.test',variables:{
+            firstName:'Ana',clinicName:'QA',planName:'Profesional',amountLabel:'999 MXN',billingIntervalLabel:'mes',
+            paidAmountLabel:'999 MXN',paymentMethodLabel:'PayPal',activatedAtLabel:'18 de noviembre de 2026',loginUrl:'https://app.example.test/login'}});
+        assertSafeFailure(result);assert.equal(result.retryable,true);assert.equal(commands.length,0);
+        assertNoSecretLogs();
+    });
     await check('SMTP raw compatibility and typed rendering work through a stub transport when SES is not selected',async()=>{
         const service=configure({EMAIL_PROVIDER:'smtp'});assert.equal(service.providerName(),'smtp');
         const legacy={to:'patient@example.test',subject:'Legacy subject',html:'<p>Legacy body</p>',text:'Legacy body'};

@@ -17,7 +17,8 @@ const ROUTES = Object.freeze({
 const EMAIL = /^[^\s@<>";,]+@[^\s@<>";,]+\.[^\s@<>";,]+$/;
 const CONTROLS = /[\x00-\x1f\x7f]/;
 function invalid(message, code = 'EMAIL_SES_CONFIG_INVALID') {
-    const error = new Error(message); error.code = code; error.safe = true; return error;
+    const error = new Error(message); error.code = code; error.safe = true;
+    error.retryable = code === 'EMAIL_SES_CONFIG_INVALID'; return error;
 }
 function required(name) {
     const raw = String(process.env[name] || '');
@@ -166,7 +167,11 @@ class SesProvider {
         } catch (error) {
             // SDK errors may contain addresses, token links or credential details.
             logEmailError(error, { provider: 'ses', type });
-            return { success: false, provider: 'ses', code: 'EMAIL_SES_SEND_FAILED', message: 'No se pudo enviar el correo. Revisa el servicio de correo e intenta de nuevo.' };
+            const status = error?.$metadata?.httpStatusCode;
+            // Only an explicit rejection proves SES did not accept the message.
+            const retryable = Number.isInteger(status) && status >= 400 && status < 500 && status !== 408;
+            return { success: false, provider: 'ses', code: 'EMAIL_SES_SEND_FAILED', message: 'No se pudo enviar el correo. Revisa el servicio de correo e intenta de nuevo.',
+                ...(retryable ? { retryable: true } : {}) };
         }
     }
 }

@@ -189,7 +189,7 @@ test('uncertain cancellation never retries a financial mutation or reports unper
     const f=cancellationFixture();f.client.subscriptions.cancel=async()=>{f.calls.push(['cancel']);throw new Error('private provider timeout');};
     await assert.rejects(f.service.cancelSubscription(actor,f.body),e=>e.status===503&&!e.message.includes('private'));
     assert.equal(f.calls.filter(c=>c[0]==='cancel').length,1);
-    const g=cancellationFixture();let projects=0;g.projection.apply=async()=>{if(++projects===2)throw Error('db failed');};
+    const g=cancellationFixture();let projects=0;g.projection.apply=async()=>{if(++projects===2)throw Error('db failed');return {applied:true};};
     await assert.rejects(g.service.cancelSubscription(actor,g.body),e=>e.status===503);
     assert.equal(g.calls.filter(c=>c[0]==='cancel').length,1);
 });

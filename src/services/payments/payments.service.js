@@ -314,7 +314,9 @@ class PaymentsService {
         identifier(business);
         return this.call(async()=>{
             const snapshot=await this.runtime().client.snapshots.current(business);
-            await this.projection.apply(snapshot);
+            const result=await this.projection.apply(snapshot);
+            const committed=result.applied?snapshot:await this.currentSnapshot(business);
+            if(committed)paymentUpdates.publish(business,committed);
             return snapshot;
         });
     }

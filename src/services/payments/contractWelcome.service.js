@@ -67,7 +67,9 @@ async function sendNextContractWelcome(db,loginUrl,send=message=>require('../ema
     if(!isEmailUrl(loginUrl,{allowLocalApp:true}))throw Error('PAYMENTS_WELCOME_URL_INVALID');
     const claimed=await db.transaction(async transaction=>{
         const [event]=await db.query(`SELECT subscription_id,id_business,id_login,payment_id,payload FROM payments_welcome_outbox
-            WHERE claimed_at IS NULL ORDER BY created_at,subscription_id LIMIT 1 FOR UPDATE`,{type:QueryTypes.SELECT,transaction});
+            WHERE claimed_at IS NULL OR (error_code='EMAIL_DELIVERY_RETRYABLE' AND sent_at IS NULL
+                AND claimed_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE))
+            ORDER BY created_at,subscription_id LIMIT 1 FOR UPDATE`,{type:QueryTypes.SELECT,transaction});
         if(!event)return null;
         const [account]=await db.query(`SELECT l.email,l.first_name,l.name,b.name AS clinic_name,b.billing_snapshot,b.billing_revision
             FROM login l JOIN business b ON b.id_business=l.id_business
@@ -89,16 +91,27 @@ async function sendNextContractWelcome(db,loginUrl,send=message=>require('../ema
         }
         // SES has no send idempotency key. Commit the claim before the external call; never resend an uncertain delivery.
         const [,changed]=await db.query(`UPDATE payments_welcome_outbox SET claimed_at=UTC_TIMESTAMP(3),error_code=:error
-            WHERE subscription_id=:subscription AND claimed_at IS NULL`,
+            WHERE subscription_id=:subscription AND (claimed_at IS NULL OR (error_code='EMAIL_DELIVERY_RETRYABLE'
+                AND sent_at IS NULL AND claimed_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE)))`,
         {replacements:{subscription:event.subscription_id,error:variables?null:'RECIPIENT_OR_CONTRACT_UNAVAILABLE'},type:QueryTypes.UPDATE,transaction});
         if(changed!==1)throw Error('PAYMENTS_WELCOME_NOT_CLAIMED');
         return {subscriptionId:event.subscription_id,to:account?.email,variables};
     });
     if(!claimed)return false;
     if(!claimed.variables)return true;
-    let sent=false;
-    try {sent=(await send({type:'subscription-welcome',to:claimed.to,variables:claimed.variables}))?.success===true;}
+    let sent=false,retryable=false;
+    try {
+        const result=await send({type:'subscription-welcome',to:claimed.to,variables:claimed.variables});
+        sent=result?.success===true;retryable=!sent&&result?.retryable===true;
+    }
     catch(_) { /* A lost acknowledgement must not create a second delivery. */ }
+    if(retryable) {
+        await db.query(`UPDATE payments_welcome_outbox SET error_code='EMAIL_DELIVERY_RETRYABLE'
+            WHERE subscription_id=:subscription AND claimed_at IS NOT NULL AND sent_at IS NULL`,
+        {replacements:{subscription:claimed.subscriptionId},type:QueryTypes.UPDATE});
+        console.warn('[PAYMENTS_WELCOME_RETRY_PENDING]',{subscriptionId:claimed.subscriptionId});
+        return true;
+    }
     await db.query(`UPDATE payments_welcome_outbox SET sent_at=${sent?'UTC_TIMESTAMP(3)':'NULL'},error_code=:error
         WHERE subscription_id=:subscription AND claimed_at IS NOT NULL`,
     {replacements:{subscription:claimed.subscriptionId,error:sent?null:'EMAIL_DELIVERY_UNCONFIRMED'},type:QueryTypes.UPDATE});
