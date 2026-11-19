@@ -232,6 +232,8 @@ class DocumentSignatureRequestDao {
     }
 
     async getDocumentForRequest(idBusiness, idPatientDocument, transaction = null, forUpdate = false) {
+        if (transaction && forUpdate) await require('../../services/documentSignature/sensitiveConsent.service')
+            .lockDocumentPatient(idPatientDocument, idBusiness, transaction);
         const rows = await sequelize.query(
             `SELECT pd.id_patient_document, pd.id_business, pd.id_person, pd.document_type, pd.origin, pd.treatment_plan_id,
                     pd.status, pd.active, pd.guardian_name_snapshot, pd.doctor_signature_snapshot,
@@ -915,6 +917,11 @@ class DocumentSignatureRequestDao {
         const reason = redactSensitiveText(body.reason || 'Revocado desde Documentos y firmas.');
         const transaction = await sequelize.transaction();
         try {
+            const initial = await sequelize.query(`SELECT id_person FROM document_signature_requests
+                WHERE ${collateEq('id_document_signature_request', ':request')} AND ${collateEq('id_business', ':business')} LIMIT 1`,
+            { replacements: { request: idSignatureRequest, business: body.id_business }, type: QueryTypes.SELECT, transaction });
+            if (initial[0]) await require('../../services/documentSignature/sensitiveConsent.service')
+                .lockPatient(initial[0].id_person, body.id_business, transaction);
             const rows = await sequelize.query(
                 `SELECT dsr.id_document_signature_request, dsr.id_business, dsr.id_person,
                         dsr.id_patient_document, dsr.signature_role, dsr.channel, dsr.status,

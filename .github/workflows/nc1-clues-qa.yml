@@ -1,0 +1,29 @@
+name: NC1 CLUES contract
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'src/domain/identity/**'
+      - 'src/routes/mysql/identity.js'
+      - 'scripts/qa/nc1-*.js'
+      - 'scripts/qa/nc1-clues-isolated.cjs'
+      - '.github/workflows/nc1-clues-qa.yml'
+permissions:
+  contents: read
+jobs:
+  mysql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        image: ['mysql:8.0', 'mysql:8.4']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/qa/nc1-clues-isolated.cjs '${{ matrix.image }}'

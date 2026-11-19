@@ -12,6 +12,7 @@ const db = {
         };
     },
     async query(sql, options) {
+        if(sql.startsWith('SELECT logo_url FROM business')) return [{logo_url:null}];
         calls.push(sql);
         assert.equal(options.replacements._id_business, 'qa-tenant');
         assert.equal(options.replacements._id_prescription, 'qa-rx');

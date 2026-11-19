@@ -1,4 +1,5 @@
 const privateImages = require('../../services/aws/privateImages');
+const documentLogo = require('../../services/documentLogo');
 const { snapshotPatient, withPatientIdentity } = require('../../domain/prescriptions/patientIdentity');
 const effectivePermissions = require('../../util/effectivePermissions');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
@@ -126,7 +127,6 @@ class PrescriptionDao {
                 _clinic_address: body.clinic_address || null,
                 _clinic_phone: body.clinic_phone || null,
                 _signature_image: body.signature_image || null,
-                _header_image: body.header_image || null,
                 _background_image: body.background_image || null,
                 _footer_note: body.footer_note || null,
                 _template_mode: body.template_mode || 'header',
@@ -149,7 +149,6 @@ class PrescriptionDao {
                             clinic_address = :_clinic_address,
                             clinic_phone = :_clinic_phone,
                             signature_image = :_signature_image,
-                            header_image = :_header_image,
                             background_image = :_background_image,
                             footer_note = :_footer_note,
                             template_mode = :_template_mode,
@@ -174,7 +173,7 @@ class PrescriptionDao {
                     ) VALUES (
                         :_id_prescription_config, :_id_business, :_doctor_profile_id, :_doctor_name, :_professional_license, :_university,
                         :_specialty, :_specialty_license, :_clinic_name, :_clinic_address, :_clinic_phone,
-                        :_signature_image, :_header_image, :_background_image, :_footer_note, :_template_mode,
+                        :_signature_image, NULL, :_background_image, :_footer_note, :_template_mode,
                         :_background_opacity, :_show_specialty, :_show_university, :_show_footer_note,
                         1, NOW(), :_id_login
                     )`,
@@ -562,6 +561,7 @@ class PrescriptionDao {
 
             const patientIdentity = await this.getPatientIdentity(prescription.id_person, body.id_business, transaction);
             if (!patientIdentity) { await transaction.rollback(); return responseData.notSuccess('Paciente no encontrado.'); }
+            const logo = await documentLogo.capture(body.id_business, transaction);
             await sequelize.query(
                 `UPDATE prescription
                     SET status = 'issued',
@@ -603,10 +603,11 @@ class PrescriptionDao {
                         _clinic_address: config.clinic_address,
                         _clinic_phone: config.clinic_phone,
                         _signature_image: doctor.signature_image,
-                        _header_image: config.header_image,
+                        _header_image: logo,
                         _background_image: config.background_image,
                         _footer_note: config.footer_note,
                         _template_snapshot: JSON.stringify({
+                            document_logo: 'business_v1',
                             patient_identity: snapshotPatient(patientIdentity),
                             template_mode: config.template_mode || 'header',
                             background_opacity: config.background_opacity,
@@ -633,6 +634,7 @@ class PrescriptionDao {
             return this.getById(body);
         } catch (error) {
             await transaction.rollback();
+            if (error.code === 'DOCUMENT_LOGO_UNAVAILABLE') return { ...responseData.error(error.message), data: { code: error.code } };
             return SequelizeException(error, Messages.DATA_SAVE_ERROR);
         }
     }

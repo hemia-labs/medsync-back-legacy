@@ -1,0 +1,322 @@
+{
+  "reviewedAt": "2026-11-17",
+  "timezone": "America/Mexico_City",
+  "scope": "metadata only; no source entries distributed",
+  "unavailable": [
+    {
+      "family": "renapo.nationality",
+      "reason": "No verifiable official source download located; keep unverified."
+    }
+  ],
+  "sources": [
+    {
+      "releaseId": "inegi.locality-20261117",
+      "family": "inegi.locality",
+      "sourceCatalogName": "CAT_LOCALIDADES (INEGI); código compuesto EE+MMM+LLLL",
+      "sourceUrl": "https://www.inegi.org.mx/contenidos/app/ageeml/min_con_acento.zip",
+      "sourceVersion": "AGEEML_202611131257791_utf.csv",
+      "downloadedAt": "2026-11-18T01:50:42.391Z",
+      "sha256": "118a794ea4f6a0fde0e68f63e1ad7c249a1de25e625fbf742616e6ace878a0ba",
+      "encoding": "utf-8",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "status": "staged",
+      "verifiedAt": null,
+      "columnMapping": {
+        "member": "AGEEML_202611131257791_utf.csv",
+        "code": "CVEGEO",
+        "label": "NOM_LOC",
+        "prefixColumns": 9,
+        "downloadDateTimeZone": "America/Mexico_City"
+      },
+      "staging": {
+        "entryCount": 296643,
+        "relationCount": 0,
+        "contentSha256": "17c1a9f838d46b4140ddcad5bda35d326515f80f8a37efd08d08f9db4299576e",
+        "issues": []
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "releaseId": "inegi.municipality-20261117",
+      "family": "inegi.municipality",
+      "sourceCatalogName": "CAT_MUNICIPIOS (INEGI); código compuesto EE+MMM",
+      "sourceUrl": "https://www.inegi.org.mx/contenidos/app/ageeml/catun_municipio.zip",
+      "sourceVersion": "AGEEML_20268211656753_utf8.csv",
+      "downloadedAt": "2026-11-18T01:49:46.376Z",
+      "sha256": "cb0f21fb4c53d2c0adca356ca669646372f9b81b2cdcbd51745c01acaec7204f",
+      "encoding": "utf-8",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "status": "staged",
+      "verifiedAt": null,
+      "columnMapping": {
+        "member": "AGEEML_20268211656753_utf8.csv",
+        "code": "CVEGEO",
+        "label": "NOM_MUN",
+        "prefixColumns": 6,
+        "downloadDateTimeZone": "America/Mexico_City"
+      },
+      "staging": {
+        "entryCount": 2478,
+        "relationCount": 0,
+        "contentSha256": "17d6af885f00582f61eb3cc2e424a56c7d32de0d51a4c78d72f172037a6b58df",
+        "issues": []
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "releaseId": "inegi.state-20261117",
+      "family": "inegi.state",
+      "sourceCatalogName": "CAT_ENTIDADES (INEGI)",
+      "sourceUrl": "https://www.inegi.org.mx/contenidos/app/ageeml/catun_entidad.zip",
+      "sourceVersion": "AGEEML_202512121056362_utf.csv",
+      "downloadedAt": "2026-11-18T01:49:45.425Z",
+      "sha256": "58800dddb6f523efc1a8771f2d2d19c3f1b467d4422735898ba1047cf0c78899",
+      "encoding": "utf-8",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "status": "staged",
+      "verifiedAt": null,
+      "columnMapping": {
+        "member": "AGEEML_202512121056362_utf.csv",
+        "code": "CVEGEO",
+        "label": "NOM_ENT",
+        "prefixColumns": 4,
+        "downloadDateTimeZone": "America/Mexico_City"
+      },
+      "staging": {
+        "entryCount": 32,
+        "relationCount": 0,
+        "contentSha256": "32675c806bb3543b34582c20aabada3ea90d42baf5a64e028ac070126736880c",
+        "issues": []
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "releaseId": "sepomex.postal_code-20261117",
+      "family": "sepomex.postal_code",
+      "sourceCatalogName": "CODIGO_POSTAL (Correos de México)",
+      "sourceUrl": "https://www.correosdemexico.gob.mx/SSLServicios/ConsultaCP/CodigoPostal_Exportar.aspx",
+      "sourceVersion": "CPdescarga.txt",
+      "downloadedAt": "2026-11-18T01:48:52.969Z",
+      "sha256": "f6e14289682bee16ec46c6282349dbfd2867d79f2d3827b5fcc3392f4121a491",
+      "encoding": "windows-1252",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "status": "staged",
+      "verifiedAt": null,
+      "columnMapping": {
+        "member": "CPdescarga.txt",
+        "code": "d_codigo",
+        "label": [
+          "D_mnpio",
+          "d_estado"
+        ],
+        "grouping": "one code; distinct municipalities; no address inference",
+        "downloadDateTimeZone": "America/Mexico_City"
+      },
+      "staging": {
+        "entryCount": 31862,
+        "relationCount": 0,
+        "contentSha256": "31b72e0b30a9b0f99e51a04b877227f1c496ee211b5c8262b5c11ca261031891",
+        "issues": []
+      },
+      "sharedImport": "pending source reuse terms review"
+    },
+    {
+      "sourceCatalogName": "AFILIACION",
+      "encoding": "xlsx/utf-8",
+      "columnMapping": {
+        "sheet": 0,
+        "code": "CATALOG_KEY",
+        "label": "DESCRIPCIÓN CORTA",
+        "attributes": [
+          "DESCRIPCIÓN LARGA"
+        ],
+        "relationSheet": null,
+        "relationLeftFamily": null
+      },
+      "status": "staged",
+      "verifiedAt": null,
+      "releaseId": "sis.affiliation-20261117",
+      "family": "sis.affiliation",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/catalogos/catalogosmaestros/AFILIACION_2026.xlsx?v=2026.11.03",
+      "sourceVersion": "AFILIACION_2026.xlsx",
+      "downloadedAt": "2026-11-18T01:46:23.3984783Z",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "sha256": "a85147310004eca721f6484be92f35b5abcd26787914a77046ccc498ace0eea3",
+      "staging": {
+        "entryCount": 13,
+        "relationCount": 0,
+        "contentSha256": "bfa9e579960a44137ba6806fdc1996b35268e0ae9e229657c5e0534bc20c0055",
+        "issues": [
+          {
+            "code": "NUMERIC_CODE_CELLS",
+            "count": 13,
+            "message": "Códigos guardados como número en el Excel; se conservan como texto literal sin rellenar ceros."
+          }
+        ]
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "sourceCatalogName": "PAÍS",
+      "encoding": "xlsx/utf-8",
+      "columnMapping": {
+        "sheet": 0,
+        "code": "CATALOG_KEY",
+        "label": "DESCRIPCION",
+        "attributes": [
+          "ORDEN"
+        ],
+        "relationSheet": null,
+        "relationLeftFamily": null
+      },
+      "status": "staged",
+      "verifiedAt": null,
+      "releaseId": "sis.country-20261117",
+      "family": "sis.country",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/catalogos/catalogosmaestros/PAIS_2021_Rev_20241101.xlsx?v=2024.11.04",
+      "sourceVersion": "PAIS_2021_Rev_20241101.xlsx",
+      "downloadedAt": "2026-11-18T01:46:24.1913703Z",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "sha256": "9953bda0e76f3adf0bce69084b932be159debeb9ec095275ffcaf296f533226d",
+      "staging": {
+        "entryCount": 225,
+        "relationCount": 0,
+        "contentSha256": "5ff4a700bf160db06bae30e0fe8ce13375fe0fc960b75eed09764922054bde1c",
+        "issues": [
+          {
+            "code": "NUMERIC_CODE_CELLS",
+            "count": 225,
+            "message": "Códigos guardados como número en el Excel; se conservan como texto literal sin rellenar ceros."
+          }
+        ]
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "sourceCatalogName": "ESTABLECIMIENTO_DE_SALUD_SIS",
+      "encoding": "xlsx/utf-8",
+      "columnMapping": {
+        "sheet": 0,
+        "code": "clues",
+        "label": "nombre_unidad",
+        "attributes": [
+          "en_operacion",
+          "tipo_unidad",
+          "tip_abreviacion",
+          "sub_abreviacion",
+          "institucion",
+          "id_entidad_federativa"
+        ],
+        "relationSheet": null,
+        "relationLeftFamily": null
+      },
+      "status": "staged",
+      "verifiedAt": null,
+      "releaseId": "sis.establishments-20261117",
+      "family": "sis.establishments",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/ESTABLECIMIENTO_DE_SALUD_SIS_202609.xlsx?v=2026.10.28",
+      "sourceVersion": "ESTABLECIMIENTO_DE_SALUD_SIS_202609.xlsx",
+      "downloadedAt": "2026-11-18T01:46:22.8512886Z",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "sha256": "d2625a5256a946fa121d9dff1cdc9feb084a880a35d081d17fc459d2094b9267",
+      "staging": {
+        "entryCount": 15358,
+        "relationCount": 0,
+        "contentSha256": "539dbd6c1355419eff795aa86b9eb9f98dfc1f7d0a7ccb95a1074970340696d2",
+        "issues": []
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "sourceCatalogName": "ENTIDAD FEDERATIVA",
+      "encoding": "xlsx/utf-8",
+      "columnMapping": {
+        "sheet": 0,
+        "code": "CATALOG_KEY",
+        "label": "ENTIDAD_FEDERATIVA",
+        "attributes": [
+          "ABREVIATURA"
+        ],
+        "relationSheet": null,
+        "relationLeftFamily": null
+      },
+      "status": "staged",
+      "verifiedAt": null,
+      "releaseId": "sis.federal_entity-20261117",
+      "family": "sis.federal_entity",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/catalogos/catalogosmaestros/ENTIDAD_FEDERATIVA_201602.xlsx?v=2.1.2",
+      "sourceVersion": "ENTIDAD_FEDERATIVA_201602.xlsx",
+      "downloadedAt": "2026-11-18T01:46:23.6039928Z",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "sha256": "3d2864a9fafaa5c7f2cc9b382eb5d8b3db5276d000d2e488a3af1efb25b60b35",
+      "staging": {
+        "entryCount": 35,
+        "relationCount": 0,
+        "contentSha256": "fe26667b69f08e7a665edae1d02a22202dc95444696005782aff0f69984c7a6c",
+        "issues": []
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    },
+    {
+      "sourceCatalogName": "TIPO PERSONAL – SIS",
+      "encoding": "xlsx/utf-8",
+      "columnMapping": {
+        "sheet": "TIPO_PERSONAL",
+        "code": "CATALOG_KEY",
+        "label": "TIPO_PERSONAL",
+        "attributes": [],
+        "relationSheet": null,
+        "relationLeftFamily": null
+      },
+      "status": "staged",
+      "verifiedAt": null,
+      "releaseId": "sis.personnel_type-20261117",
+      "family": "sis.personnel_type",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/TIPO_PERSONAL-SIS_2024.xlsx?v=2023.11.28",
+      "sourceVersion": "TIPO_PERSONAL-SIS_2024.xlsx",
+      "downloadedAt": "2026-11-18T01:46:23.0942858Z",
+      "validFrom": "2026-11-17",
+      "validTo": null,
+      "validityBasis": "download_date",
+      "provenance": "official",
+      "sha256": "eae2abbd5ba4a01a36f287742d3103537d63f607b4dcb13ea2a2262c642522b6",
+      "staging": {
+        "entryCount": 30,
+        "relationCount": 0,
+        "contentSha256": "5b832b331ec553c11923e19bbd255f6857d716f382ceb9c7f8fd7fe9ea6f7b28",
+        "issues": [
+          {
+            "code": "NUMERIC_CODE_CELLS",
+            "count": 30,
+            "message": "Códigos guardados como número en el Excel; se conservan como texto literal sin rellenar ceros."
+          }
+        ]
+      },
+      "sharedImport": "pending review and scheduled test installation"
+    }
+  ]
+}

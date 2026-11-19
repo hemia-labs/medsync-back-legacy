@@ -1,0 +1,29 @@
+name: Shared document logo
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'src/services/documentLogo.js'
+      - 'src/Dao/mysql/clinicalHistory.dao.js'
+      - 'src/Dao/mysql/prescription.dao.js'
+      - 'src/controller/mysql/business.controller.js'
+      - 'scripts/qa/shared-document-logo-*.js'
+      - 'scripts/migrations/20261119_shared_document_logo.sql'
+      - '.github/workflows/shared-document-logo.yml'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run qa:isolated
+      - run: node scripts/qa/shared-document-logo-mysql.js

@@ -4,6 +4,8 @@ const path = require('node:path');
 
 // Reviewed allowlist only. Never discover fixtures/live MySQL scripts by glob.
 const tests = [
+    'nc1-catalogs.test',
+    'nc1-consent-substitution.test', 'nc1-consent-close-regression', 'nc1-consent-writer-locks', 'nc1-consent-display-dates',
     'registration-expired-session-regression',
     'history-base-template.test',
     'nc1-identity.test', 'nc1-emergency-contact.test', 'nc1-emergency-contact-http.test',
@@ -11,7 +13,7 @@ const tests = [
     'account-legal-regression', 'legal-registration-set-isolation', 'legal-evidence-permanent-rejection',
     'registration-recovery-regression',
     'registration-plans-regression',
-    'private-images-regression',
+    'private-images-regression', 'shared-document-logo-regression',
     'po18-security-regression', 'request-body-security-regression',
     'issues-hardening-regression', 'issues-upload-regression', 'deploy-release-regression',
     'prescription-issue-regression', 'prescription-output-regression',
@@ -23,7 +25,8 @@ const tests = [
     'clinical-template-permission-status-regression', 'ux13-professional-phone-regression',
     'document-html-security-regression', 'co11-professional-domain-regression',
     'co25-csrf-regression', 'co25-csrf-http-regression', 'co25-a2-policy-regression',
-    'nc1-auth-s1-s3-regression', 'auth401-inventory-regression'
+    'nc1-auth-s1-s3-regression', 'auth401-inventory-regression',
+    'nc1-document-audit-events-regression'
 ];
 for (const test of tests) {
     console.log(`TEST ${test}`);
