@@ -10,6 +10,13 @@ const db=require('../../db/Sequelize.connection');
 const identity=require('../../Dao/mysql/identity.dao');
 const csrf=csrfProtection();
 router.use(Token.Auth,operational);
+// Catalog entries contain public reference data, never tenant/clinical records. A business session is required.
+router.get('/catalogs/:family',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    if(!getBusinessIdFromToken(req.tokenDecode)||!req.tokenDecode.id_login)return res.status(403).send({status:403,message:'Acceso no autorizado.'});
+    try {res.send({status:200,data:await identity.catalogs.search(req.params.family,req.query)});}
+    catch(e){res.status(e.status||503).send({status:e.status||503,message:e.status?e.message:'No se pudo consultar el catálogo. Conservamos la captura.',data:{code:e.code||'CATALOG_UNAVAILABLE',field:e.field}});}
+});
 const handle=(kind,write=false)=>async(req,res)=>{
     res.set('Cache-Control','no-store');
     try {
@@ -25,8 +32,8 @@ const handle=(kind,write=false)=>async(req,res)=>{
         let data;
         if(write) {
             if(!req.body||Object.keys(req.body).some(k=>!['identity','expectedRevision'].includes(k)))return res.status(400).send({status:400,message:'Payload inválido.'});
-            data=await identity.save(kind,id,business,actor,req.body.identity,req.body.expectedRevision,kind==='professional'&&await hasPermission(actor,'admin.users'));
-        } else {const row=await identity.read(kind,id,business);data=identity.view(row.data,row.revision,row.updatedAt);}
+            data=await identity.save(kind,id,business,actor,req.body.identity,req.body.expectedRevision,kind==='professional'&&await hasPermission(actor,'admin.users'),kind==='establishment'&&!id?req.get('Idempotency-Key'):undefined);
+        } else {const row=await identity.read(kind,id,business);data=await identity.view(row.data,row.revision,row.updatedAt);}
         res.status(200).send({status:200,data,message:'Identidad guardada o consultada.'});
     } catch(e) {res.status(e.status||500).send({status:e.status||500,message:e.status?e.message:'No se pudo completar la operación.',data:{code:e.code||'IDENTITY_ERROR',field:e.field}});}
 };

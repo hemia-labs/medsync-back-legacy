@@ -4,7 +4,7 @@ const { invalidate } = require('../services/pulse/invalidation');
 const WRITERS = [
  ['POST', /^\/api\/appointment\/(save|reschedule|config\/(save|timezone))\/?$/], ['DELETE', /^\/api\/appointment\/delete\/?$/],
  ['POST', /^\/api\/tracing\/(save|cancel)\/?$/], ['PUT', /^\/api\/tracing\/update\/?$/], ['DELETE', /^\/api\/tracing\/delete\/?$/],
- ['POST', /^\/api\/document\/(template\/save|signature-request\/(create|email|revoke)|create|sign|refusal|cancel)\/?$/],
+ ['POST', /^\/api\/document\/(template\/save|signature-request\/(create|email|revoke)|consent\/supersede-refusal|create|sign|refusal|cancel)\/?$/],
  ['POST', /^\/api\/prescription\/(config\/save|save|issue|cancel)\/?$/], ['DELETE', /^\/api\/prescription\/draft\/?$/],
  ['POST', /^\/api\/px\/(create-minimal|save)\/?$/], ['PUT', /^\/api\/px\/(update|administrative|restore)\/?$/], ['DELETE', /^\/api\/px\/(delete|force-delete)\/?$/],
  ['POST', /^\/api\/user\/(create|professional-profile\/[^/]+)\/?$/], ['PUT', /^\/api\/user\/update\/[^/]+\/?$/],

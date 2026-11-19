@@ -5,7 +5,15 @@ const awaitHandler = require('../../middleware/awaitHandlerFactory.middleware');
 const controller = require('../../controller/mysql/saasLegal.controller');
 
 router.get('/public/:documentKey', awaitHandler(controller.publicDocument));
-router.post('/integration/context', awaitHandler(controller.representativeContext));
+const paymentsContext = require('./payments').createLegalContextHandler();
+const representativeContext = awaitHandler(controller.representativeContext);
+// Legal uses one context URL per system for document-set signing and checkout.
+router.post('/integration/context', (req, res, next) => {
+    if (['acceptance', 'checkout_validation'].includes(req.body?.purpose)) {
+        return paymentsContext(req, res);
+    }
+    return representativeContext(req, res, next);
+});
 // Legal information stays available to authenticated members of expired or
 // restricted tenants. The DAO still revalidates actor/tenant membership.
 router.use(Token.Auth);

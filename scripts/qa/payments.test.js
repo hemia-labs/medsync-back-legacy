@@ -153,6 +153,39 @@ test('HTTP applies Origin and session CSRF, keeps machine callback separate, san
     }finally{await new Promise(resolve=>server.close(resolve));}
 });
 
+test('the configured Legal callback preserves document signing and authenticates Payments context',async()=>{
+    const payments=require('../../src/routes/mysql/payments'),f=fixture(),express=require('express');
+    const createContextHandler=payments.createLegalContextHandler;
+    const controllerPath=require.resolve('../../src/controller/mysql/saasLegal.controller');
+    const previousController=require.cache[controllerPath];
+    let documentRequests=0;
+    require.cache[controllerPath]={id:controllerPath,filename:controllerPath,loaded:true,exports:{
+        representativeContext(req,res){documentRequests++;assert.equal(req.body.purpose,'document_acceptance');res.json({canAcceptDocuments:true});}
+    }};
+    payments.createLegalContextHandler=()=>createContextHandler(f.service);
+    let router;
+    try{router=require('../../src/routes/mysql/saas-legal');}
+    finally{
+        payments.createLegalContextHandler=createContextHandler;
+        if(previousController)require.cache[controllerPath]=previousController;
+        else delete require.cache[controllerPath];
+    }
+    const app=express();app.use(express.json());app.use('/api/saas-legal',router);
+    const server=await new Promise(resolve=>{const listener=app.listen(0,'127.0.0.1',()=>resolve(listener));});
+    const endpoint='http://127.0.0.1:'+server.address().port+'/api/saas-legal/integration/context';
+    const send=(body,authorization)=>fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(authorization?{authorization}:{})},body:JSON.stringify(body)});
+    try{
+        const document=await send({purpose:'document_acceptance'});assert.deepEqual(await document.json(),{canAcceptDocuments:true});
+        const buyer={subjectId:actor.id_login,organizationId:actor.id_business};
+        const rejected=await send({...buyer,purpose:'checkout_validation'});assert.equal(rejected.status,401);assert.equal(f.sql.length,0);
+        const accepted=await send({...buyer,purpose:'acceptance',sessionId:actor.id_session},'Bearer machine-test');
+        assert.equal((await accepted.json()).canContract,true);
+        const validated=await send({...buyer,purpose:'checkout_validation'},'Bearer machine-test');
+        assert.equal((await validated.json()).membershipId,membershipId(actor.id_business,actor.id_login));
+        assert.equal(documentRequests,1);
+    }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
 function cancellationFixture() {
     const f=fixture(),end=new Date(Date.now()+86400000*20).toISOString();
     let current={organizationId:actor.id_business,productCode:'medsync',revision:'1',confirmedAt:new Date().toISOString(),

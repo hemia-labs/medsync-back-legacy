@@ -1,9 +1,11 @@
 'use strict';
 const C=require('./contract');
 const S=require('./storage');
+const {operation}=require('./establishmentOperation');
 const {randomUUID,createHash}=require('node:crypto');
 const hash = body => createHash('sha256').update(JSON.stringify([body.person,body.address||{},body.identity])).digest('hex');
 function createService(db) {
+    const catalogs=require('./catalogs').createCatalogs(db);
     const query=(sql,replacements,transaction)=>db.query(sql,{replacements,transaction,type:'SELECT'});
     async function parent(kind,id,business,transaction,lock=false) {
         if(typeof id!=='string'||!id.length||id.length>50||!business)C.fail('id');
@@ -39,6 +41,7 @@ function createService(db) {
         const changing=body.identity!==undefined || legacyChanged;
         if(!creating && changing && (cur.revision || body.identity!==undefined) && (!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision!==cur.revision))C.fail('expectedRevision','IDENTITY_CONFLICT',409);
         let data=C.validate('patient',body.identity||{},cur.data,{creating});
+        await catalogs.validate(body.identity||{},transaction,data);
         if(body.identity) {
             if('givenNames' in body.identity && data.givenNames!==body.person.name)C.fail('givenNames','IDENTITY_LEGACY_CONFLICT');
             if('birthDate' in body.identity && data.birthDate!==body.person.birthday)C.fail('birthDate','IDENTITY_LEGACY_CONFLICT');
@@ -56,21 +59,39 @@ function createService(db) {
     }
     // NC1 identidad integrada: same write inside a caller's transaction, so the professional profile and its
     // identity commit or roll back together. save() keeps its own transaction for PATCH /identity/*.
-    async function save(kind,id,business,actor,patch,expectedRevision,canManage=false) {
-        return db.transaction(transaction=>saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage));
+    async function save(kind,id,business,actor,patch,expectedRevision,canManage=false,operationKey) {
+        return db.transaction(transaction=>saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage,operationKey));
     }
-    async function saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage=false) {
+    async function saveIn(transaction,kind,id,business,actor,patch,expectedRevision,canManage=false,operationKey) {
         if(!transaction)throw new Error('Identity writes require a transaction');
         if(!patch||typeof patch!=='object'||Array.isArray(patch))C.fail('identity');
         {
             const creating=kind==='establishment'&&!id;
-            if(creating) {await query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE',{business},transaction);id=randomUUID();}
+            const op=creating?operation(business,operationKey,patch,expectedRevision):null;
+            if(creating) {
+                if(expectedRevision!==0)C.fail('expectedRevision','IDENTITY_CONFLICT',409);
+                const parents=await query('SELECT id_business FROM business WHERE id_business=:business FOR UPDATE',{business},transaction);
+                if(!parents.length)C.fail('id','IDENTITY_NOT_FOUND',404);
+                id=op?op.id:randomUUID();
+                if(op) {
+                    // The tenant row serializes first attempts, retries and late commits across server processes.
+                    // Resolve an existing operation BEFORE catalog validation: its original release may have changed.
+                    const [stored]=await query('SELECT * FROM care_establishment WHERE id_business=:business AND id_care_establishment=:id FOR UPDATE',{business,id},transaction);
+                    if(stored) {
+                        if(stored.request_hash!==op.hash)C.fail('Idempotency-Key','IDEMPOTENCY_KEY_REUSED',409);
+                        return {id,...await catalogs.view(S.decode(kind,stored),Number(stored.revision),stored.updated_at,transaction),replayed:true};
+                    }
+                }
+            }
             else await parent(kind,id,business,transaction,true);
             const cur=creating?{data:{active:true},revision:0}:await read(kind,id,business,transaction);
             if(!Number.isSafeInteger(expectedRevision)||expectedRevision!==cur.revision)C.fail('expectedRevision','IDENTITY_CONFLICT',409);
             if(kind==='professional'&&'authorizedPersonnelTypes' in patch&&!canManage)C.fail('authorizedPersonnelTypes','IDENTITY_FORBIDDEN',403);
             const data=C.validate(kind,patch,cur.data);
-            await persist(kind,id,business,actor,data,cur.revision,transaction);
+            const freshClues=kind==='establishment'&&patch.cluesRef&&patch.cluesRef.releaseId&&
+                (!cur.data.cluesRef||patch.cluesRef.releaseId!==cur.data.cluesRef.releaseId||patch.cluesRef.code!==cur.data.cluesRef.code);
+            await catalogs.validate(patch,transaction,data,{freshClues:Boolean(freshClues)});
+            await persist(kind,id,business,actor,data,cur.revision,transaction,op?op.hash:cur.row&&cur.row.request_hash);
             if(kind==='patient') {
                 const surname=[data.firstSurname,data.secondSurname].filter(Boolean).join(' ');
                 // An omitted legacy split is preserved; an explicit clear must reach display/search mirrors.
@@ -86,9 +107,9 @@ function createService(db) {
                 if(name.length>250)C.fail('givenNames');
                 if(name||hadNames)await db.query('UPDATE doctor_professional_profile SET professional_name=:name,updated_at=UTC_TIMESTAMP(),updated_by=:actor WHERE id_doctor_professional_profile=:id AND id_business=:business',{replacements:{name:name||null,actor,id,business},transaction});
             }
-            return {id,...C.view(data,cur.revision+1)};
+            return {id,...await catalogs.view(data,cur.revision+1,null,transaction)};
         }
     }
-    return {read,save,saveIn,patientWrite,view:C.view};
+    return {read,save,saveIn,patientWrite,view:catalogs.view,catalogs};
 }
 module.exports={createService,hash};

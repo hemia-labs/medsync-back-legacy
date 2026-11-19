@@ -5,6 +5,18 @@ const DocumentDao = require('../../Dao/mysql/document.dao');
 const { applyTenantToBody } = require('../../util/tenant');
 
 class DocumentController extends httpResponseHelper {
+    ConsentReview = async(req, res) => {
+        const service = require('../../services/documentSignature/sensitiveConsent.service');
+        const result = await service.review(applyTenantToBody(req, { id_person: req.params.id_person }));
+        res.status(result.status).send(result);
+    }
+
+    SubstituteRefusal = async(req, res) => {
+        const service = require('../../services/documentSignature/sensitiveConsent.service');
+        const result = await service.substitute(applyTenantToBody(req, req.body || {}));
+        res.status(result.status).send(result);
+    }
+
     Templates = async(req, res, next) => {
         let _body = applyTenantToBody(req, req.body || {});
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);

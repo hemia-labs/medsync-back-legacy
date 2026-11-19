@@ -381,6 +381,9 @@ con la sesión verificada; no reutiliza el evidenceId del registro como acceptan
 `/api/payments/legal/context` usa firma OAuth e introspección del SDK, con
 `legal.consumer_context.read`, cliente Legal permitido y audiencia `medsync-api`.
 No acepta una cookie de navegador como autenticación de servicio.
+Si el sistema de Legal ya usa `/api/saas-legal/integration/context`, conserva esa URL.
+El callback comparte la verificación OAuth de Payments para `acceptance` y
+`checkout_validation`, y mantiene el contrato de firma de `document_acceptance`.
 
 Las mutaciones de navegador exigen Cookie D2, Origin exacto y CSRF de sesión.
 El navegador no elige organización, usuario, proveedor, importe ni URLs de

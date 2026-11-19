@@ -191,7 +191,8 @@ class PublicDocumentSignatureDao {
     }
 
     async lockPlanPatient(request, transaction) {
-        if (!request || request.document_type !== 'TREATMENT_PLAN_CONSENT') return;
+        // Sensitive consent participates too; remote signing must serialize with B and history closing.
+        if (!request) return;
         await sequelize.query(`SELECT id_person FROM person WHERE ${collateEq('id_person', ':_id_person')} AND ${collateEq('id_business', ':_id_business')} FOR UPDATE`,
             { replacements: { _id_person: request.id_person, _id_business: request.id_business }, type: QueryTypes.SELECT, transaction });
     }
