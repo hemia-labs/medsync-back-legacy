@@ -13,7 +13,7 @@ const tests = [
     'account-legal-regression', 'legal-registration-set-isolation', 'legal-evidence-permanent-rejection',
     'registration-recovery-regression',
     'registration-plans-regression',
-    'private-images-regression',
+    'private-images-regression', 'shared-document-logo-regression',
     'po18-security-regression', 'request-body-security-regression',
     'issues-hardening-regression', 'issues-upload-regression', 'deploy-release-regression',
     'prescription-issue-regression', 'prescription-output-regression',

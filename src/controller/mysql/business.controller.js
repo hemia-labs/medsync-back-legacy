@@ -53,6 +53,9 @@ class BusinessController extends httpResponseHelper {
         let response = this.HttpNotSucces(HttpStatus.NOT_CONTENT, MESSAGES.NOT_CONTENT);
         try {
             response = await presentLogo(await BusinessDao.get(getBusinessIdFromToken(req.tokenDecode)), getBusinessIdFromToken(req.tokenDecode));
+            if (response?.status === 200 && response.data) {
+                response.data.canManageLogo = Boolean(await isTenantAdministrator(req.tokenDecode.id_login, getBusinessIdFromToken(req.tokenDecode), 'admin.config'));
+            }
             res.set('Cache-Control', 'no-store');
             if (response && response.data && req.tenantOperational) {
                 response.data.tenantOperational = req.tenantOperational;
