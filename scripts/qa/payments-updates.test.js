@@ -136,3 +136,29 @@ test('real subscription HTTP stream sends cached then webhook state on one reque
         admin=false;updates.publish('a',{revision:'3'});assert.match(Buffer.from((await reader.read()).value).toString(),/event: settled/);assert.equal((await reader.read()).done,true);assert.equal(updates.total,0);
     }finally{if(reader)await reader.cancel();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+test('subscription heartbeat recovers a webhook committed by another worker',async t=>{
+    t.mock.timers.enable({apis:['setInterval']});
+    const updates=new PaymentUpdates();let saved={organizationId:'a',revision:'1'},reads=0;
+    const one=connection(updates,'a',async()=>{},Date.now()+60000,async()=>{reads++;return saved;});
+    try {
+        await flush();assert.equal(reads,1);
+        saved={organizationId:'a',revision:'2'};
+        t.mock.timers.tick(15000);await flush();
+        assert.equal(reads,2);assert.match(one.text(),/id: 2\nevent: snapshot/);
+        one.close();t.mock.timers.tick(15000);await flush();assert.equal(reads,2);
+    }finally{one.close();t.mock.timers.reset();}
+});
+test('reconciliation pushes committed state and preserves a newer concurrent refund; rollback never publishes',async()=>{
+    const {PaymentsService}=require('../../src/services/payments/payments.service'),{randomUUID}=require('node:crypto');
+    const business=randomUUID(),snapshot={organizationId:business,revision:'2'},newer={organizationId:business,revision:'3'};
+    let applied=true,fail=false;const notices=[],original=paymentUpdates.publish;
+    paymentUpdates.publish=(id,value)=>notices.push({id,value});
+    const service=new PaymentsService({},{runtime:{client:{snapshots:{current:async()=>snapshot}}},projection:{apply:async()=>{if(fail)throw Error('rollback');return {applied};}}});
+    service.currentSnapshot=async()=>newer;
+    try {
+        await service.synchronize(business);assert.deepEqual(notices,[{id:business,value:snapshot}]);
+        applied=false;await service.synchronize(business);assert.deepEqual(notices.at(-1),{id:business,value:newer});
+        fail=true;await assert.rejects(service.synchronize(business));assert.equal(notices.length,2);
+    }finally{paymentUpdates.publish=original;}
+});

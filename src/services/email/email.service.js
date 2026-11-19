@@ -14,7 +14,8 @@ function normalizeError(error, fallbackCode = 'EMAIL_SEND_FAILED') {
         success: false,
         provider: normalizeProviderName(),
         code: error && error.code ? error.code : fallbackCode,
-        message: error && error.safe ? error.message : 'No se pudo enviar el correo.'
+        message: error && error.safe ? error.message : 'No se pudo enviar el correo.',
+        ...(error && error.safe && error.retryable === true ? { retryable: true } : {})
     };
 }
 

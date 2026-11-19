@@ -328,7 +328,7 @@ El worker bloquea y reclama el evento en MySQL **antes** de llamar a SES.
 guardar direcciones, secretos o respuestas del proveedor en la cola. SES no
 ofrece clave de idempotencia para SendEmail: la garantía es como máximo un
 intento de envío por suscripción, no entrega exactamente una vez. Una caída
-después de reclamar o una respuesta/rechazo de SES no confirmado deja el evento
+después de reclamar o una respuesta de SES no confirmada deja el evento
 sin reenvío automático (`EMAIL_DELIVERY_UNCONFIRMED`, o reclamado sin `sent_at`).
 Reenviarlo sin comprobar el proveedor podría duplicar un correo ya entregado.
 Si SES o su configuración no están listos, el job no reclama eventos.
@@ -508,9 +508,10 @@ del webhook antes de utilizar renovaciones y notificaciones en un despliegue.
 Con una cuenta administradora de correo verificado, abrir `/cuenta/planes`.
 Seleccionar Básico o Profesional y abrir los documentos en sus modales. Las
 versiones aceptadas en el registro deben aparecer reconocidas; sólo se marcan
-los documentos nuevos o modificados. Pulsar «Continuar con el pago» prepara el
-mismo intento. Cuando esté listo, «Pagar con PayPal» abre su ventana segura;
-el segundo gesto conserva la autorización del navegador para abrirla. Usar una
+los documentos nuevos o modificados. Pulsar «Continuar con PayPal» reserva la
+ventana en ese mismo clic, acepta las condiciones y prepara el mismo intento.
+Cuando el recibo está listo, la ventana continúa a PayPal sin otro clic ni
+redirección de la pestaña principal. Usar una
 cuenta compradora Sandbox distinta de la comerciante.
 Al volver, esperar la confirmación automática: antes del cobro debe mostrarse la
 espera y después el plan activo, importe efectivamente pagado y acceso habilitado.
@@ -711,3 +712,61 @@ El SDK ampliado se instala desde el tarball versionado bajo `vendor/`, sin
 publicar un paquete npm ni depender de una ruta temporal del equipo. No hay
 nuevas credenciales ni migraciones. La prueba integral con comprador Sandbox
 y webhook real sigue siendo una comprobación manual financiera separada.
+
+## Checkout con un solo clic y recuperación de confirmación (2026-11-18)
+
+Esta sección sustituye las indicaciones anteriores de segundo gesto,
+redirección de contratación inicial y espera exclusivamente por webhook.
+Registro y contratación dentro de la app usan `AccountPlans`: el botón oficial
+«Continuar con PayPal» reserva una ventana antes de cualquier `await`, mediante
+el mismo helper que usa el cambio de plan. El recibo `ready` navega esa ventana
+con el enlace del intento, incluso sin metadatos del SDK. Una preparación
+asíncrona conserva la ventana hasta que un snapshot recupera el mismo recibo.
+Los intentos existentes con metadatos conservan la sesión popup del SDK v6.
+Cerrar/cancelar conserva el intento; bloquear ventanas no acepta condiciones
+ni crea una contratación. Recargar nunca abre una ventana automáticamente.
+
+El retorno de la ventana se valida por origen, ventana e intento. Al aprobar,
+al abrir un intento y al actualizar manualmente, se concilia mediante
+`GET /api/payments/license` y se lee el snapshot local comprometido. Tras una
+aprobación hay hasta seis recuperaciones adicionales espaciadas, sin concurrencia;
+terminan al confirmar acceso, cerrar el contrato, expirar sesión o salir de la
+vista. Son lecturas de Billing: no llaman a `verify`, no capturan y no recrean
+pagos. Una aprobación/query nunca sustituye `checkoutConfirmation` del comprador,
+contrato, plan y precio exactos, ni la rehidratación de la sesión pagada.
+
+La conciliación publica sólo después del commit y utiliza la revisión local
+más reciente si ganó una entrega concurrente. Cada heartbeat SSE de suscripción
+recupera el snapshot local cada 15 segundos, con autorización vigente, para
+cubrir un webhook recibido por otro worker. Esa recuperación no consulta Billing
+ni PayPal. El historial de pagos por sí solo no concede acceso.
+
+Validación: 86 pruebas del backend, regresiones Vue de checkout, SDK, ventana,
+cambio de plan, facturación, historial y webhooks, lint del componente y build
+production con configuración sintética. Las pruebas no producen compras reales.
+La validación de QA con PayPal Sandbox y el despliegue en test.medsync siguen
+siendo verificaciones del ambiente; estos cambios no los ejecutan.
+
+## Recuperación del correo de activación (2026-11-18)
+
+Los rechazos explícitos de SES (HTTP 4xx, excepto timeout 408) y los errores
+locales de configuración previos a SendEmail ya no se confunden con una
+aceptación incierta. El proveedor devuelve `retryable: true` sólo en esos
+casos. El worker marca `EMAIL_DELIVERY_RETRYABLE` y permite reclamar el
+evento después de un minuto, sin bloquear los otros correos pendientes.
+Al reclamar de nuevo vuelve a validar comprador, correo, plan y contrato.
+La entrega exitosa consume el evento; errores de red, timeout, HTTP 5xx,
+respuesta sin MessageId o excepción desconocida conservan la protección
+contra reenvíos de resultado incierto. No cambian el esquema ni los pagos.
+
+Los eventos antiguos `EMAIL_DELIVERY_UNCONFIRMED` no se reabren: sus datos
+no distinguen un rechazo de un correo que pudo aceptarse. Se requiere
+comprobar el resultado en SES antes de decidir un reenvío.
+
+Validación: 88 pruebas de pagos y 19 comprobaciones del proveedor SES,
+incluyendo rechazo, espera, recuperación, concurrencia y ausencia de
+reenvío tras resultados inciertos. No se enviaron correos reales.
+El diagnóstico de test.medsync no se completó: SSH agotó el tiempo de
+espera y la cuenta MySQL configurada respondió `ER_DBACCESS_DENIED_ERROR`
+al consultar el esquema QA en una transacción de sólo lectura. La
+configuración local usa correo deshabilitado y no acredita el estado de QA.
