@@ -1,5 +1,20 @@
 # medsync-back
 
+## 0.2.0
+
+### Minor Changes
+
+- 58dd5c9: Permite al doctor responsable autorizar la sustitución de una negativa por un consentimiento firmado posterior, con eventos espejo, control de concurrencia y conservación de las historias anteriores. El cierre puede comprobar el conjunto de consentimiento revisado antes de escribir.
+- 73bee0c: Conecta identidad y establecimientos con los catálogos versionados NC4, ofrece búsqueda acotada y valida las claves dentro de la transacción existente. Los datos sin fuente permanecen no verificados; incluye importación explícita sin DDL ni carga automática.
+- 02ee553: Use the clinic document logo when issuing prescriptions or finalizing clinical histories, preserving the captured image independently of later replacements. Require the additive clinical history logo snapshot migration before deployment; historical rows are not backfilled.
+
+### Patch Changes
+
+- bed0de0: Indica UTC en las fechas visibles de revisión y sustitución del consentimiento, conservando intactas las evidencias y sus huellas.
+- e495ab5: La búsqueda de catálogos encuentra nombres escritos sin acentos (por ejemplo «mexico» o «alvaro obregon») y filtra municipios y localidades por su clave padre usando el índice. El texto capturado sigue tratándose como literal.
+- 575ce0e: Make keyed establishment creation idempotent within the account, preserving the original request fingerprint after edits. Expose read-only SIS CLUES attributes and exact current-version lookup, and reject a new versioned assignment when its catalog release is no longer current. Uses existing tables; no database migration or catalog import.
+- 0958bd4: Restrict client-submitted document audit events to VIEWED and PRINTED. Clinical signature and refusal events remain owned by their authoritative server commands.
+
 ## 0.1.2
 
 ### Patch Changes
