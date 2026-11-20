@@ -153,7 +153,7 @@ async function noticeContext(business, me, context, reasonCode) {
     const found = kind === 'evolution_note' ? await signedNote(business, context) : await trackedFollowUp(business, context);
     if (!found) throw new ChatError('CHAT_CONTEXT_INVALID', 422, kind === 'evolution_note' ? 'La nota no está firmada o no pertenece a este consultorio.' : 'La nota no existe en este consultorio o fue cancelada.');
     let professional = { id: me, name: null };
-    if (context.professionalId !== undefined && context.professionalId !== null && context.professionalId !== me) {
+    if (kind === 'tracing' && context.professionalId !== undefined && context.professionalId !== null && context.professionalId !== me) {
         professional = await businessPerson(business, context.professionalId);
         if (!professional || !professional.active) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'El profesional no pertenece a este consultorio.');
     } else if (found.signer) {
@@ -302,7 +302,7 @@ class ChatDao {
     async noticesForContext(business, me, kind, ref) {
         if (!rules.CONTEXT_KINDS.includes(kind) || !rules.loginId(ref)) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'Referencia no válida.');
         const rows = await select(`SELECT public_id, id_sender, id_recipient, reason_code, created_at, read_at FROM chat_message
-            WHERE id_business = :business AND context_kind = :kind AND context_ref = :ref ORDER BY id ASC LIMIT 100`, { business, kind, ref });
+            WHERE id_business = :business AND context_kind = :kind AND context_ref = :ref ORDER BY id DESC LIMIT 100`, { business, kind, ref });
         const names = await namesFor(business, [...new Set(rows.flatMap(row => [row.id_sender, row.id_recipient]))]);
         return {
             items: rows.map(row => ({

@@ -12,6 +12,7 @@ function principal(req) {
 
 function handle(action) {
     return async (req, res) => {
+        res.set('Cache-Control', 'no-store');
         try {
             const { business, me } = principal(req);
             const data = await action(business, me, req);
