@@ -38,6 +38,10 @@ function rows(body, correcting = false) {
     const ids = new Set();
     return body.tracing.map(row => {
         const result = content(row);
+        if (!correcting && row.other_performed !== undefined) {
+            result.other_performed = text(row.other_performed, 255, true);
+            if (!row.id_tracing) throw new Error('Envía un identificador estable para el tratamiento realizado.');
+        }
         if (!correcting && row.id_tracing) {
             result.id_tracing = text(row.id_tracing, 50, true);
             if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.id_tracing)) {
