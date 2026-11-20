@@ -14,6 +14,8 @@ const REASONS = Object.freeze({
 // Permisos que ya permiten ver datos de pacientes. Se evalúan al leer, con los permisos vigentes del lector.
 const PATIENT_DATA_PERMISSIONS = Object.freeze(['px.dates', 'px.all', 'px.tab.monitoring']);
 const AGENDA_PERMISSIONS = Object.freeze(['px.dates', 'admin.config']);
+// Referencias que Notas puede entregar: nota formal firmada (NC5) o seguimiento operativo existente.
+const CONTEXT_KINDS = Object.freeze(['evolution_note', 'tracing']);
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const LOGIN_ID = /^[^\s]{1,50}$/;
 
@@ -96,6 +98,6 @@ function preview(row) {
 }
 
 module.exports = {
-    BODY_MAX, COMMENT_MAX, FREQUENT_LIMIT, REASONS, PATIENT_DATA_PERMISSIONS, AGENDA_PERMISSIONS,
+    BODY_MAX, COMMENT_MAX, FREQUENT_LIMIT, REASONS, CONTEXT_KINDS, PATIENT_DATA_PERMISSIONS, AGENDA_PERMISSIONS,
     body, comment, requestId, loginId, reason, pair, initials, patientInitials, orderDirectory, hash, noticeView, preview
 };

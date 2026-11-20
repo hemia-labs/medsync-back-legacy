@@ -33,5 +33,6 @@ module.exports = {
     previewNotice: handle((business, me, req) => ChatDao.previewNotice(business, me, req.body || {})),
     sendNotice: handle((business, me, req) => ChatDao.sendNotice(business, me, req.body || {})),
     request: handle((business, me, req) => ChatDao.request(business, me, req.params.clientRequestId)),
+    noticesForContext: handle((business, me, req) => ChatDao.noticesForContext(business, me, req.params.kind, req.params.ref)),
     noticesForTracing: handle((business, me, req) => ChatDao.noticesForTracing(business, me, req.params.tracingId))
 };

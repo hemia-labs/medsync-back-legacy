@@ -18,6 +18,7 @@ router.post('/messages', Token.Auth, csrfProtected, requireTenantOperational, aw
 router.post('/notices/preview', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(Chat.previewNotice));
 router.post('/notices', Token.Auth, csrfProtected, requireTenantOperational, awaitHandlerFactory(Chat.sendNotice));
 router.get('/requests/:clientRequestId', Token.Auth, requireTenantOperational, awaitHandlerFactory(Chat.request));
+router.get('/notices/context/:kind/:ref', Token.Auth, requireTenantOperational, requirePermission('px.tab.monitoring'), awaitHandlerFactory(Chat.noticesForContext));
 router.get('/notices/tracing/:tracingId', Token.Auth, requireTenantOperational, requirePermission('px.tab.monitoring'), awaitHandlerFactory(Chat.noticesForTracing));
 
 module.exports = router;

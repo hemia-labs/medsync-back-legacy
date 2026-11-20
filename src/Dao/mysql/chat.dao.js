@@ -110,33 +110,61 @@ async function sendResult(business, me, inserted) {
     return { ...messageView(inserted.row, me, [], names), replayed: inserted.replayed };
 }
 
-// Valida la nota y compone los datos operativos permitidos. Nunca lee el texto clínico.
-async function noticeContext(business, me, context, reasonCode) {
-    if (!context || context.kind !== 'tracing' || !rules.loginId(context.patientId) || !rules.loginId(context.tracingId)) {
-        throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'La referencia de la nota no es válida.');
+const dateOnly = value => (value instanceof Date ? value.toISOString().slice(0, 10) : (value ? String(value).slice(0, 10) : null));
+const fullName = row => [row.name, row.surname].map(value => String(value || '').trim()).filter(Boolean).join(' ') || 'Paciente';
+
+// Nota formal firmada de NC5 (tabla de Notas). Solo se leen fecha de atención y firmante, nunca el contenido clínico.
+async function signedNote(business, context) {
+    if (!rules.loginId(context.noteId)) return null;
+    try {
+        const rows = await select(`SELECT v.note_id AS ref, v.id_person, p.code, p.name, p.surname,
+                JSON_UNQUOTE(JSON_EXTRACT(v.payload, '$.date')) AS attention,
+                (SELECT f.signer_name FROM evolution_note_signed_version f WHERE f.id_business = v.id_business AND f.id_person = v.id_person
+                    AND f.note_id = v.note_id ORDER BY f.version ASC LIMIT 1) AS signer
+            FROM evolution_note_signed_version v INNER JOIN person p ON p.id_person = v.id_person AND p.id_business = :business
+            WHERE v.id_business = :business AND v.id_person = :patient AND v.note_id = :note ORDER BY v.version DESC LIMIT 1`,
+        { business, patient: context.patientId, note: context.noteId });
+        return rows[0] || null;
+    } catch (error) {
+        const code = error && ((error.original && error.original.code) || (error.parent && error.parent.code));
+        if (code === 'ER_NO_SUCH_TABLE') throw new ChatError('CHAT_CONTEXT_UNAVAILABLE', 422, 'Las notas firmadas aún no están disponibles en este entorno.');
+        throw error;
     }
+}
+
+async function trackedFollowUp(business, context) {
+    if (!rules.loginId(context.tracingId)) return null;
+    const rows = await select(`SELECT t.id_tracing AS ref, t.quote_date_now AS attention, p.id_person, p.code, p.name, p.surname, NULL AS signer
+        FROM tracing t INNER JOIN person p ON p.id_person = t.id_person AND p.id_business = :business
+        WHERE t.id_tracing = :tracing AND t.id_person = :patient AND t.id_business = :business AND t.status = 'active' LIMIT 1`,
+    { business, tracing: context.tracingId, patient: context.patientId });
+    return rows[0] || null;
+}
+
+// Valida la referencia que entrega Notas y compone los datos operativos permitidos. Nunca lee el texto clínico.
+async function noticeContext(business, me, context, reasonCode) {
+    const kind = context && rules.CONTEXT_KINDS.includes(context.kind) ? context.kind : null;
+    if (!kind || !rules.loginId(context.patientId)) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'La referencia de la nota no es válida.');
     const reason = rules.reason(reasonCode);
     if (!reason) throw new ChatError('CHAT_REASON_INVALID', 422, 'Elige el motivo de la cita.');
     if (!(await effectivePermissions.hasPermission(me, 'px.tab.monitoring'))) {
         throw new ChatError('CHAT_CONTEXT_FORBIDDEN', 403, 'No tienes acceso a los seguimientos de este paciente.');
     }
-    const rows = await select(`SELECT t.id_tracing, t.quote_date_now, p.id_person, p.code, p.name, p.surname
-        FROM tracing t INNER JOIN person p ON p.id_person = t.id_person AND p.id_business = :business
-        WHERE t.id_tracing = :tracing AND t.id_person = :patient AND t.id_business = :business AND t.status = 'active' LIMIT 1`,
-    { business, tracing: context.tracingId, patient: context.patientId });
-    const found = rows[0];
-    if (!found) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'La nota no existe en este consultorio o fue cancelada.');
-    let professional = { id: me };
+    const found = kind === 'evolution_note' ? await signedNote(business, context) : await trackedFollowUp(business, context);
+    if (!found) throw new ChatError('CHAT_CONTEXT_INVALID', 422, kind === 'evolution_note' ? 'La nota no está firmada o no pertenece a este consultorio.' : 'La nota no existe en este consultorio o fue cancelada.');
+    let professional = { id: me, name: null };
     if (context.professionalId !== undefined && context.professionalId !== null && context.professionalId !== me) {
         professional = await businessPerson(business, context.professionalId);
         if (!professional || !professional.active) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'El profesional no pertenece a este consultorio.');
+    } else if (found.signer) {
+        // Por omisión, el profesional que firmó la nota.
+        professional = { id: null, name: String(found.signer) };
     }
     if (!professional.name) professional.name = (await namesFor(business, [me])).get(me);
-    const attention = found.quote_date_now instanceof Date ? found.quote_date_now.toISOString().slice(0, 10) : (found.quote_date_now ? String(found.quote_date_now).slice(0, 10) : null);
     return {
-        contextKind: 'tracing', contextRef: found.id_tracing, contextPatient: found.id_person, reason,
-        patientName: [found.name, found.surname].map(value => String(value || '').trim()).filter(Boolean).join(' ') || 'Paciente',
-        patientCode: found.code || null, professionalId: professional.id, professionalName: professional.name, attentionDate: attention
+        contextKind: kind, contextRef: found.ref, contextPatient: found.id_person, reason,
+        patientName: fullName(found), patientCode: found.code || null,
+        professionalId: professional.id, professionalName: professional.name, attentionDate: dateOnly(found.attention)
     };
 }
 
@@ -255,7 +283,7 @@ class ChatDao {
         const composed = await noticeContext(business, me, input.context, input.reason);
         const inserted = await insertOnce(business, me, {
             recipient: recipient.id, requestId, kind: 'team_notice', body: comment || null, ...composed,
-            payload: { kind: 'team_notice', recipient: recipient.id, tracing: composed.contextRef, patient: composed.contextPatient,
+            payload: { kind: 'team_notice', recipient: recipient.id, context: composed.contextKind, ref: composed.contextRef, patient: composed.contextPatient,
                 professional: composed.professionalId, reason: composed.reason, comment: comment || '' }
         });
         return sendResult(business, me, inserted);
@@ -269,10 +297,12 @@ class ChatDao {
         return { found: true, message: messageView(row, me, [], names) };
     }
 
-    async noticesForTracing(business, me, tracingId) {
-        if (!rules.loginId(tracingId)) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'Referencia no válida.');
+    async noticesForTracing(business, me, tracingId) { return this.noticesForContext(business, me, 'tracing', tracingId); }
+
+    async noticesForContext(business, me, kind, ref) {
+        if (!rules.CONTEXT_KINDS.includes(kind) || !rules.loginId(ref)) throw new ChatError('CHAT_CONTEXT_INVALID', 422, 'Referencia no válida.');
         const rows = await select(`SELECT public_id, id_sender, id_recipient, reason_code, created_at, read_at FROM chat_message
-            WHERE id_business = :business AND context_kind = 'tracing' AND context_ref = :tracingId ORDER BY id ASC LIMIT 100`, { business, tracingId });
+            WHERE id_business = :business AND context_kind = :kind AND context_ref = :ref ORDER BY id ASC LIMIT 100`, { business, kind, ref });
         const names = await namesFor(business, [...new Set(rows.flatMap(row => [row.id_sender, row.id_recipient]))]);
         return {
             items: rows.map(row => ({

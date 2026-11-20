@@ -200,6 +200,38 @@ async function main() {
         assert.equal(row.status, 'active');
     });
 
+    const noteCtx = { kind: 'evolution_note', patientId: 'px-a', noteId: '11111111-2222-4333-8444-555555555555' };
+    await step('Nota firmada: sin la tabla de Notas responde CHAT_CONTEXT_UNAVAILABLE', async () => {
+        await rejectsCode(chat.previewNotice(A, 'valeria', { recipientId: 'sofia', context: noteCtx, reason: 'control' }), 'CHAT_CONTEXT_UNAVAILABLE');
+    });
+
+    await step('Nota firmada (contrato de Codex): firmante y fecha del payload, sin contenido clínico; reintento sin duplicar', async () => {
+        // Copia de la tabla propuesta por Codex en scripts/migrations/nc5-evolution-signed.sql (worktree back-nc5-design-20261119).
+        await root.query(`CREATE TABLE ${DATABASE}.evolution_note_signed_version (id_business VARCHAR(50) NOT NULL, id_person VARCHAR(50) NOT NULL,
+            note_id CHAR(36) NOT NULL, version INT UNSIGNED NOT NULL, draft_revision INT UNSIGNED NOT NULL, request_id CHAR(36) NOT NULL,
+            request_hash CHAR(64) NOT NULL, author_id VARCHAR(50) NOT NULL, signer_profile VARCHAR(50) NOT NULL, signer_name VARCHAR(255) NOT NULL,
+            signer_license VARCHAR(100) NOT NULL, signed_at DATETIME(6) NOT NULL, payload JSON NOT NULL, correction_reason VARCHAR(1000) NULL,
+            PRIMARY KEY (id_business,id_person,note_id,version)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+        const payload = JSON.stringify({ date: '2026-11-18', evolution: 'Evolución confidencial', plan: 'Indicaciones confidenciales', done: ['Resina'] });
+        await root.query(`INSERT INTO ${DATABASE}.evolution_note_signed_version VALUES (?, 'px-a', ?, 1, 3, ?, ?, 'valeria', 'prof-1', 'Dra. Valeria Mendoza', '123', UTC_TIMESTAMP(6), ?, NULL),
+            (?, 'px-a', ?, 2, 4, ?, ?, 'valeria', 'prof-1', 'Dra. Valeria Mendoza', '123', UTC_TIMESTAMP(6), ?, 'Rectificación')`,
+        [A, noteCtx.noteId, 'a'.repeat(36), 'b'.repeat(64), payload, A, noteCtx.noteId, 'c'.repeat(36), 'd'.repeat(64), payload.replace('2026-11-18', '2026-11-19')]);
+        const preview = await chat.previewNotice(A, 'valeria', { recipientId: 'sofia', context: noteCtx, reason: 'control' });
+        assert.equal(preview.notice.professional, 'Dra. Valeria Mendoza');
+        assert.equal(preview.notice.attentionDate, '2026-11-19');
+        assert.ok(!/confidencial|Resina/i.test(JSON.stringify(preview)));
+        const id = rid();
+        const first = await chat.sendNotice(A, 'valeria', { recipientId: 'sofia', clientRequestId: id, context: noteCtx, reason: 'control' });
+        const again = await chat.sendNotice(A, 'valeria', { recipientId: 'sofia', clientRequestId: id, context: noteCtx, reason: 'control' });
+        assert.equal(again.replayed, true); assert.equal(again.messageId, first.messageId);
+        const listed = await chat.noticesForContext(A, 'valeria', 'evolution_note', noteCtx.noteId);
+        assert.equal(listed.items.length, 1);
+        assert.equal((await chat.noticesForContext(B, 'valeria-b', 'evolution_note', noteCtx.noteId)).items.length, 0);
+        await rejectsCode(chat.previewNotice(A, 'valeria', { recipientId: 'sofia', context: { ...noteCtx, noteId: '99999999-2222-4333-8444-555555555555' }, reason: 'control' }), 'CHAT_CONTEXT_INVALID');
+        await rejectsCode(chat.previewNotice(B, 'valeria-b', { recipientId: 'sofia-b', context: noteCtx, reason: 'control' }), 'CHAT_CONTEXT_INVALID');
+        await rejectsCode(chat.noticesForContext(A, 'valeria', 'otro', 'x'), 'CHAT_CONTEXT_INVALID');
+    });
+
     await step('Migración: revertir respalda filas y elimina la tabla; reaplicar la recrea', async () => {
         const migration = require('../migrations/nc5-internal-chat');
         const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'nc5-chat-'));
