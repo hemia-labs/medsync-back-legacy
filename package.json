@@ -29,7 +29,10 @@
     "qa:issues-mysql": "node scripts/qa/issues-mysql-regression.js",
     "qa:nc4-catalogs": "node --test scripts/qa/nc4-catalogs.test.js",
     "qa:nc4-catalogs-mysql": "bash scripts/qa/nc4-catalogs.docker.sh",
-    "migration:nc1-login-surnames": "node scripts/migrations/nc1-login-surnames.js"
+    "migration:nc1-login-surnames": "node scripts/migrations/nc1-login-surnames.js",
+    "qa:nc5-chat": "node --test scripts/qa/nc5-chat.test.js",
+    "qa:nc5-chat-mysql": "bash scripts/qa/nc5-chat.docker.sh",
+    "migration:nc5-chat": "node scripts/migrations/nc5-internal-chat.js"
   },
   "engines": {
     "node": ">=22.12 <23"
