@@ -114,6 +114,7 @@ app.use('/api/document', require('./routes/mysql/document'));
 app.use('/api/public/document-signature', require('./routes/mysql/public-document-signature'));
 app.use('/api/clinical-history', require('./routes/mysql/clinical-history'));
 app.use('/api/clinical-history-template', require('./routes/mysql/clinical-history-template'));
+app.use('/api/chat', require('./routes/mysql/chat'));
 
 // app.use('/api/category', require('./routes/mysql/category'));
 // app.use('/api/productService', require('./routes/mysql/productService'));
