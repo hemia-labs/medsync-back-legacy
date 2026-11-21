@@ -94,10 +94,10 @@ async function run() {
             return id;
         };
         const baseForm = { date: '2026-11-20', origin: '', reason: 'Control sintético', evolution: 'Evolución sintética', plan: 'Plan original: revisión en dos semanas', none: true, done: [], future: [], performed: '', indication: '' };
-        const signNote = async (patient, token = A) => {
+        const signNote = async (patient, token = A, requestId = randomUUID()) => {
             const id = randomUUID();
             assert.equal((await call(token, patient, '/evolution-drafts/' + id, { revision: 0, form: baseForm })).status, 200);
-            const result = await call(token, patient, '/evolution-notes/' + id + '/sign', { requestId: randomUUID(), revision: 1 });
+            const result = await call(token, patient, '/evolution-notes/' + id + '/sign', { requestId, revision: 1 });
             assert.equal(result.status, 200, JSON.stringify(result));
             return { id, result };
         };
@@ -172,8 +172,9 @@ async function run() {
             ['C07 cambio del motivo de rectificación de v2', "UPDATE evolution_note_signed_version SET correction_reason='Motivo cambiado' WHERE note_id=:id AND version=2"]
         ];
         for (const [name, sql] of tamper) {
-            const p = await newPatient(), { id } = await signNote(p);
-            assert.equal((await rectify(p, id, 1, 'Plan corregido')).status, 200);
+            const signRequest = randomUUID(), correctionRequest = randomUUID();
+            const p = await newPatient(), { id } = await signNote(p, A, signRequest);
+            assert.equal((await rectify(p, id, 1, 'Plan corregido', A, correctionRequest)).status, 200);
             const before = await external(p, id);
             await db.query(sql, { replacements: { id } });
             const got = await states(p, id), hit = name.includes('v2') ? 2 : 1, other = hit === 1 ? 2 : 1;
@@ -183,6 +184,13 @@ async function run() {
             assert.equal(got.summary.state, 'discrepancy');
             const blocked = await rectify(p, id, 2, 'Otra corrección');
             assert.equal(blocked.status, 409); assert.equal(blocked.data.code, 'CONTENT_MISMATCH');
+            const retriedSign = await call(A, p, '/evolution-notes/' + id + '/sign', { requestId: signRequest, revision: 1 });
+            const retriedCorrection = await rectify(p, id, 1, 'Plan corregido', A, correctionRequest);
+            for (const result of [retriedSign, retriedCorrection]) {
+                assert.equal(result.status, 409);
+                assert.deepEqual(result.data, { code: 'CONTENT_MISMATCH' });
+            }
+            assert.equal(Object.keys(await external(p, id)).length, 2);
             record(name, 'discrepancia confirmada; contenido retirado de la versión afectada; la otra versión sigue legible; rectificar se rechaza con 409', got, 'discrepancy', compare(before, await external(p, id)));
         }
         // 7-10. Versiones ausentes

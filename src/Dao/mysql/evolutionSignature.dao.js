@@ -18,8 +18,8 @@ const table = 'evolution_note_signed_version';
 const scope = 'id_business=:business AND id_person=:patient';
 const noteScope = scope + ' AND note_id=:id';
 const conflict = message => ({status:409, data:null, message});
-const unavailable = code => ({status:503, data:{code}, message:'No se puede firmar en este momento porque falta el control de integridad. No se guardó nada; puedes reintentar o avisar al administrador.'});
-const integrityConflict = code => ({status:409, data:{code}, message:'Esta nota tiene una diferencia de integridad pendiente de restaurar. Avisa al administrador antes de firmar o rectificar.'});
+const unavailable = code => ({status:503, data:{code}, message:'No pudimos comprobar la integridad de la nota. Consulta el historial y vuelve a intentarlo. Si el aviso continúa, contacta a Soporte de HEMIA.'});
+const integrityConflict = code => ({status:409, data:{code}, message:'El historial requiere revisión. Contacta a Soporte de HEMIA e informa al responsable del consultorio.'});
 const keys = body => ({business:body.id_business, patient:body.id_person, actor:body.id_login, id:body.id});
 function snapshot(row) {
     return {id:row.note_id, version:row.version, author:row.author_id, signer:row.signer_name,
@@ -162,13 +162,6 @@ async function attest(body, correcting) {
         let ref=null;
         try { ref=await integrity.loadReference(db,transaction,replacements,true); }
         catch (error) { console.error('EVOLUTION_INTEGRITY_UNAVAILABLE', error.code || error.message); }
-        const [replay]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND request_id=:request');
-        if (replay) {
-            if (replay.request_hash!==hash) return conflict('La solicitud anterior tenía otro contenido.');
-            const seen=ref && integrity.verify({rows:noteRows,entries:ref.entries,head:ref.head,cfg,onlyNote:body.id}).notes.get(body.id);
-            const mark=seen ? seen.versions.get(replay.version) : null;
-            return response.success({...snapshot(replay),integrity:mark ? {state:mark.state,code:mark.code} : {state:'unavailable',code:'REFERENCE_UNAVAILABLE'}},'Firma registrada.');
-        }
         // Sin evidencia de integridad no se firma: evita notas que luego no puedan comprobarse.
         if (!ref || !cfg.current) return unavailable('SEAL_UNAVAILABLE');
         const chain=integrity.verify({rows:noteRows,entries:ref.entries,head:ref.head,cfg,onlyNote:body.id});
@@ -180,6 +173,13 @@ async function attest(body, correcting) {
         if (flagged && flagged.state==='discrepancy') {
             integrity.recordEvent({type:correcting?'RECTIFY_BLOCKED_DISCREPANCY':'SIGN_BLOCKED_DISCREPANCY',code:flagged.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
             return integrityConflict(flagged.code);
+        }
+        const [replay]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND request_id=:request');
+        if (replay) {
+            if (replay.request_hash!==hash) return conflict('La solicitud anterior tenía otro contenido.');
+            const mark=flagged && flagged.versions.get(replay.version);
+            if (!mark || mark.state==='unavailable') return unavailable('SEAL_UNAVAILABLE');
+            return response.success({...snapshot(replay),integrity:mark},'Firma registrada.');
         }
         if (!correcting && prior) return conflict('Esta nota ya está firmada. Consulta su historial.');
         if (correcting && (!prior || prior.version!==body.revision)) return conflict('La versión cambió. Consulta el historial antes de rectificar.');
