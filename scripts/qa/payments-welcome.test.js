@@ -160,6 +160,7 @@ test('readiness refuses a missing outbox or missing durable uniqueness before st
     const previous=process.env.PAYMENTS_CONNECTION;process.env.PAYMENTS_CONNECTION='synthetic';
     const {createReadiness}=require('../../src/services/readiness');let mode='missing';
     const db={async sync(){},async query(sql){
+        if(sql.includes('information_schema.TABLES')) return [{present:3}];
         if(sql.includes('patient_code_counter'))return [{next_value:1}];
         if(sql==='SHOW INDEX FROM person')return [{Key_name:'code',Column_name:'code',Non_unique:0}];
         if(sql==='SHOW COLUMNS FROM business')return ['billing_snapshot','billing_revision','billing_access_until'].map(Field=>({Field}));

@@ -103,6 +103,7 @@ stub('../../src/db/Sequelize.connection', db);
     const { createReadiness } = require('../../src/services/readiness');
     let initialized = false, queries = 0, release;
     const readiness = createReadiness({ async sync() { initialized = true; }, query(sql) {
+        if (sql.includes('information_schema.TABLES')) return Promise.resolve([{present:3}]);
         if (sql.includes('patient_code_counter')) return Promise.resolve([{ next_value: 2 }]);
         if (sql.startsWith('SHOW INDEX')) return Promise.resolve([{ Non_unique: 0, Column_name: 'code', Key_name: 'uq_person_code' }]);
         queries++; return new Promise(resolve => { release = resolve; });

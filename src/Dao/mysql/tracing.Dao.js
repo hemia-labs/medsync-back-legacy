@@ -169,13 +169,6 @@ class TracingDao {
                 });
                 const current = await this.record(body, row.id_tracing, transaction);
                 await this.appendVersion(current, body, 'corrected', row.change_reason, transaction);
-                if (row.other_performed) {
-                    await recordPerformedExtra(sequelize, transaction, {
-                        business: body.id_business, patient: body.id_person, actor: body.id_login,
-                        note: id, name: row.other_performed, date: row.quote_date_now
-                    });
-                    await consentDocuments.invalidateStale(body, transaction);
-                }
                 saved.push(current);
             }
             return responseData.success(saved, 'Correccion guardada; la version anterior se conserva.');

@@ -34,9 +34,21 @@ async function run(){
   await db.query(fs.readFileSync(path.join(__dirname,'../migrations/nc5-evolution-draft.sql'),'utf8'));
   for(const file of ['nc5-evolution-signed.sql','nc5-performed-extra.sql'])
     await db.query(fs.readFileSync(path.join(__dirname,'../migrations',file),'utf8'));
+  await db.query('CREATE TABLE patient_code_counter(singleton INT PRIMARY KEY,next_value INT)');
+  await db.query('INSERT INTO patient_code_counter VALUES (1,1)');
+  await db.query('ALTER TABLE person ADD code VARCHAR(8), ADD UNIQUE INDEX uq_code(code)');
+  const readiness=require('../../src/services/readiness').createReadiness(db);
+  for(const table of ['evolution_note_draft','evolution_note_signed_version','evolution_note_performed_extra']){
+    await db.query('RENAME TABLE '+table+' TO qa_held_table');
+    await assert.rejects(readiness.initialize(),/NC5_NOTES_MIGRATION_REQUIRED/);
+    assert.equal(await readiness.check(),false);
+    await db.query('RENAME TABLE qa_held_table TO '+table);
+  }
+  await readiness.initialize();assert.equal(await readiness.check(),true);
+  console.log('PASS readiness NC5: cada tabla ausente bloquea; esquema completo listo.');
   for(const sql of [
    "INSERT INTO doctor_professional_profile VALUES ('doctor','clinic','profile','Doctora de prueba','TEST01',1)",
-   "INSERT INTO person VALUES ('p','clinic',1),('outside','other',1)",
+   "INSERT INTO person (id_person,id_business,active) VALUES ('p','clinic',1),('outside','other',1)",
    "INSERT INTO business (id_business,active,status,subscription_status) VALUES ('clinic',1,'active','active')",
    "INSERT INTO login VALUES ('doctor','clinic','r','doctor@example.invalid',0,1),('agenda','clinic','a','agenda@example.invalid',0,1),('colleague','clinic','r','colleague@example.invalid',0,1)",
    "INSERT INTO rol VALUES ('r','doctor','Doctor',1),('a','assistant','Assistant',1)",
@@ -45,13 +57,13 @@ async function run(){
    "INSERT INTO permission_rol VALUES ('r',1,1),('r',2,1),('r',3,1)",
    "INSERT INTO appointment VALUES ('visit','p','clinic',1),('foreign','outside','other',1)",
    "INSERT INTO treatment_plan VALUES ('plan','p','clinic',1,'active')",
-   "INSERT INTO patient_treatment (id_patient_treatment,id_treatment_plan,id_person,id_business,active,status,name) VALUES ('t','plan','p','clinic',1,'pending','Ajuste')"
+   "INSERT INTO patient_treatment (id_patient_treatment,id_treatment_plan,id_person,id_business,active,status,name) VALUES ('t','plan','p','clinic',1,'pending','Ajuste'),('future','plan','p','clinic',1,'pending','Próximo'),('later','plan','p','clinic',1,'pending','Adicional del plan')"
   ])await db.query(sql);
   await db.query("ALTER TABLE cat_permission ADD value INT, ADD sec INT");
   await db.query("INSERT INTO cat_permission (id_cat_permission,code,active,is_active) VALUES (4,'px.dates',1,1)");
   await db.query("INSERT INTO permission_rol VALUES ('a',4,1)");
   await db.query("ALTER TABLE login ADD name VARCHAR(80)");
-  await db.query("ALTER TABLE person ADD code VARCHAR(8),ADD name VARCHAR(80),ADD surname VARCHAR(80)");
+  await db.query("ALTER TABLE person ADD name VARCHAR(80),ADD surname VARCHAR(80)");
   await db.query("UPDATE person SET name='Paciente',surname='Prueba',code='000009' WHERE id_person='p'");
   await db.query("UPDATE login SET name=id_login");
   await db.query("INSERT INTO login (id_login,id_business,id_rol,email,active,locked,name) VALUES ('remote','other','r','remote@example.invalid',1,0,'Remote')");
@@ -79,7 +91,7 @@ async function run(){
     const result=await fetch(url,{method:body?'PUT':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
     return {status:result.status,...await result.json()};
   };
-  const id=randomUUID(),form={date:'2026-11-20',origin:'visit',reason:'Control',done:[{id:'t',name:'ignored'}],future:[{id:'t'}],performed:'Adicional'};
+  const id=randomUUID(),form={date:'2026-11-20',origin:'visit',reason:'Control',done:[{id:'t',name:'ignored'}],future:[{id:'future'}],performed:'Adicional'};
   const draft={revision:0,form};const saved=await call(A,draft,id);
   assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.form.done[0].name,'Ajuste');
   assert.equal((await call(A,draft,id)).data.revision,1);
@@ -114,6 +126,12 @@ async function run(){
   await db.query('UPDATE doctor_professional_profile SET is_active=0');
   assert.equal((await signed(A,sign,submit)).status,403);
   await db.query('UPDATE doctor_professional_profile SET is_active=1');
+  await db.query('ALTER TABLE patient_treatment ADD updated_by VARCHAR(50),ADD updated_at DATETIME');
+  assert.equal((await signed(A,sign,submit)).status,403);
+  await db.query("INSERT INTO cat_permission (id_cat_permission,code,active,is_active) VALUES (5,'treatments.complete',1,1)");
+  await db.query("INSERT INTO permission_rol VALUES ('r',5,1)");
+  const statuses=async()=>Object.fromEntries((await db.query("SELECT id_patient_treatment,status FROM patient_treatment"))[0].map(r=>[r.id_patient_treatment,r.status]));
+  assert.equal((await statuses()).t,'pending');
   const closes=await Promise.all([A,B].map(t=>signed(t,sign,submit)));
   for(const result of closes)assert.equal(result.data?.version,1,JSON.stringify(result));
   assert.equal((await call(A,{revision:3,form},id)).status,400);
@@ -121,16 +139,18 @@ async function run(){
   const linked=await fetch('http://127.0.0.1:'+server.address().port+'/api/tracing/patient/p/evolution-drafts?origin=visit',{headers:{authorization:'Bearer '+A}});
   assert.equal((await linked.json()).data.signedId,id);
   assert.equal((await call(A,draft,randomUUID())).status,400);
+  assert.equal((await statuses()).t,'completed');assert.equal((await statuses()).future,'pending');
   const orig=closes[0].data.form;
-  const update={revision:1,requestId:randomUUID(),reason:'Precisión de intervalo',form:{...orig,plan:'En tres semanas'}};
+  const update={revision:1,requestId:randomUUID(),reason:'Precisión de intervalo',form:{...orig,done:[...orig.done,{id:'later'}],plan:'En tres semanas'}};
   assert.equal((await signed(C,correct,update)).status,403);
   assert.equal((await signed(A,correct,{...update,reason:''})).status,400);
   assert.equal((await signed(A,correct,{...update,form:orig})).status,400);
-  const competing=[update,{...update,requestId:randomUUID(),form:{...orig,plan:'En dos semanas'}}];
+  const competing=[update,{...update,requestId:randomUUID(),form:{...update.form,plan:'En dos semanas'}}];
   const results=await Promise.all(competing.map(u=>signed(A,correct,u)));
   assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
   const winner=competing[results.findIndex(r=>r.status===200)];
   assert.equal((await signed(B,correct,winner)).data.version,2);
+  assert.equal((await statuses()).later,'completed');assert.equal((await statuses()).future,'pending');
   const versions=await signed(C,'/'+id+'/versions');
   assert.deepEqual(versions.data.items.map(r=>r.version),[2,1]);
   assert.deepEqual(versions.data.items[1].form,orig);

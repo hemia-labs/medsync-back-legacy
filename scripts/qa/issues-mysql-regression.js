@@ -25,7 +25,7 @@ const stub = (file, exports) => { const id = require.resolve(file); require.cach
             'person', 'address', 'query', 'allergy', 'prescription', 'prescription_item', 'prescription_config', 'prescription_audit_log',
             'tracing', 'appointment', 'appointment_config', 'appointment_working_day', 'appointment_time_range', 'appointment_blocked_date', 'appointment_blocked_hour'];
         for (const table of tables) {
-            const file = await fs.readFile(path.resolve(__dirname, '../../../u575589445_orrico/Tables', table + '.sql'), 'utf8');
+            const file = await fs.readFile(path.resolve(process.env.ISSUES_QA_SCHEMA_DIR || path.resolve(__dirname, '../../../u575589445_orrico/Tables'), table + '.sql'), 'utf8');
             const ddl = file.match(/CREATE TABLE[\s\S]*?;\s*$/)[0];
             assert.doesNotMatch(ddl, /DROP\s+TABLE/i);
             await connection.query(ddl);
@@ -134,6 +134,11 @@ const stub = (file, exports) => { const id = require.resolve(file); require.cach
         const [retained] = await connection.query('SELECT bucket_key FROM registration_rate_bucket');
         assert.deepEqual(retained.map(row => row.bucket_key), ['active']);
         const readiness = require('../../src/services/readiness').createReadiness(db);
+        await assert.rejects(readiness.initialize(), /NC5_NOTES_MIGRATION_REQUIRED/);
+        assert.equal(await readiness.check(), false);
+        for (const migration of ['nc5-evolution-draft.sql','nc5-evolution-signed.sql','nc5-performed-extra.sql']) {
+            await connection.query(await fs.readFile(path.join(__dirname,'../migrations',migration),'utf8'));
+        }
         await readiness.initialize(); assert.equal(await readiness.check(), true);
         console.log('PASS MySQL expired-bucket cleanup preserves active quota; readiness validates schema and queries the existing pool.');
     } finally {

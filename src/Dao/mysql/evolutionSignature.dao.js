@@ -4,7 +4,10 @@ const { isDeepStrictEqual } = require('util');
 const { QueryTypes } = require('sequelize');
 const db = require('../../db/Sequelize.connection');
 const tracing = require('./tracing.Dao');
+const consentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
 const drafts = require('./evolutionDraft.dao');
+const dental = require('../../services/odontogramPlanDental.service');
+const effectivePermissions = require('../../util/effectivePermissions');
 const response = require('../../util/responsedata');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { recordPerformedExtra } = require('../../services/evolutionPerformedExtra');
@@ -38,6 +41,33 @@ async function read(body) {
         const rows=await select('SELECT n.*'+from+' ORDER BY signed_at DESC, version DESC, note_id LIMIT 10 OFFSET :offset');
         return response.success(pageData(rows.map(snapshot),window),'Firmas profesionales consultadas.');
     });
+}
+
+async function completePerformed(body, procedures, previous, transaction) {
+    const existing = new Set((previous?.done || []).map(item => item.id));
+    const ids = procedures.map(item => item.id).filter(id => !existing.has(id));
+    if (!ids.length) return {};
+    const replacements = {...keys(body), ids};
+    const rows = await db.query(`SELECT pt.* FROM patient_treatment pt JOIN treatment_plan tp
+        ON tp.id_treatment_plan=pt.id_treatment_plan AND tp.id_person=pt.id_person AND tp.id_business=pt.id_business
+        WHERE pt.id_business=:business AND pt.id_person=:patient AND pt.id_patient_treatment IN (:ids)
+        AND pt.active=1 AND pt.status<>'cancelled' AND tp.active=1 AND tp.status='active' FOR UPDATE`,
+        {transaction,replacements,type:QueryTypes.SELECT});
+    if (rows.length !== ids.length) return {error:conflict('El plan cambió. Revisa los procedimientos realizados antes de firmar.')};
+    const changed = rows.filter(item => item.status !== 'completed');
+    if (!changed.length) return {};
+    const grants = await effectivePermissions.rows(body.id_login,{enabledCatalog:true,transaction});
+    if (!grants.some(({code}) => ['treatments.edit','treatments.complete'].includes(code)))
+        return {error:response.forbidden('Necesitas permiso para completar los procedimientos del plan.')};
+    for (const row of changed) {
+        const id = row.id_patient_treatment;
+        const state = await dental.formState(body,id,transaction,false);
+        await db.query(`UPDATE patient_treatment SET status='completed',updated_at=NOW(),updated_by=:actor
+            WHERE id_business=:business AND id_person=:patient AND id_patient_treatment=:item`,
+            {transaction,replacements:{...keys(body),item:id}});
+        await dental.recordForm(body,id,state,row,{...row,status:'completed'},transaction,true);
+    }
+    return {changed:true};
 }
 
 async function attest(body, correcting) {
@@ -80,13 +110,18 @@ async function attest(body, correcting) {
             draftRevision=draft.revision;
         }
         if (!drafts.complete(form)) return response.bad_request('Completa los datos de la nota antes de firmar.');
+        const previous = prior && snapshot(prior).form;
+        const completion = await completePerformed(body,form.done,previous,transaction);
+        if (completion.error) return completion.error;
         const version=prior ? prior.version+1 : 1;
         Object.assign(replacements,{version,draftRevision,hash,profile:profile.id_doctor_professional_profile,
             name:profile.professional_name,license:profile.professional_license,payload:JSON.stringify(form),reason:reason || null});
         await db.query('INSERT INTO '+table+' (id_business,id_person,note_id,version,draft_revision,request_id,request_hash,author_id,signer_profile,signer_name,signer_license,signed_at,payload,correction_reason) VALUES (:business,:patient,:id,:version,:draftRevision,:request,:hash,:actor,:profile,:name,:license,UTC_TIMESTAMP(6),:payload,:reason)',{transaction,replacements});
-        if (form.performed && (!prior || !snapshot(prior).form.performed)) {
+        const addedExtra = form.performed && !previous?.performed;
+        if (addedExtra) {
             await recordPerformedExtra(db,transaction,{...keys(body),note:body.id,name:form.performed,date:form.date});
         }
+        if (addedExtra || completion.changed) await consentDocuments.invalidateStale(body,transaction);
         const [saved]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND version=:version');
         return response.success(snapshot(saved),correcting?'Rectificación firmada.':'Firma profesional registrada.');
     });
