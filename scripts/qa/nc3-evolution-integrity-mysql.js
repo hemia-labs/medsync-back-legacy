@@ -167,6 +167,7 @@ async function run() {
         const tamper = [
             ['C03 cambio de contenido de v1', "UPDATE evolution_note_signed_version SET payload=JSON_SET(payload,'$.plan','Plan alterado') WHERE note_id=:id AND version=1"],
             ['C04 cambio de autor de v1', "UPDATE evolution_note_signed_version SET author_id='otro' WHERE note_id=:id AND version=1"],
+            ['X1 cambio de autor de la versión vigente v2', "UPDATE evolution_note_signed_version SET author_id='otro' WHERE note_id=:id AND version=2"],
             ['C05 cambio de firmante de v1', "UPDATE evolution_note_signed_version SET signer_name='Otra persona' WHERE note_id=:id AND version=1"],
             ['C06 cambio de fecha de firma de v1', "UPDATE evolution_note_signed_version SET signed_at=DATE_ADD(signed_at,INTERVAL 1 SECOND) WHERE note_id=:id AND version=1"],
             ['C07 cambio del motivo de rectificación de v2', "UPDATE evolution_note_signed_version SET correction_reason='Motivo cambiado' WHERE note_id=:id AND version=2"]

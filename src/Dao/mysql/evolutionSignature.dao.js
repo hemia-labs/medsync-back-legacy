@@ -156,7 +156,6 @@ async function attest(body, correcting) {
         const replacements={...keys(body),request:body.requestId};
         const select=sql => db.query(sql,{transaction,replacements,type:QueryTypes.SELECT});
         const [prior]=await select('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+noteScope+' ORDER BY version DESC LIMIT 1 FOR UPDATE');
-        if (prior && prior.author_id!==body.id_login) return response.forbidden('Solo quien firmó la nota puede rectificarla.');
         const noteRows=await select('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+noteScope);
         const cfg=integrity.config();
         let ref=null;
@@ -174,6 +173,7 @@ async function attest(body, correcting) {
             integrity.recordEvent({type:correcting?'RECTIFY_BLOCKED_DISCREPANCY':'SIGN_BLOCKED_DISCREPANCY',code:flagged.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
             return integrityConflict(flagged.code);
         }
+        if (prior && prior.author_id!==body.id_login) return response.forbidden('Solo quien firmó la nota puede rectificarla.');
         const [replay]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND request_id=:request');
         if (replay) {
             if (replay.request_hash!==hash) return conflict('La solicitud anterior tenía otro contenido.');
