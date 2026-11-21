@@ -32,7 +32,9 @@
     "migration:nc1-login-surnames": "node scripts/migrations/nc1-login-surnames.js",
     "qa:nc5-chat": "node --test scripts/qa/nc5-chat.test.js",
     "qa:nc5-chat-mysql": "bash scripts/qa/nc5-chat.docker.sh",
-    "migration:nc5-chat": "node scripts/migrations/nc5-internal-chat.js"
+    "migration:nc5-chat": "node scripts/migrations/nc5-internal-chat.js",
+    "qa:nc3-integrity": "node --test scripts/qa/nc3-evolution-integrity.test.js",
+    "qa:nc3-integrity-mysql": "bash scripts/qa/nc3-integrity.docker.sh"
   },
   "engines": {
     "node": ">=22.12 <23"

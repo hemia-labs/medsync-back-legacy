@@ -9,6 +9,7 @@ const drafts = require('./evolutionDraft.dao');
 const dental = require('../../services/odontogramPlanDental.service');
 const effectivePermissions = require('../../util/effectivePermissions');
 const response = require('../../util/responsedata');
+const integrity = require('../../services/evolutionIntegrity.service');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { recordPerformedExtra } = require('../../services/evolutionPerformedExtra');
 
@@ -17,11 +18,27 @@ const table = 'evolution_note_signed_version';
 const scope = 'id_business=:business AND id_person=:patient';
 const noteScope = scope + ' AND note_id=:id';
 const conflict = message => ({status:409, data:null, message});
+const unavailable = code => ({status:503, data:{code}, message:'No se puede firmar en este momento porque falta el control de integridad. No se guardó nada; puedes reintentar o avisar al administrador.'});
+const integrityConflict = code => ({status:409, data:{code}, message:'Esta nota tiene una diferencia de integridad pendiente de restaurar. Avisa al administrador antes de firmar o rectificar.'});
 const keys = body => ({business:body.id_business, patient:body.id_person, actor:body.id_login, id:body.id});
 function snapshot(row) {
     return {id:row.note_id, version:row.version, author:row.author_id, signer:row.signer_name,
         license:row.signer_license, signedAt:row.signed_at, reason:row.correction_reason,
         form:typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload};
+}
+
+const placeholder = (extra, note) => ({ id: note, version: null, author: null, signer: null, license: null, signedAt: null, reason: null, form: null, ...extra });
+async function verification(replacements, rows, onlyNote, transaction) {
+    const cfg = integrity.config();
+    try {
+        const ref = await integrity.loadReference(db, transaction, replacements);
+        if (!ref.entries.length && !ref.head && !cfg.adoptionAt)
+            return { state: 'historical', notes: new Map(), faults: [], reference: false };
+        return { ...integrity.verify({ rows, entries: ref.entries, head: ref.head, cfg, onlyNote }), reference: true };
+    } catch (error) {
+        console.error('EVOLUTION_INTEGRITY_UNAVAILABLE', error.code || error.message);
+        return { state: 'unavailable', notes: new Map(), faults: [{ code: 'REFERENCE_UNAVAILABLE', state: 'unavailable' }], unavailable: true, reference: false };
+    }
 }
 
 async function read(body) {
@@ -32,14 +49,46 @@ async function read(body) {
         const access=await tracing.context(body,'px.tab.monitoring',transaction);
         if (access.error) return access.error;
         const replacements=keys(body);
-        const select=sql => db.query(sql,{transaction,replacements,type:QueryTypes.SELECT});
-        const where=body.id ? noteScope : scope + ' AND version=(SELECT MAX(v.version) FROM '+table+' v WHERE v.id_business=n.id_business AND v.id_person=n.id_person AND v.note_id=n.note_id)';
-        const from=' FROM '+table+' n WHERE '+where;
-        const [count]=await select('SELECT COUNT(*) AS total'+from);
-        const window=pageWindow(page,count.total);
-        replacements.offset=window.offset;
-        const rows=await select('SELECT n.*'+from+' ORDER BY signed_at DESC, version DESC, note_id LIMIT 10 OFFSET :offset');
-        return response.success(pageData(rows.map(snapshot),window),'Firmas profesionales consultadas.');
+        const rows=await db.query('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+(body.id ? noteScope : scope),{transaction,replacements,type:QueryTypes.SELECT});
+        const check=await verification(replacements,rows,body.id || null,transaction);
+        const stateOf=(note,version)=>{
+            if (check.unavailable) return {state:'unavailable',code:'REFERENCE_UNAVAILABLE'};
+            const entry=check.notes.get(note);
+            const found=version===undefined ? entry : entry && entry.versions.get(version);
+            return found ? {state:found.state,code:found.code} : {state:'historical',code:null};
+        };
+        const items=[];
+        if (body.id) {
+            const numbers=new Set(rows.map(row => row.version));
+            const entry=check.notes.get(body.id);
+            if (entry) for (const version of entry.versions.keys()) numbers.add(version);
+            for (const version of [...numbers].sort((a,b) => b-a)) {
+                const row=rows.find(r => r.version===version), mark=stateOf(body.id,version);
+                items.push(!row || mark.state==='discrepancy'
+                    ? placeholder({version,integrity:mark},body.id)
+                    : {...snapshot(row),integrity:mark});
+            }
+        } else {
+            const latest=new Map();
+            for (const row of rows) if (!latest.has(row.note_id) || row.version>latest.get(row.note_id).version) latest.set(row.note_id,row);
+            const live=[...latest.values()].sort((a,b) => b.signed_at_text.localeCompare(a.signed_at_text) || b.version-a.version || a.note_id.localeCompare(b.note_id));
+            const flagged=[];
+            for (const row of live) {
+                const mark=stateOf(row.note_id);
+                if (mark.state==='discrepancy') flagged.push(placeholder({integrity:mark},row.note_id));
+                else items.push({...snapshot(row),integrity:mark});
+            }
+            for (const [note,entry] of check.notes) if (!latest.has(note)) flagged.push(placeholder({integrity:{state:entry.state,code:entry.code}},note));
+            const open=check.faults.find(f => f.state==='discrepancy');
+            if (open && !flagged.length) flagged.push(placeholder({integrity:{state:'discrepancy',code:open.code}},null));
+            items.unshift(...flagged);
+        }
+        const window=pageWindow(page,items.length);
+        for (const item of items) if (['discrepancy','unavailable'].includes(item.integrity.state))
+            integrity.recordEvent({type:'READ_'+item.integrity.state.toUpperCase(),code:item.integrity.code,business:body.id_business,patient:body.id_person,note:item.id,version:item.version,actor:body.id_login});
+        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference};
+        const data=pageData(items.slice(window.offset,window.offset+window.pageSize),window);
+        return response.success({...data,integrity:summary},check.state==='discrepancy' ? 'Se detectó una diferencia en el control de integridad.' : 'Firmas profesionales consultadas.');
     });
 }
 
@@ -98,16 +147,40 @@ async function attest(body, correcting) {
         if(body.confirmedClosed.length) payload.push([...new Set(body.confirmedClosed)].sort());
     }
     const hash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    return db.transaction(async transaction => {
+    let anchor=null;
+    try {
+    const result=await db.transaction(async transaction => {
         await tracing.lockPatient(body,transaction);
         const access=await tracing.context(body,correcting?'tracing.correct':'tracing.create',transaction);
         if (access.error) return access.error;
         const replacements={...keys(body),request:body.requestId};
         const select=sql => db.query(sql,{transaction,replacements,type:QueryTypes.SELECT});
-        const [prior]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' ORDER BY version DESC LIMIT 1 FOR UPDATE');
+        const [prior]=await select('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+noteScope+' ORDER BY version DESC LIMIT 1 FOR UPDATE');
         if (prior && prior.author_id!==body.id_login) return response.forbidden('Solo quien firmó la nota puede rectificarla.');
+        const noteRows=await select('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+noteScope);
+        const cfg=integrity.config();
+        let ref=null;
+        try { ref=await integrity.loadReference(db,transaction,replacements,true); }
+        catch (error) { console.error('EVOLUTION_INTEGRITY_UNAVAILABLE', error.code || error.message); }
         const [replay]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND request_id=:request');
-        if (replay) return replay.request_hash===hash ? response.success(snapshot(replay),'Firma registrada.') : conflict('La solicitud anterior tenía otro contenido.');
+        if (replay) {
+            if (replay.request_hash!==hash) return conflict('La solicitud anterior tenía otro contenido.');
+            const seen=ref && integrity.verify({rows:noteRows,entries:ref.entries,head:ref.head,cfg,onlyNote:body.id}).notes.get(body.id);
+            const mark=seen ? seen.versions.get(replay.version) : null;
+            return response.success({...snapshot(replay),integrity:mark ? {state:mark.state,code:mark.code} : {state:'unavailable',code:'REFERENCE_UNAVAILABLE'}},'Firma registrada.');
+        }
+        // Sin evidencia de integridad no se firma: evita notas que luego no puedan comprobarse.
+        if (!ref || !cfg.current) return unavailable('SEAL_UNAVAILABLE');
+        const chain=integrity.verify({rows:noteRows,entries:ref.entries,head:ref.head,cfg,onlyNote:body.id});
+        if (chain.faults.length) {
+            integrity.recordEvent({type:'SIGN_BLOCKED_CHAIN',code:chain.faults[0].code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
+            return chain.faults.every(f => f.state==='unavailable') ? unavailable('SEAL_UNAVAILABLE') : integrityConflict(chain.faults[0].code);
+        }
+        const flagged=chain.notes.get(body.id);
+        if (correcting && flagged && flagged.state==='discrepancy') {
+            integrity.recordEvent({type:'RECTIFY_BLOCKED_DISCREPANCY',code:flagged.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
+            return integrityConflict(flagged.code);
+        }
         if (!correcting && prior) return conflict('Esta nota ya está firmada. Consulta su historial.');
         if (correcting && (!prior || prior.version!==body.revision)) return conflict('La versión cambió. Consulta el historial antes de rectificar.');
         const [profile]=await select('SELECT id_doctor_professional_profile, professional_name, professional_license FROM doctor_professional_profile WHERE id_business=:business AND id_login=:actor AND is_active=1');
@@ -140,8 +213,23 @@ async function attest(body, correcting) {
             await recordPerformedExtra(db,transaction,{...keys(body),note:body.id,name:form.performed,date:form.date});
         }
         if (addedExtra || completion.changed) await consentDocuments.invalidateStale(body,transaction);
-        const [saved]=await select('SELECT * FROM '+table+' WHERE '+noteScope+' AND version=:version');
-        return response.success(snapshot(saved),correcting?'Rectificación firmada.':'Firma profesional registrada.');
+        const [saved]=await select('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+noteScope+' AND version=:version');
+        let previousDigest=null;
+        if (prior) {
+            const sealedBefore=ref.entries.find(e => e.note_id===body.id && Number(e.version)===prior.version);
+            previousDigest=sealedBefore ? sealedBefore.digest : integrity.digest(prior);
+        }
+        const sealed=integrity.seal({cfg,row:saved,previousDigest,head:ref.head});
+        await integrity.persistSeal(db,transaction,sealed);
+        anchor=sealed;
+        return response.success({...snapshot(saved),integrity:{state:'verified',code:null}},correcting?'Rectificación firmada.':'Firma profesional registrada.');
     });
+    if (anchor) await integrity.recordAnchor(anchor);
+    return result;
+    } catch (error) {
+        if (!error.integrity) throw error;
+        integrity.recordEvent({type:'SEAL_FAILED',code:error.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
+        return unavailable('SEAL_FAILED');
+    }
 }
 module.exports={read,attest};

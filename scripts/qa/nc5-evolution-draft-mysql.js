@@ -32,8 +32,8 @@ async function run(){
  try {
   for(const spec of definitions)await db.query('CREATE TABLE '+spec);
   await db.query(fs.readFileSync(path.join(__dirname,'../migrations/nc5-evolution-draft.sql'),'utf8'));
-  for(const file of ['nc5-evolution-signed.sql','nc5-performed-extra.sql'])
-    await db.query(fs.readFileSync(path.join(__dirname,'../migrations',file),'utf8'));
+  for(const file of ['nc5-evolution-signed.sql','nc5-performed-extra.sql','nc3-evolution-integrity.sql'])
+    for(const statement of fs.readFileSync(path.join(__dirname,'../migrations',file),'utf8').replace(/^--.*$/gm,'').split(';'))if(statement.trim())await db.query(statement);
   await db.query('CREATE TABLE patient_code_counter(singleton INT PRIMARY KEY,next_value INT)');
   await db.query('INSERT INTO patient_code_counter VALUES (1,1)');
   await db.query('ALTER TABLE person ADD code VARCHAR(8), ADD UNIQUE INDEX uq_code(code)');
@@ -76,6 +76,7 @@ async function run(){
     assert.equal((await migration.apply(migrationDb)).alreadyApplied,true);
   } finally { await migrationDb.end(); }
   process.env.JWT_SECRET=randomBytes(48).toString('hex');
+  process.env.EVOLUTION_INTEGRITY_KEYS='qa:'+randomBytes(32).toString('hex');process.env.EVOLUTION_INTEGRITY_LOG_DIR=require('node:os').tmpdir();process.env.EVOLUTION_INTEGRITY_ANCHOR_PATH=path.join(require('node:os').tmpdir(),'nc5-qa-anchor-'+schema+'.jsonl');
   process.env.AUTH_COOKIE_MODE='legacy';process.env.BROWSER_AUTH_TRANSPORT='bearer';process.env.CSRF_ENABLED='false';
   const dep=require.resolve('../../src/db/Sequelize.connection');
   require.cache[dep]={id:dep,filename:dep,loaded:true,exports:db};
