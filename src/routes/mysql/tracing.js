@@ -11,6 +11,10 @@ const { applyTenantToBody } = require('../../util/tenant');
 const csrfProtected = csrfProtection();
 
 const draftPath = '/patient/:id_person/evolution-drafts';
+router.get(draftPath+'/procedure-options', Token.Auth, requireTenantOperational, requirePermission('px.tab.monitoring'), awaitHandlerFactory(async(req,res)=>{
+    const result=await drafts.procedureOptions(applyTenantToBody(req,{id_person:req.params.id_person,history:req.query.history}));
+    res.set('Cache-Control','no-store').status(result.status).send(result);
+}));
 router.get(draftPath, Token.Auth, requireTenantOperational, requirePermission('tracing.create'), awaitHandlerFactory(async (req,res) => {
     const result = await drafts.list(applyTenantToBody(req,{ id_person:req.params.id_person, page:req.query.page, origin:typeof req.query.origin === 'string' ? req.query.origin : undefined }));
     res.set('Cache-Control','no-store').status(result.status).send(result);
@@ -35,8 +39,8 @@ router.get([signedPath,signedPath+'/:id/versions'], Token.Auth, requireTenantOpe
 for (const [action,permission] of [['sign','tracing.create'],['rectify','tracing.correct']]) {
     router.put(signedPath+'/:id/'+action, Token.Auth, csrfProtected, requireTenantOperational,
         requirePermission(permission), awaitHandlerFactory(async (req,res) => {
-            const {revision,requestId,form,reason}=req.body;
-            const result=await signatures.attest(applyTenantToBody(req,{id_person:req.params.id_person,id:req.params.id,revision,requestId,form,reason}),action==='rectify');
+            const {revision,requestId,form,reason,confirmedClosed}=req.body;
+            const result=await signatures.attest(applyTenantToBody(req,{id_person:req.params.id_person,id:req.params.id,revision,requestId,form,reason,confirmedClosed}),action==='rectify');
             res.set('Cache-Control','no-store').status(result.status).send(result);
         }));
 }

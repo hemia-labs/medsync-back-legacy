@@ -91,6 +91,7 @@ async function run(){
     const result=await fetch(url,{method:body?'PUT':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
     return {status:result.status,...await result.json()};
   };
+  await db.query('ALTER TABLE treatment_plan ADD title VARCHAR(255),ADD closed_at DATETIME');
   const id=randomUUID(),form={date:'2026-11-20',origin:'visit',reason:'Control',done:[{id:'t',name:'ignored'}],future:[{id:'future'}],performed:'Adicional'};
   const draft={revision:0,form};const saved=await call(A,draft,id);
   assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.form.done[0].name,'Ajuste');
@@ -186,6 +187,39 @@ async function run(){
   console.log('PASS nota formal -> aviso -> reintento -> lectura, sin otra firma.');
   const [extras]=await db.query("SELECT * FROM patient_treatment WHERE source='performed_extra'");
   assert.equal(extras.length,1);
+  const options=async(mode='latest')=>(await call(A,null,'procedure-options?history='+mode)).data;
+  const active=await options();
+  assert.equal(active.active,true);
+  const historical=randomUUID(), testForm={...orig,origin:'',performed:'',done:[{id:'future'}],future:[]};
+  assert.equal((await call(A,{revision:0,form:testForm},historical)).status,200);
+  await db.query("UPDATE treatment_plan SET status='closed',title='Más reciente',closed_at='2026-11-19' WHERE id_treatment_plan='plan'");
+  await db.query("INSERT INTO treatment_plan (id_treatment_plan,id_person,id_business,active,status,title,closed_at) VALUES ('older','p','clinic',1,'closed','Anterior','2026-10-01')");
+  await db.query("INSERT INTO patient_treatment (id_patient_treatment,id_treatment_plan,id_person,id_business,active,status,name) VALUES ('olditem','older','p','clinic',1,'completed','Ajuste')");
+  assert.deepEqual((await options()).plans.map(p=>p.id),['plan']);
+  assert.deepEqual((await options('all')).plans.map(p=>p.id),['plan','older']);
+  assert.equal((await call(A,{revision:0,form:{...testForm,done:[],future:[{id:'olditem'}]}},randomUUID())).status,400);
+  const completed=randomUUID();
+  assert.equal((await call(A,{revision:0,form:{...testForm,done:[{id:'olditem'}]}},completed)).status,200);
+  assert.equal((await signed(A,'/'+completed+'/sign',{requestId:randomUUID(),revision:1})).data.form.done[0].closedPlan,true);
+  await db.query("INSERT INTO treatment_plan (id_treatment_plan,id_person,id_business,active,status,title) VALUES ('next','p','clinic',1,'active','Nuevo')");
+  assert.deepEqual((await options('all')).plans.map(p=>p.id),['next']);
+  assert.equal((await call(A,{revision:0,form:testForm},randomUUID())).status,400);
+  const edit=await call(A,{revision:1,form:{...testForm,plan:'Seguimiento del plan anterior'}},historical);
+  assert.equal(edit.status,200);
+  const signing={requestId:randomUUID(),revision:edit.data.revision};
+  const historyPath='/'+historical+'/sign';
+  const needs=await signed(A,historyPath,signing);
+  assert.equal(needs.status,409);
+  assert.deepEqual(needs.data.items.map(i=>i.id),['future']);
+  assert.equal((await signed(A,historyPath,{...signing,confirmedClosed:['other']})).status,409);
+  const accepted={...signing,confirmedClosed:['future']};
+  for(let i=0;i<2;i++){
+    const result=await signed(A,historyPath,accepted);
+    assert.equal(result.data.form.done[0].noteOnly,true);
+    assert.equal(result.data.version,1);
+  }
+  assert.equal((await statuses()).future,'pending');
+  console.log('PASS planes: activo, último, todos, previstos, borrador conservado, firma histórica y confirmación sin cambiar plan.');
   console.log('PASS firma y rectificación: atomicidad, reintento, permisos, conflicto, original y tratamiento adicional.');
   console.log('PASS HTTP/MySQL: dos sesiones, borrador parcial, reintento, concurrencia, reconciliación, cita, procedimientos, paginación y permisos.');
  }finally{

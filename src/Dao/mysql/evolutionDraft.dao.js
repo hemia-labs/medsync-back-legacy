@@ -30,22 +30,58 @@ function normalize(form) {
     return out;
 }
 
-async function canonicalSelections(form, prior, replacements, transaction) {
-    const known = new Map([...(prior?.done || []), ...(prior?.future || [])].map(item=>[item.id,item.name]));
-    const ids = [...new Set([...form.done,...form.future])].filter(id=>!known.has(id));
-    if (ids.length) {
-        const found = await db.query(`SELECT pt.id_patient_treatment AS id, pt.name FROM patient_treatment pt
-            JOIN treatment_plan tp ON tp.id_treatment_plan=pt.id_treatment_plan AND tp.id_business=pt.id_business AND tp.id_person=pt.id_person
-            WHERE pt.id_business=:business AND pt.id_person=:patient AND pt.active=1 AND pt.status<>'cancelled'
-            AND tp.active=1 AND tp.status='active' AND pt.id_patient_treatment IN (:ids)`,
-            {replacements:{...replacements,ids},transaction,type:QueryTypes.SELECT});
-        for (const item of found) known.set(item.id,item.name);
-    }
-    if (ids.some(id=>!known.has(id))) return false;
-    for (const group of ['done','future']) form[group]=form[group].map(id=>({id,name:known.get(id)}));
-    return true;
+const eligiblePlans = "id_business=:business AND id_person=:patient AND active=1";
+async function procedureOptions(body) {
+    return db.transaction(async transaction => {
+        const access=await tracing.context(body,'px.tab.monitoring',transaction);
+        if(access.error) return access.error;
+        const replacements=keys(body);
+        const query=sql=>db.query(sql,{transaction,replacements,type:QueryTypes.SELECT});
+        let plans=await query("SELECT id_treatment_plan AS id,title FROM treatment_plan WHERE "+eligiblePlans+" AND status='active'");
+        const active=plans.length>0;
+        if(!active) {
+            plans=await query("SELECT id_treatment_plan AS id,title,DATE_FORMAT(closed_at,'%Y-%m-%d') AS closedDate FROM treatment_plan WHERE "+
+                eligiblePlans+" AND status='closed' ORDER BY closed_at DESC,id_treatment_plan DESC"+(body.history==='all'?'':' LIMIT 1'));
+        }
+        let items=[];
+        if(plans.length){
+            replacements.plans=plans.map(p=>p.id);
+            items=await query("SELECT id_patient_treatment AS id,name,id_treatment_plan AS planId FROM patient_treatment WHERE "+
+                eligiblePlans+" AND id_treatment_plan IN (:plans) AND status<>'cancelled' ORDER BY name,id_patient_treatment");
+        }
+        return response.success({active,plans,items},'Procedimientos consultados.');
+    });
 }
 
+async function canonicalSelections(form, prior, replacements, transaction) {
+    const query=sql=>db.query(sql,{transaction,replacements,type:QueryTypes.SELECT});
+    const ids=[...new Set([...form.done,...form.future])];
+    if(!ids.length) return true;
+    const stored = group=>new Map((prior?.[group] || []).map(item=>[item.id,item]));
+    const done=stored('done'),future=stored('future');
+    const fresh=ids.filter(id=>(form.done.includes(id) && !done.has(id)) || (form.future.includes(id) && !future.has(id)));
+    const found=new Map();
+    if(fresh.length) {
+        replacements.ids=fresh;
+        const rows=await query(`SELECT pt.id_patient_treatment AS id,pt.name,tp.status AS planStatus,tp.id_treatment_plan AS planId,tp.title AS planTitle
+            FROM patient_treatment pt JOIN treatment_plan tp ON tp.id_treatment_plan=pt.id_treatment_plan AND tp.id_business=pt.id_business AND tp.id_person=pt.id_person
+            WHERE pt.id_business=:business AND pt.id_person=:patient AND pt.active=1 AND pt.status<>'cancelled' AND tp.active=1
+            AND (tp.status='active' OR (tp.status='closed' AND NOT EXISTS (SELECT 1 FROM treatment_plan ap WHERE ap.id_business=pt.id_business AND ap.id_person=pt.id_person AND ap.active=1 AND ap.status='active')))
+            AND pt.id_patient_treatment IN (:ids)`);
+        for(const item of rows) found.set(item.id,item);
+    }
+    for(const [group,storedItems] of [['done',done],['future',future]]) {
+        const selected=[];
+        for(const id of form[group]) {
+            if(storedItems.has(id)){selected.push(storedItems.get(id));continue;}
+            const item=found.get(id);
+            if(!item || (group==='future' && item.planStatus!=='active')) return false;
+            selected.push(item.planStatus==='closed' ? {id,name:item.name,planId:item.planId,planTitle:item.planTitle} : {id,name:item.name});
+        }
+        form[group]=selected;
+    }
+    return true;
+}
 async function list(body) {
     let request;
     try { request=listPage({page:body.page || '1',page_size:10}); } catch { return response.bad_request('Página inválida.'); }
@@ -122,4 +158,4 @@ async function review(body) {
     });
 }
 const complete = f => Boolean(f.date && f.reason && f.evolution && f.plan && (f.none || f.performed || f.done.length));
-module.exports={list,save,review,complete,canonicalSelections,normalize,decode};
+module.exports={procedureOptions,list,save,review,complete,canonicalSelections,normalize,decode};

@@ -48,13 +48,25 @@ async function completePerformed(body, procedures, previous, transaction) {
     const ids = procedures.map(item => item.id).filter(id => !existing.has(id));
     if (!ids.length) return {};
     const replacements = {...keys(body), ids};
-    const rows = await db.query(`SELECT pt.* FROM patient_treatment pt JOIN treatment_plan tp
+    const rows = await db.query(`SELECT pt.*,tp.status AS planStatus,tp.title AS planTitle FROM patient_treatment pt JOIN treatment_plan tp
         ON tp.id_treatment_plan=pt.id_treatment_plan AND tp.id_person=pt.id_person AND tp.id_business=pt.id_business
         WHERE pt.id_business=:business AND pt.id_person=:patient AND pt.id_patient_treatment IN (:ids)
-        AND pt.active=1 AND pt.status<>'cancelled' AND tp.active=1 AND tp.status='active' FOR UPDATE`,
+        AND pt.active=1 AND pt.status<>'cancelled' AND tp.active=1 AND tp.status IN ('active','closed') FOR UPDATE`,
         {transaction,replacements,type:QueryTypes.SELECT});
     if (rows.length !== ids.length) return {error:conflict('El plan cambió. Revisa los procedimientos realizados antes de firmar.')};
-    const changed = rows.filter(item => item.status !== 'completed');
+    const closed = rows.filter(item=>item.planStatus==='closed');
+    const pending = closed.filter(item=>item.status!=='completed');
+    const confirmed = new Set(body.confirmedClosed || []);
+    if(pending.some(item=>!confirmed.has(item.id_patient_treatment))) {
+        return {error:{status:409,message:'Confirma los procedimientos de planes cerrados.',data:{
+            code:'CONFIRM_CLOSED_PROCEDURES', items:pending.map(item=>({id:item.id_patient_treatment,name:item.name,plan:item.planTitle}))
+        }}};
+    }
+    for(const item of closed){
+        const procedure=procedures.find(p=>p.id===item.id_patient_treatment);
+        Object.assign(procedure,{planId:item.id_treatment_plan,planTitle:item.planTitle,closedPlan:true,noteOnly:item.status!=='completed'});
+    }
+    const changed = rows.filter(item => item.planStatus==='active' && item.status !== 'completed');
     if (!changed.length) return {};
     const grants = await effectivePermissions.rows(body.id_login,{enabledCatalog:true,transaction});
     if (!grants.some(({code}) => ['treatments.edit','treatments.complete'].includes(code)))
@@ -79,7 +91,13 @@ async function attest(body, correcting) {
         if (!reason || reason.length>1000) return response.bad_request('Indica el motivo de la rectificación (hasta 1000 caracteres).');
         try { form=drafts.normalize(body.form); } catch(error) { return response.bad_request(error.message); }
     }
-    const hash=createHash('sha256').update(JSON.stringify([correcting,body.revision,reason,form])).digest('hex');
+    const payload=[correcting,body.revision,reason,form];
+    if(body.confirmedClosed!==undefined){
+        if(!Array.isArray(body.confirmedClosed) || body.confirmedClosed.length>500 || body.confirmedClosed.some(id=>typeof id!=='string'||id.length>50))
+            return response.bad_request('Revisa los procedimientos que deseas confirmar.');
+        if(body.confirmedClosed.length) payload.push([...new Set(body.confirmedClosed)].sort());
+    }
+    const hash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     return db.transaction(async transaction => {
         await tracing.lockPatient(body,transaction);
         const access=await tracing.context(body,correcting?'tracing.correct':'tracing.create',transaction);
