@@ -224,11 +224,11 @@ async function run() {
             let got = await states(p, id);
             stateIs(got, 1, 'unavailable', 'REFERENCE_UNAVAILABLE', true);
             const refused = await call(A, p, '/evolution-notes/' + randomUUID() + '/sign', { requestId: randomUUID(), revision: 1 });
-            record('C12 referencia no disponible (tabla ausente), lectura', 'estado unavailable, contenido visible y sin sello de verificado', got, 'unavailable', compare(before, await external(p, id)));
+            record('C12 referencia no disponible (tabla ausente), lectura', 'estado unavailable, contenido visible y sin sello de verificado; firmar devuelve 503 (no 500)', got, 'unavailable', compare(before, await external(p, id)));
             await db.query('RENAME TABLE qa_held_ledger TO evolution_integrity_ledger');
             got = await states(p, id);
             stateIs(got, 1, 'verified', null, true);
-            assert.ok(refused.status >= 400);
+            assert.equal(refused.status, 503); assert.equal(refused.data.code, 'SEAL_UNAVAILABLE');
             const saved = process.env.EVOLUTION_INTEGRITY_KEYS;
             delete process.env.EVOLUTION_INTEGRITY_KEYS;
             got = await states(p, id);
