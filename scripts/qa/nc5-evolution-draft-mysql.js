@@ -91,7 +91,7 @@ async function run(){
     const result=await fetch(url,{method:body?'PUT':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
     return {status:result.status,...await result.json()};
   };
-  await db.query('ALTER TABLE treatment_plan ADD title VARCHAR(255),ADD closed_at DATETIME');
+  await db.query('ALTER TABLE treatment_plan ADD title VARCHAR(255),ADD started_at DATE,ADD closed_at DATETIME');
   const id=randomUUID(),form={date:'2026-11-20',origin:'visit',reason:'Control',done:[{id:'t',name:'ignored'}],future:[{id:'future'}],performed:'Adicional'};
   const draft={revision:0,form};const saved=await call(A,draft,id);
   assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.form.done[0].name,'Ajuste');
@@ -200,6 +200,9 @@ async function run(){
   assert.equal((await call(A,{revision:0,form:{...testForm,done:[],future:[{id:'olditem'}]}},randomUUID())).status,400);
   const completed=randomUUID();
   assert.equal((await call(A,{revision:0,form:{...testForm,done:[{id:'olditem'}]}},completed)).status,200);
+  const reviewOrigin=await call(A,null,completed+'/review?revision=1');
+  assert.equal(reviewOrigin.data.form.done[0].planId,'older');
+  assert.equal(reviewOrigin.data.form.done[0].closedDate,'2026-10-01');
   assert.equal((await signed(A,'/'+completed+'/sign',{requestId:randomUUID(),revision:1})).data.form.done[0].closedPlan,true);
   await db.query("INSERT INTO treatment_plan (id_treatment_plan,id_person,id_business,active,status,title) VALUES ('next','p','clinic',1,'active','Nuevo')");
   assert.deepEqual((await options('all')).plans.map(p=>p.id),['next']);

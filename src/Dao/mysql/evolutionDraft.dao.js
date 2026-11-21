@@ -40,7 +40,7 @@ async function procedureOptions(body) {
         let plans=await query("SELECT id_treatment_plan AS id,title FROM treatment_plan WHERE "+eligiblePlans+" AND status='active'");
         const active=plans.length>0;
         if(!active) {
-            plans=await query("SELECT id_treatment_plan AS id,title,DATE_FORMAT(closed_at,'%Y-%m-%d') AS closedDate FROM treatment_plan WHERE "+
+            plans=await query("SELECT id_treatment_plan AS id,title,DATE_FORMAT(started_at,'%Y-%m-%d') AS startedDate,DATE_FORMAT(closed_at,'%Y-%m-%d') AS closedDate FROM treatment_plan WHERE "+
                 eligiblePlans+" AND status='closed' ORDER BY closed_at DESC,id_treatment_plan DESC"+(body.history==='all'?'':' LIMIT 1'));
         }
         let items=[];
@@ -63,7 +63,7 @@ async function canonicalSelections(form, prior, replacements, transaction) {
     const found=new Map();
     if(fresh.length) {
         replacements.ids=fresh;
-        const rows=await query(`SELECT pt.id_patient_treatment AS id,pt.name,tp.status AS planStatus,tp.id_treatment_plan AS planId,tp.title AS planTitle
+        const rows=await query(`SELECT pt.id_patient_treatment AS id,pt.name,tp.status AS planStatus,tp.id_treatment_plan AS planId,tp.title AS planTitle,DATE_FORMAT(tp.started_at,'%Y-%m-%d') AS startedDate,DATE_FORMAT(tp.closed_at,'%Y-%m-%d') AS closedDate
             FROM patient_treatment pt JOIN treatment_plan tp ON tp.id_treatment_plan=pt.id_treatment_plan AND tp.id_business=pt.id_business AND tp.id_person=pt.id_person
             WHERE pt.id_business=:business AND pt.id_person=:patient AND pt.active=1 AND pt.status<>'cancelled' AND tp.active=1
             AND (tp.status='active' OR (tp.status='closed' AND NOT EXISTS (SELECT 1 FROM treatment_plan ap WHERE ap.id_business=pt.id_business AND ap.id_person=pt.id_person AND ap.active=1 AND ap.status='active')))
@@ -76,7 +76,7 @@ async function canonicalSelections(form, prior, replacements, transaction) {
             if(storedItems.has(id)){selected.push(storedItems.get(id));continue;}
             const item=found.get(id);
             if(!item || (group==='future' && item.planStatus!=='active')) return false;
-            selected.push(item.planStatus==='closed' ? {id,name:item.name,planId:item.planId,planTitle:item.planTitle} : {id,name:item.name});
+            selected.push({id,name:item.name,planId:item.planId,planTitle:item.planTitle,startedDate:item.startedDate,closedDate:item.closedDate});
         }
         form[group]=selected;
     }
