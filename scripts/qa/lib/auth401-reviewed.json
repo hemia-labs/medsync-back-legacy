@@ -1645,5 +1645,14 @@
     "context": "39336edfd1403d08104f39b04d07729c90d72585246d343f52d329d75b22bdcb",
     "count": 1,
     "reason": "Catalog read errors are validation 400 or database 503, code preserved. Token.Auth authenticates upstream; no auth work inside this handler."
+  },
+  {
+    "file": "src/controller/mysql/chat.controller.js",
+    "scope": "<anonymous/module>",
+    "snippet": "res.status(error.status).send({ status: error.status, data: { code: error.code }, message: error.message })",
+    "hash": "1a34133bc4088a6f15f2adcf2f9e6462092e1ddd60e1dcf2914c0f4e8787fe85",
+    "context": "374dccac623d5a29ca628823fe3b417c937f1c83cd8157bfcea9c52fad0af018",
+    "count": 1,
+    "reason": "Only typed ChatError values are serialized here (403, 409, 422); other exceptions propagate. Token.Auth handles authentication upstream. NC5 HTTP/MySQL exercises denied access, conflicting requests and invalid recipients."
   }
 ]
