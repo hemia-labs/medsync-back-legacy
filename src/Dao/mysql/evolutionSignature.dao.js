@@ -177,8 +177,8 @@ async function attest(body, correcting) {
             return chain.faults.every(f => f.state==='unavailable') ? unavailable('SEAL_UNAVAILABLE') : integrityConflict(chain.faults[0].code);
         }
         const flagged=chain.notes.get(body.id);
-        if (correcting && flagged && flagged.state==='discrepancy') {
-            integrity.recordEvent({type:'RECTIFY_BLOCKED_DISCREPANCY',code:flagged.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
+        if (flagged && flagged.state==='discrepancy') {
+            integrity.recordEvent({type:correcting?'RECTIFY_BLOCKED_DISCREPANCY':'SIGN_BLOCKED_DISCREPANCY',code:flagged.code,business:body.id_business,patient:body.id_person,note:body.id,actor:body.id_login});
             return integrityConflict(flagged.code);
         }
         if (!correcting && prior) return conflict('Esta nota ya está firmada. Consulta su historial.');

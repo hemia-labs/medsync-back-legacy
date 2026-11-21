@@ -211,7 +211,10 @@ async function run() {
             got = await states(c.p, c.id);
             assert.ok(got.versions.every(v => v.state === 'discrepancy' && !v.content) && got.versions.length === 2);
             assert.deepEqual(got.list, [{ state: 'discrepancy', code: 'VERSION_MISSING', content: false }]);
-            record('C11 ausencia de todas las versiones de una nota conocida', 'la lista conserva la nota como discrepancia; ninguna versión legible', got, 'discrepancy', compare(c.before, await external(c.p, c.id)));
+            const resign = await call(A, c.p, '/evolution-notes/' + c.id + '/sign', { requestId: randomUUID(), revision: 1 });
+            assert.equal(resign.status, 409); assert.equal(resign.data.code, 'VERSION_MISSING');
+            assert.equal((await db.query('SELECT COUNT(*) c FROM evolution_note_signed_version WHERE note_id=:id', { replacements: { id: c.id } }))[0][0].c, 0);
+            record('C11 ausencia de todas las versiones de una nota conocida', 'la lista conserva la nota como discrepancia; ninguna versión legible; volver a firmar el borrador se rechaza con 409 sin reescribir la nota', got, 'discrepancy', compare(c.before, await external(c.p, c.id)));
         }
         // 12-14. Referencia no disponible
         {
