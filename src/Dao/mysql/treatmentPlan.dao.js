@@ -12,6 +12,7 @@ const reviewKey = process.env.SESSION_SECRET || randomBytes(32);
 const consentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
 const { escapeDocumentText, renderDocumentTemplate, sanitizeDocumentHtml, sanitizeDocumentRichText, safeDocumentForDisplay } = require('../../services/documentSignature/documentHtml.service');
 const eq = (column, param) => `${column} COLLATE utf8mb4_unicode_ci = ${param} COLLATE utf8mb4_unicode_ci`;
+const { attachPendingExtras } = require('../../services/evolutionPerformedExtra');
 const FLAGS = { view: 'view', create: 'create', edit: 'edit', complete: 'complete', cancel: 'cancel', closePlan: 'close_plan', consentView: 'consent.view', consentSign: 'consent.sign', costView: 'cost_view', costEdit: 'cost_edit' };
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 const missingTable = error => (error.original || error).code === 'ER_NO_SUCH_TABLE';
@@ -208,10 +209,12 @@ class TreatmentPlanDao {
                 if (body.request_id === existing.id_treatment_plan) return;
                 return response.bad_request('Ya existe un plan activo. Cierra el actual antes de crear otro.');
             }
+            const id = /^[a-zA-Z0-9-]{1,50}$/.test(body.request_id || '') ? body.request_id : uuidv4();
             await this.query(`INSERT INTO treatment_plan (id_treatment_plan, id_business, id_person, title, diagnosis, notes, status, started_at, active, created_at, created_by)
                 VALUES (:id, :business, :patient, :title, :diagnosis, :notes, 'active', :started_at, 1, NOW(), :actor)`, {
-                ...this.keys(body), id: /^[a-zA-Z0-9-]{1,50}$/.test(body.request_id || '') ? body.request_id : uuidv4(), title: body.title.trim(), diagnosis: body.diagnosis || null, notes: body.notes || null, started_at: body.started_at || null
+                ...this.keys(body), id, title: body.title.trim(), diagnosis: body.diagnosis || null, notes: body.notes || null, started_at: body.started_at || null
             }, transaction, QueryTypes.INSERT);
+            await attachPendingExtras(sequelize, transaction, body.id_business, body.id_person, id);
         });
     }
     updatePlan(body) {

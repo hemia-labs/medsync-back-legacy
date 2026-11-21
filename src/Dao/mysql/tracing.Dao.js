@@ -9,6 +9,8 @@ const eq = (a, b) => `${a} COLLATE utf8mb4_unicode_ci = ${b} COLLATE utf8mb4_uni
 const conflict = () => ({ status: 409, data: { code: 'TRACING_REVISION_CONFLICT' }, message: 'Este seguimiento cambio mientras lo editabas. Tu captura sigue abierta; consulta la version actual antes de corregirlo.' });
 const createConflict = () => ({ status: 409, data: { code: 'TRACING_CREATE_CONFLICT' }, message: 'Esta captura ya se guardo con otro contenido. Consulta el seguimiento guardado antes de corregirlo; no se creo otro registro.' });
 
+const { recordPerformedExtra } = require('../../services/evolutionPerformedExtra');
+const consentDocuments = require('../../services/documentSignature/treatmentPlanConsentDocument.service');
 class TracingDao {
     async context(body, permission, transaction = null, patient = true) {
         if (!body.id_login || !body.id_business || body.rol === 'super_admin') return { error: responseData.forbidden('No tienes acceso al seguimiento.') };
@@ -35,7 +37,7 @@ class TracingDao {
     }
 
     async record(body, id, transaction = null, lock = false) {
-        const result = await sequelize.query(`SELECT t.* FROM tracing t WHERE ${eq('t.id_tracing', ':id')}
+        const result = await sequelize.query(`SELECT t.*, extra.name_snapshot AS other_performed FROM tracing t LEFT JOIN evolution_note_performed_extra extra ON extra.id_note=t.id_tracing AND extra.id_person=t.id_person AND extra.id_business=t.id_business WHERE ${eq('t.id_tracing', ':id')}
             AND ${eq('t.id_person', ':patient')} AND ${eq('t.id_business', ':business')} ${lock ? 'FOR UPDATE' : ''}`, {
             replacements: { id, patient: body.id_person, business: body.id_business }, type: QueryTypes.SELECT, transaction
         });
@@ -97,7 +99,7 @@ class TracingDao {
         if (current.created_by !== body.id_login || current.status !== 'active' || Number(current.revision) !== 1) return false;
         const dateText = value => value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
         return ['quote_date_now', 'quote_date_after'].every(key => dateText(current[key]) === dateText(candidate[key]))
-            && ['treatment_now', 'treatment_after', 'note', 'id_patient_treatment'].every(key => String(current[key] || '') === String(candidate[key] || ''));
+            && ['treatment_now', 'treatment_after', 'note', 'id_patient_treatment', 'other_performed'].every(key => String(current[key] || '') === String(candidate[key] || ''));
     }
 
     async saveTracing(body) {
@@ -123,6 +125,13 @@ class TracingDao {
                     :id_treatment_plan, :id_patient_treatment, :treatment_relation_type, :treatment_text, NOW(), :actor, 1, 'active')`, {
                     replacements: { ...linked, id, business: body.id_business, patient: body.id_person, actor: body.id_login }, transaction
                 });
+                if (row.other_performed) {
+                    await recordPerformedExtra(sequelize, transaction, {
+                        business: body.id_business, patient: body.id_person, actor: body.id_login,
+                        note: id, name: row.other_performed, date: row.quote_date_now
+                    });
+                    await consentDocuments.invalidateStale(body, transaction);
+                }
                 const current = await this.record(body, id, transaction);
                 await this.appendVersion(current, body, 'created', null, transaction);
                 saved.push(current);
@@ -211,14 +220,14 @@ class TracingDao {
         try {
             const context = await this.context(body, 'px.tab.monitoring');
             if (context.error) return context.error;
-            const result = await sequelize.query(`SELECT t.*, DATE_FORMAT(t.quote_date_now, '%d-%m-%Y') AS quote_date_now,
+            const result = await sequelize.query(`SELECT t.*, extra.name_snapshot AS other_performed, DATE_FORMAT(t.quote_date_now, '%d-%m-%Y') AS quote_date_now,
                 DATE_FORMAT(t.quote_date_after, '%d-%m-%Y') AS quote_date_after,
                 l.name AS author_name,
                 a.id_appointment AS linked_appointment_id, a.status AS linked_appointment_status,
                 DATE_FORMAT(a.appointment_date, '%d-%m-%Y') AS linked_appointment_date,
                 DATE_FORMAT(a.start_time, '%H:%i') AS linked_appointment_time,
                 a.title AS linked_appointment_title
-                FROM tracing t LEFT JOIN login l ON ${eq('l.id_login', 't.created_by')} AND ${eq('l.id_business', 't.id_business')}
+                FROM tracing t LEFT JOIN evolution_note_performed_extra extra ON extra.id_note=t.id_tracing AND extra.id_person=t.id_person AND extra.id_business=t.id_business LEFT JOIN login l ON ${eq('l.id_login', 't.created_by')} AND ${eq('l.id_business', 't.id_business')}
                 LEFT JOIN appointment a ON a.id_appointment = (
                     SELECT linked.id_appointment FROM appointment linked
                     WHERE ${eq('linked.id_business', 't.id_business')} AND ${eq('linked.id_person', 't.id_person')}

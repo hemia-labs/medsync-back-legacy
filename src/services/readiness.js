@@ -4,7 +4,9 @@ function createReadiness(db, timeoutMs = 2000) {
     let initialized = false;
     let pending = null;
     return {
+        isInitialized() { return initialized; },
         async initialize() {
+            initialized = false;
             await db.sync({ force: false });
             const rows = await db.query('SELECT next_value FROM patient_code_counter WHERE singleton = 1', { type: QueryTypes.SELECT });
             if (!rows.length || Number(rows[0].next_value) < 1 || Number(rows[0].next_value) > 99999999) throw Error('PATIENT_CODE_MIGRATION_REQUIRED');
@@ -25,6 +27,11 @@ function createReadiness(db, timeoutMs = 2000) {
                     || outboxIndexes.filter(index => index.Key_name === 'PRIMARY').length !== 1)
                     throw Error('PAYMENTS_WELCOME_MIGRATION_REQUIRED');
             }
+            const [notes] = await db.query(
+                "SELECT COUNT(*) AS present FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE' AND TABLE_NAME IN ('evolution_note_draft','evolution_note_signed_version','evolution_note_performed_extra')",
+                { type: QueryTypes.SELECT }
+            );
+            if (Number(notes?.present) !== 3) throw Error('NC5_NOTES_MIGRATION_REQUIRED');
             initialized = true;
         },
         async check() {

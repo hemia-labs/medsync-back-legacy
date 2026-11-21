@@ -22,6 +22,7 @@ app.get('/readyz', async (_req, res) => {
   res.set('Cache-Control', 'no-store').status(ready ? 200 : 503).json({ ready, release: process.env.APP_RELEASE_ID || null });
 });
 
+app.use('/api', (req, res, next) => readiness.isInitialized() ? next() : res.status(503).set('Cache-Control','no-store').json({ready:false}));
 app.disable('x-powered-by');
 
 const TRUST_PROXY_OFF_VALUES = ['', 'false', '0', 'off', 'none'];
@@ -114,6 +115,7 @@ app.use('/api/document', require('./routes/mysql/document'));
 app.use('/api/public/document-signature', require('./routes/mysql/public-document-signature'));
 app.use('/api/clinical-history', require('./routes/mysql/clinical-history'));
 app.use('/api/clinical-history-template', require('./routes/mysql/clinical-history-template'));
+app.use('/api/chat', require('./routes/mysql/chat'));
 
 // app.use('/api/category', require('./routes/mysql/category'));
 // app.use('/api/productService', require('./routes/mysql/productService'));
@@ -145,7 +147,8 @@ const server = app.listen(app.get('port'), () => {
     require('./services/registration/registrationWelcome.service').startRegistrationWelcomeJob(Sequelize);
     require('./services/payments/contractWelcome.service').startContractWelcomeJob(Sequelize);
     require('./services/pulse/runtime').startMetricsLogging();
-  }).catch(async () => {
+  }).catch(async error => {
+    if (error.message === 'NC5_NOTES_MIGRATION_REQUIRED') console.error('[NC5_NOTES_MIGRATION_REQUIRED]');
     console.error('[STARTUP_DATABASE_UNAVAILABLE]');
     server.close();
     await Sequelize.close();
