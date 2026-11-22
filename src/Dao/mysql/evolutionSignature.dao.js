@@ -35,11 +35,12 @@ async function verification(replacements, rows, onlyNote, transaction) {
     // C22: un retroceso detectado por el conciliador se refleja en el aviso aunque MySQL, por sí solo, se vea coherente.
     const live = reconciler.shared();
     const extra = live ? live.faultsFor(replacements.business, replacements.patient) : [];
+    const warnings = live ? live.warningsFor(replacements.business, replacements.patient) : [];
     // `correctionBlocked` es la regla local que también aplica la escritura (discrepancia o indisponibilidad de la cadena de la nota):
     // pantalla y API deciden con ella, no con el aviso del conciliador, que no bloquea nada.
     const correctionBlocked = ['discrepancy', 'unavailable'].includes(base.state);
-    if (!extra.length) return { ...base, correctionBlocked };
-    return { ...base, state: 'discrepancy', faults: [...base.faults, ...extra], reference: true, correctionBlocked };
+    if (!extra.length) return { ...base, correctionBlocked, warnings };
+    return { ...base, state: 'discrepancy', faults: [...base.faults, ...extra], reference: true, correctionBlocked, warnings };
 }
 async function baseVerification(replacements, rows, onlyNote, transaction) {
     const cfg = integrity.config();
@@ -64,7 +65,8 @@ const externalMark = (delivery, row, mark) => {
     if (delivery.disabled || mark.state === 'historical') return null;
     if (!delivery.ok) return 'unknown';
     const state = delivery.states.get(row.note_id+'#'+row.version);
-    return state === 'acked' ? 'received' : state || null;
+    // Versión sellada sin fila de entrega: sin evidencia de acuse la incertidumbre se conserva (no es «ninguno»).
+    return state === 'acked' ? 'received' : state || 'unknown';
 };
 
 async function read(body) {
@@ -113,7 +115,7 @@ async function read(body) {
         const window=pageWindow(page,items.length);
         for (const item of items) if (['discrepancy','unavailable'].includes(item.integrity.state))
             integrity.recordEvent({type:'READ_'+item.integrity.state.toUpperCase(),code:item.integrity.code,business:body.id_business,patient:body.id_person,note:item.id,version:item.version,actor:body.id_login});
-        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference,correctionBlocked:Boolean(check.correctionBlocked),externalPending:items.filter(item => item.integrity.external==='pending').length};
+        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference,correctionBlocked:Boolean(check.correctionBlocked),warnings:(check.warnings || []).map(w => w.code),externalPending:items.filter(item => item.integrity.external==='pending').length};
         const data=pageData(items.slice(window.offset,window.offset+window.pageSize),window);
         return response.success({...data,integrity:summary},check.state==='discrepancy' ? 'Se detectó una diferencia en el control de integridad.' : 'Firmas profesionales consultadas.');
     });

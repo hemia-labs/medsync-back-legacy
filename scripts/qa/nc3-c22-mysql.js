@@ -245,7 +245,7 @@ async function run() {
         const b2 = await call(A, P6, '/evolution-notes/' + id6 + '/rectify', rectReq6);
         assert.equal(b1.data.integrity.external, 'pending'); assert.equal(b2.data.integrity.external, 'pending');
         const spawnWorker = () => new Promise((resolve, reject) => {
-            const child = spawn(process.execPath, [path.join(__dirname, '../ops/nc3-delivery-worker.js')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: '', DB_NAME: schema, EVOLUTION_INTEGRITY_RETRY_MS: '300', EVOLUTION_INTEGRITY_RECONCILE_MS: '900' } });
+            const child = spawn(process.execPath, [path.join(__dirname, 'nc3-delivery-worker.js')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: '', DB_NAME: schema, EVOLUTION_INTEGRITY_RETRY_MS: '300', EVOLUTION_INTEGRITY_RECONCILE_MS: '900' } });
             let seen = ''; const timer = setTimeout(() => reject(Error('worker no listo: ' + seen)), 20000);
             child.stdout.on('data', c => { seen += c; if (seen.includes('NC3_WORKER_READY')) { clearTimeout(timer); resolve(child); } });
             child.stderr.on('data', c => { seen += c; });
@@ -362,6 +362,75 @@ async function run() {
         process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL = savedHook; await new Promise(r => lossy.close(r)); lossy.closeAllConnections && lossy.closeAllConnections();
         record('C2 receptor que acepta y pierde la respuesta; recuperación y resolución', 'el incidente se reintenta con la misma referencia, el receptor puede deduplicar, hay un único incidente lógico, se resuelve y la atención humana es un evento aparte', { intentos: le.attempts.map(a => ({ canal: a.channel, ok: a.ok })), vecesQueElReceptorLoRecibio: [...seen.values()][0], incidentesLogicos: seen.size, trazaAntesDeAtender: evs, trazaConAtencion: evs2 }, 'receptor instrumentado y eventos del testigo');
         reconciler.stop();
+
+        // O: orden de la cadena también para el reintento de fondo (fila anterior en espera programada)
+        {
+            reconciler.stop();
+            const Po = await newPatient();
+            await witnessServer.close();
+            const idO = randomUUID(); await call(A, Po, '/evolution-drafts/' + idO, { revision: 0, form });
+            await call(A, Po, '/evolution-notes/' + idO + '/sign', { requestId: randomUUID(), revision: 1 });
+            await rectify(Po, idO, 1, 'Plan v2 para el orden');
+            witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+            const rowsO = await deliveryRows(Po);
+            assert.equal(rowsO.length, 2);
+            await db.query("UPDATE evolution_integrity_delivery SET next_attempt_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 60 SECOND), claim_token=NULL, claimed_until=NULL WHERE id_person=:p AND seq=:s", { replacements: { p: Po, s: rowsO[0].seq } });
+            await db.query("UPDATE evolution_integrity_delivery SET next_attempt_at=UTC_TIMESTAMP(6), claim_token=NULL, claimed_until=NULL WHERE id_person=:p AND seq=:s", { replacements: { p: Po, s: rowsO[1].seq } });
+            const dr = await realDeliver(db, witness.config());
+            const mid = wLines().filter(l => l.type === 'anchor' && l.rec.patient === Po).map(l => l.rec.seq);
+            assert.deepEqual(mid, [], 'la referencia posterior no se adelanta a la que espera reintento');
+            await db.query("UPDATE evolution_integrity_delivery SET next_attempt_at=UTC_TIMESTAMP(6) WHERE id_person=:p", { replacements: { p: Po } });
+            await realDeliver(db, witness.config());
+            const finalOrder = wLines().filter(l => l.type === 'anchor' && l.rec.patient === Po).map(l => l.rec.seq);
+            assert.deepEqual(finalOrder, rowsO.map(r => Number(r.seq)), 'orden ascendente en el testigo');
+            record('O orden de la cadena con una fila anterior en espera programada', 'el reintento de fondo no envía la referencia posterior antes de la anterior', { primeraPasada: dr, anclajesTrasLaPrimeraPasada: mid, ordenFinal: finalOrder }, 'archivo del testigo');
+        }
+
+        // D: despachador único en operación (un segundo proceso no arranca) y ciclos de incidente
+        {
+            startRec(reconciler, { immediate: false });
+            const second = spawn(process.execPath, [path.join(__dirname, 'nc3-delivery-worker.js')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: '', DB_NAME: schema } });
+            let out = ''; second.stderr.on('data', c => { out += c; }); second.stdout.on('data', c => { out += c; });
+            const code = await new Promise(r => second.once('exit', r));
+            assert.equal(code, 3); assert.ok(out.includes('ya hay un despachador activo'));
+            reconciler.stop();
+            record('D1 un solo despachador en operación', 'un segundo proceso de entrega no arranca mientras el despachador está activo', { codigoDeSalidaDelSegundoProceso: code }, 'proceso del sistema');
+            const cyc = rec.createReconciler({ db, witnessCfg: { ...witness.config() }, alert: async () => ({ ok: false, channel: 'prueba' }), unreachableAfter: 1, outboxFile: path.join(work, 'ciclos-' + Date.now() + '.json'), alertBackoffMs: 100000 });
+            await witnessServer.close();
+            await cyc.tick();
+            const c1 = cyc.outbox()[0]; assert.equal(c1.cycle, 1); assert.ok(!c1.delivered);
+            witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+            await cyc.tick();
+            assert.ok(cyc.outbox()[0].cleared && !cyc.outbox()[0].delivered);
+            await witnessServer.close();
+            await cyc.tick();
+            const all = cyc.outbox();
+            assert.equal(all.length, 2); assert.deepEqual(all.map(e => e.cycle).sort(), [1, 2]);
+            const first = all.find(e => e.cycle === 1);
+            assert.ok(first.cleared && !first.delivered && first.attempts.length >= 1, 'el ciclo 1 sigue pendiente de entrega y no se sobrescribió');
+            witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+            record('D2 reabrir el mismo incidente no sobrescribe un ciclo resuelto pendiente de entrega', 'dos entradas (ciclos 1 y 2); el ciclo 1 conserva sus intentos y su entrega pendiente', { ciclos: all.map(e => ({ ciclo: e.cycle, resuelto: e.cleared, entregado: e.delivered, intentos: e.attempts.length })) }, 'cola de incidentes');
+        }
+
+        // F: fila ausente, histórico, advertencia visible sin bloquear
+        {
+            const Pf = await newPatient(), nf = await sign(Pf);
+            await db.query('DELETE FROM evolution_integrity_delivery WHERE id_person=:p', { replacements: { p: Pf } });
+            const lecF = await call(A, Pf, '/evolution-notes/' + nf.id + '/versions');
+            assert.equal(lecF.data.items[0].integrity.external, 'unknown');
+            const Ph = await newPatient(), legacyId = randomUUID();
+            await db.query("INSERT INTO evolution_note_signed_version (id_business,id_person,note_id,version,draft_revision,request_id,request_hash,author_id,signer_profile,signer_name,signer_license,signed_at,payload) VALUES ('clinic',:p,:id,1,1,:r,:h,'doctor','profile','Doctora de prueba','TEST01','2020-01-01 10:00:00.000000',:pl)", { replacements: { p: Ph, id: legacyId, r: randomUUID(), h: legacyId.replace(/-/g, '').padEnd(64, '0'), pl: JSON.stringify(form) } });
+            const lecH = await call(A, Ph, '/evolution-notes/' + legacyId + '/versions');
+            assert.equal(lecH.data.items[0].integrity.state, 'historical'); assert.equal(lecH.data.items[0].integrity.external, null);
+            const realShared = rec.shared();
+            rec.install({ faultsFor: () => [], warningsFor: () => [{ code: 'REFERENCE_UNVERIFIABLE' }] });
+            const warned = await call(A, Pf, '/evolution-notes/' + nf.id + '/versions');
+            const fixed = await rectify(Pf, nf.id, 1, 'Plan con advertencia');
+            rec.install(realShared);
+            assert.equal(warned.data.integrity.state, 'verified'); assert.deepEqual(warned.data.integrity.warnings, ['REFERENCE_UNVERIFIABLE']); assert.equal(warned.data.integrity.correctionBlocked, false);
+            assert.equal(fixed.status, 200, 'rectificar sigue permitido con la advertencia');
+            record('F fila ausente, histórico y advertencia de referencia no verificable', 'sellada sin fila: «unknown»; histórico: sin estado; advertencia visible sin discrepancia ni bloqueo', { filaAusente: lecF.data.items[0].integrity.external, historico: { estado: lecH.data.items[0].integrity.state, externo: lecH.data.items[0].integrity.external }, advertencia: warned.data.integrity.warnings, estado: warned.data.integrity.state, rectificar: fixed.status }, 'API real');
+        }
 
         // ===================== R2 · aviso a Soporte con reintento durable =====================
         const dumpS = dump();

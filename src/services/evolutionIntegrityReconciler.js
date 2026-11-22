@@ -57,11 +57,12 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
         const id = idOf(found.business, found.patient, found.code);
         if (found.business !== '*') (active.get(found.business + '|' + found.patient) || active.set(found.business + '|' + found.patient, []).get(found.business + '|' + found.patient)).push({ code: found.code, id, severity: found.severity });
         else (active.get('*|*') || active.set('*|*', []).get('*|*')).push({ code: found.code, id, severity: found.severity });
-        const prior = outbox.get(id);
+        const prior = outbox.latest(id);
         if (prior && !prior.cleared) return prior;
         const witnessSeen = known && known.get(id);
         const entry = {
-            id, cycle: (prior ? prior.cycle : 0) + 1, cleared: false, delivered: false, witnessOpen: false, witnessDelivered: false, witnessCleared: false,
+            id, cycle: (prior ? prior.cycle : 0) + 1, // un ciclo nuevo es una entrada aparte: no pisa uno anterior pendiente de entrega
+            cleared: false, delivered: false, witnessOpen: false, witnessDelivered: false, witnessCleared: false,
             incident: { id, env: witnessCfg.envId, code: found.code, severity: found.severity, business: found.business, patient: found.patient, note: found.note || null,
                 witnessSeq: found.witnessSeq ?? null, databaseSeq: found.databaseSeq ?? null, detectedAt: iso(), action: ACTION },
             attempts: [], nextAttemptAt: now()
@@ -212,14 +213,18 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
     return {
         tick, retry, deliverIncidents,
         start(intervalMs = 300000, { immediate = true, retryMs = 5000 } = {}) {
-            if (timer) return;
+            if (timer) return true;
+            if (!outbox.acquire()) { console.error('NC3_DISPATCHER_ALREADY_RUNNING'); return false; }
             timer = setInterval(() => { tick(); }, Math.max(500, Number(intervalMs))); timer.unref();
             retryTimer = setInterval(() => { retry(); }, Math.max(200, Number(retryMs))); retryTimer.unref();
             if (immediate) tick();
+            return true;
         },
-        stop() { if (timer) clearInterval(timer); if (retryTimer) clearInterval(retryTimer); timer = retryTimer = null; },
+        stop() { if (timer) clearInterval(timer); if (retryTimer) clearInterval(retryTimer); timer = retryTimer = null; outbox.release(); },
         // Condiciones vigentes para un paciente: solo de su consultorio (el aviso de lectura no cruza consultorios).
         faultsFor(business, patient) { return (active.get(business + '|' + patient) || []).filter(c => c.severity === 'critical').map(c => ({ code: c.code, state: 'discrepancy' })); },
+        // Advertencias visibles para el profesional que NO bloquean nada ni se presentan como discrepancia.
+        warningsFor(business, patient) { return (active.get(business + '|' + patient) || []).filter(c => c.code === 'REFERENCE_UNVERIFIABLE').map(c => ({ code: c.code })); },
         outbox: () => outbox.all(),
         last: () => last
     };

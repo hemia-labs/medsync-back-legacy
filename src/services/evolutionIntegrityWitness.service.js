@@ -74,13 +74,14 @@ async function deliver(db, cfg, { business = null, patient = null, force = false
     const rows = await db.query('SELECT * FROM evolution_integrity_delivery WHERE claim_token=:token ORDER BY id_business,id_person,seq', { replacements: { token }, type: QueryTypes.SELECT });
     const stopped = new Set();
     let sent = 0, failed = 0;
-    // Orden de la cadena: si otro proceso ya tiene en vuelo una referencia anterior del mismo paciente, estas esperan.
+    // Orden de la cadena: si el mismo paciente tiene una referencia anterior pendiente que NO está en este lote (en vuelo por otro
+    // proceso o en espera programada de reintento), las posteriores no se adelantan.
     const waiting = new Set();
     for (const row of rows) {
         const who = row.id_business + '|' + row.id_person;
         if (waiting.has(who) || stopped.has(who)) continue;
         const [blocker] = await db.query(`SELECT 1 AS b FROM evolution_integrity_delivery WHERE id_business=:b AND id_person=:p AND state='pending' AND seq < :s
-            AND claim_token IS NOT NULL AND claim_token<>:token AND claimed_until>=UTC_TIMESTAMP(6) LIMIT 1`, { replacements: { b: row.id_business, p: row.id_person, s: row.seq, token }, type: QueryTypes.SELECT });
+            AND (claim_token IS NULL OR claim_token<>:token) LIMIT 1`, { replacements: { b: row.id_business, p: row.id_person, s: row.seq, token }, type: QueryTypes.SELECT });
         if (blocker) waiting.add(who);
     }
     for (const row of rows) {
