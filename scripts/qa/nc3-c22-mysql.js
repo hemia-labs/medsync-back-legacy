@@ -40,7 +40,7 @@ async function run() {
     let witnessServer = null, alertServer = null, reconciler = null, server = null;
     try {
         for (const spec of definitions) await db.query('CREATE TABLE ' + spec);
-        for (const file of ['nc5-evolution-draft.sql', 'nc5-evolution-signed.sql', 'nc5-performed-extra.sql', 'nc3-evolution-integrity.sql'])
+        for (const file of ['nc5-evolution-draft.sql', 'nc5-evolution-signed.sql', 'nc5-performed-extra.sql', 'nc3-evolution-integrity.sql', 'nc3-evolution-integrity-delivery.sql'])
             for (const statement of fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8').replace(/^--.*$/gm, '').split(';')) if (statement.trim()) await db.query(statement);
         for (const sql of [
             'INSERT INTO patient_code_counter VALUES (1,1)',
@@ -53,10 +53,11 @@ async function run() {
         ]) await db.query(sql);
 
         // --- Testigo externo (otro proceso lógico, otro directorio) y canal de Soporte simulado ---
-        const witnessDir = path.join(work, 'witness'), spoolPath = path.join(work, 'app-server', 'spool.jsonl');
+        const witnessDir = path.join(work, 'witness');
         const envs = [{ env: 'qa-env', write: randomBytes(12).toString('hex'), support: randomBytes(12).toString('hex') }];
         const { start: startWitness } = require('../ops/nc3-witness-server');
-        witnessServer = await startWitness({ dir: witnessDir, envs });
+        const hooks = { delay: 0, dropAckOnce: false };
+        witnessServer = await startWitness({ dir: witnessDir, envs, hooks });
         const alerts = [];
         const startAlertServer = (listenPort = 0) => new Promise(resolve => {
             const s = http.createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { alerts.push({ t: Date.now(), body: JSON.parse(b) }); res.end('ok'); }); });
@@ -71,18 +72,22 @@ async function run() {
             EVOLUTION_INTEGRITY_LOG_DIR: work, EVOLUTION_INTEGRITY_ANCHOR_PATH: path.join(work, 'anchor.jsonl'),
             EVOLUTION_INTEGRITY_WITNESS_URL: 'http://127.0.0.1:' + witnessPort, EVOLUTION_INTEGRITY_WITNESS_ENV: 'qa-env',
             EVOLUTION_INTEGRITY_WITNESS_WRITE_TOKEN: envs[0].write, EVOLUTION_INTEGRITY_WITNESS_SUPPORT_TOKEN: envs[0].support,
-            EVOLUTION_INTEGRITY_WITNESS_SPOOL: spoolPath, EVOLUTION_INTEGRITY_WITNESS_TIMEOUT_MS: '800',
+            EVOLUTION_INTEGRITY_INCIDENT_OUTBOX: path.join(work, 'app-server', 'incident-outbox.json'), EVOLUTION_INTEGRITY_ALERT_BACKOFF_MS: '300',
+            EVOLUTION_INTEGRITY_DELIVERY_BACKOFF_MS: '300', EVOLUTION_INTEGRITY_WITNESS_TIMEOUT_MS: '800',
             EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL: 'http://127.0.0.1:' + alertPort
         });
         const dep = require.resolve('../../src/db/Sequelize.connection');
         require.cache[dep] = { id: dep, filename: dep, loaded: true, exports: db };
         const witness = require('../../src/services/evolutionIntegrityWitness.service');
         const rec = require('../../src/services/evolutionIntegrityReconciler');
-        // Medición: cuánto tarda la entrega al testigo y simulación de caída entre el commit y la entrega.
-        const latencies = []; let dropNext = false; const realPublish = witness.publish;
-        witness.publish = async (...args) => {
-            if (dropNext) { dropNext = false; return { state: 'lost' }; }
-            const t = process.hrtime.bigint(); const r = await realPublish(...args); latencies.push(Number(process.hrtime.bigint() - t) / 1e6); return r;
+        // Medición de la entrega inmediata y simulación de un proceso que cae justo después del commit.
+        const latencies = []; let skipImmediate = false; const realDeliver = witness.deliver;
+        witness.deliver = async (...args) => {
+            const scoped = args[2] && args[2].business;
+            if (scoped && skipImmediate) { skipImmediate = false; return { sent: 0, failed: 0, pending: 0 }; }
+            const t = process.hrtime.bigint(); const r = await realDeliver(...args);
+            if (scoped) latencies.push(Number(process.hrtime.bigint() - t) / 1e6);
+            return r;
         };
         const express = require('express'), app = express();
         app.use(express.json());
@@ -116,7 +121,8 @@ async function run() {
         const record = (caso, esperado, observado, evidencia) => { results.push({ caso, esperado, observado, evidencia }); console.log('PASS ' + caso); };
         const INTERVAL = 800;
         const makeReconciler = () => rec.install(rec.createReconciler({ db, witnessCfg: witness.config(), staleMs: 3000, unreachableAfter: 2 }));
-        reconciler = makeReconciler(); reconciler.start(INTERVAL);
+        const startRec = (r, opts = {}) => r.start(INTERVAL, { retryMs: 300, ...opts });
+        reconciler = makeReconciler(); // se inicia después del corte B para no competir con el envío inmediato de la firma
         const clinicalText = /Plan original|Evolución sintética|Control sintético|Plan v2/;
 
         // ===== Preparación: paciente legítimo, v1 (corte A), v2, nota posterior (corte B) =====
@@ -131,7 +137,7 @@ async function run() {
         const P2 = await newPatient(), n2 = await sign(P2); assert.ok(wHas(P2, 1)); // nota creada después de A
         const dumpB = dump(); // corte B: v2 y la nota posterior
         record('E0 firma, rectificación y referencia externa', 'cada sellado llega al testigo antes de responder', { externalV1: 'recorded', externalV2: 'recorded', witnessSeqP1: [1, 2] }, 'archivo del testigo leído directamente por el guion');
-        reconciler.start(INTERVAL, { immediate: false }); await sleep(INTERVAL * 3);
+        startRec(reconciler, { immediate: false }); await sleep(INTERVAL * 3);
         assert.equal(alerts.length, 0, 'sin falsos positivos antes del retroceso (incluye rectificación legítima)');
         record('E1 rectificación legítima sin falso positivo', 'ningún aviso tras varias conciliaciones', { avisos: 0, conciliaciones: 3 }, 'canal de Soporte simulado vacío');
 
@@ -140,7 +146,7 @@ async function run() {
         assert.equal(await headSeq(P1), 1); // cotejo independiente: MySQL volvió a v1
         const exists2 = (await db.query('SELECT COUNT(*) c FROM person WHERE id_person=:p', { replacements: { p: P2 } }))[0][0].c;
         assert.equal(exists2, 0, 'la nota posterior desapareció por completo');
-        const t0 = Date.now(); reconciler.start(INTERVAL, { immediate: false }); // la aplicación sigue en marcha; el conciliador corre por intervalo
+        const t0 = Date.now(); startRec(reconciler, { immediate: false }); // la aplicación sigue en marcha; el conciliador corre por intervalo
         const a1 = await waitFor(() => alertFor(P1, 'ROLLBACK_SUSPECTED'), 15000, 'aviso P1');
         const a2 = await waitFor(() => alertFor(P2, 'ROLLBACK_SUSPECTED'), 15000, 'aviso P2');
         const d1 = a1.t - t0, d2 = a2.t - t0;
@@ -172,7 +178,7 @@ async function run() {
 
         // ===== Recuperación y cierre =====
         reconciler.stop(); restore(dumpB);
-        const t1 = Date.now(); reconciler.start(INTERVAL, { immediate: false });
+        const t1 = Date.now(); startRec(reconciler, { immediate: false });
         const incidentsOf = async () => (await witness.incidents(witness.config())).data.events;
         const incidentIds = [a1.body.id, a2.body.id, dv.body.id];
         await waitFor(async () => { const ev = await incidentsOf(); return incidentIds.every(id => ev.some(e => e.id === id && e.type === 'cleared')); }, 15000, 'cleared');
@@ -188,74 +194,149 @@ async function run() {
         assert.deepEqual(trace, ['open', 'delivered', 'cleared', 'closed']);
         record('E6 recuperación al corte B y cierre', 'la condición se anota como resuelta, las dos versiones vuelven a verificarse y el cierre conserva la traza', { traza: trace, resueltoMs: clearMs, lectura: healed.data.integrity.state }, 'eventos del testigo + API');
 
-        // ===== Testigo inaccesible, reintento y concurrencia =====
+        // ===================== R2 · cola durable de referencias =====================
+        reconciler.stop(); alerts.length = 0;
+        process.env.EVOLUTION_INTEGRITY_WITNESS_TIMEOUT_MS = '3000';
+        const deliveryRows = async p => (await db.query('SELECT note_id,version,seq,state,attempts FROM evolution_integrity_delivery WHERE id_person=:p ORDER BY seq', { replacements: { p } }))[0];
+        const counts = async id => ({
+            versiones: (await db.query('SELECT COUNT(*) c FROM evolution_note_signed_version WHERE note_id=:id', { replacements: { id } }))[0][0].c,
+            asientos: (await db.query('SELECT COUNT(*) c FROM evolution_integrity_ledger WHERE note_id=:id', { replacements: { id } }))[0][0].c
+        });
+        const readStates = async (token, p, id) => {
+            const list = await call(token, p, '/evolution-notes'), det = await call(token, p, '/evolution-notes/' + id + '/versions');
+            return { lista: list.data.items.filter(i => i.id === id).map(i => i.integrity.external), detalle: det.data.items.map(i => [i.version, i.integrity.external]), pendientes: det.data.integrity.externalPending };
+        };
+        const wCount = (p, seq) => wLines().filter(l => l.type === 'anchor' && l.rec.patient === p && l.rec.seq === seq).length;
+
+        // Q1: una rectificación llega mientras se envía la firma anterior (el testigo estaba caído y vuelve lento)
+        const P4 = await newPatient(), id4 = randomUUID(), signReq4 = { requestId: randomUUID(), revision: 1 };
+        await witnessServer.close();
+        await call(A, P4, '/evolution-drafts/' + id4, { revision: 0, form });
+        const s4 = await call(A, P4, '/evolution-notes/' + id4 + '/sign', signReq4);
+        assert.equal(s4.status, 200); assert.equal(s4.data.integrity.external, 'pending');
+        assert.deepEqual((await deliveryRows(P4)).map(r => r.state), ['pending']);
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks }); hooks.delay = 1200;
+        await sleep(400);
+        const inFlight = witness.deliver(db, witness.config());
+        await sleep(150);
+        const rectReq4 = { requestId: randomUUID(), revision: 1, reason: 'Corrección sintética', form: { ...form, plan: 'Plan v2 en cola' } };
+        const r4 = await call(A, P4, '/evolution-notes/' + id4 + '/rectify', rectReq4);
+        assert.equal(r4.status, 200); assert.equal(r4.data.version, 2); assert.equal(r4.data.integrity.external, 'pending', 'v2 espera su turno: v1 sigue en vuelo');
+        await inFlight; hooks.delay = 0;
+        startRec(reconciler, { immediate: false });
+        await waitFor(async () => (await deliveryRows(P4)).every(r => r.state === 'acked'), 15000, 'ambas referencias');
+        const order = wLines().filter(l => l.type === 'anchor' && l.rec.patient === P4).map(l => l.rec.seq);
+        assert.deepEqual(order, [1, 2]); assert.deepEqual(await counts(id4), { versiones: 2, asientos: 2 });
+        record('Q1 rectificación mientras se envía la firma anterior', 'ambas referencias llegan al testigo, en orden de cadena, sin duplicar versiones', { v2Respuesta: r4.data.integrity.external, ordenEnTestigo: order, filas: await deliveryRows(P4), conteo: await counts(id4) }, 'filas de la cola en MySQL y archivo del testigo');
+
+        // Q2: el testigo registra la referencia pero el acuse se pierde
+        const P5 = await newPatient(); hooks.dropAckOnce = true;
+        const n5 = await sign(P5);
+        assert.equal(n5.r.data.integrity.external, 'pending'); assert.equal(wCount(P5, 1), 1, 'el testigo sí la recibió');
+        await waitFor(async () => (await deliveryRows(P5))[0].state === 'acked', 15000, 'acuse');
+        assert.equal(wCount(P5, 1), 1, 'el reenvío idéntico no duplica');
+        record('Q2 acuse perdido', 'la fila sigue pendiente, el reenvío es un duplicado idéntico y se registra una sola vez', { primerEstado: 'pending', anclajesEnTestigo: wCount(P5, 1), intentos: (await deliveryRows(P5))[0].attempts }, 'fila de la cola y archivo del testigo');
+
+        // Q3: el proceso cae después del commit y antes del primer envío; reinicio
+        const P6 = await newPatient(); reconciler.stop(); skipImmediate = true;
+        const t6 = Date.now(), n6 = await sign(P6);
+        assert.equal(n6.r.data.integrity.external, 'pending'); assert.ok(!wHas(P6, 1));
+        reconciler = makeReconciler(); startRec(reconciler); // reinicio: sin memoria; la cola está en MySQL
+        await waitFor(() => wHas(P6, 1), 15000, 'entrega tras reinicio');
+        const ackMs = Date.now() - t6;
+        record('Q3 caída entre el commit y el envío, con reinicio', 'la referencia no se pierde: la cola estaba en la misma transacción y se entrega al reiniciar', { externoAlFirmar: 'pending', hastaElAcuseMs: ackMs }, 'archivo del testigo');
+
+        // Q4: estado por versión, sesión nueva y reenvío de las solicitudes originales
+        const P7 = await newPatient(), id7 = randomUUID(), signReq7 = { requestId: randomUUID(), revision: 1 };
+        await call(A, P7, '/evolution-drafts/' + id7, { revision: 0, form });
+        const s7 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
+        assert.equal(s7.data.integrity.external, 'recorded');
+        await witnessServer.close();
+        const rectReq7 = { requestId: randomUUID(), revision: 1, reason: 'Corrección sintética', form: { ...form, plan: 'Plan v2 pendiente' } };
+        const r7 = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
+        assert.equal(r7.data.integrity.external, 'pending');
+        const reS = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7), reR = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
+        assert.equal(reS.data.version, 1); assert.equal(reS.data.integrity.external, 'recorded');
+        assert.equal(reR.data.version, 2); assert.equal(reR.data.integrity.external, 'pending');
+        const fresh = await readStates(B, P7, id7); // sesión nueva
+        assert.deepEqual(fresh.lista, ['pending']); assert.deepEqual(fresh.detalle, [[2, 'pending'], [1, null]]); assert.equal(fresh.pendientes, 1);
+        assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        await waitFor(async () => (await deliveryRows(P7)).every(r => r.state === 'acked'), 15000, 'ack P7');
+        const after = await readStates(B, P7, id7);
+        assert.deepEqual(after.lista, [null]); assert.deepEqual(after.detalle, [[2, null], [1, null]]); assert.equal(after.pendientes, 0);
+        const again = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
+        assert.equal(again.data.integrity.external, 'recorded'); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        const mismo = await Promise.all([A, B].map(t => call(t, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7)));
+        assert.ok(mismo.every(x => x.status === 200 && x.data.version === 2)); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        record('Q4 estado por versión, sesión nueva y reenvío de las solicitudes originales', 'v2 aparece pendiente solo en su versión (lista, detalle y sesión nueva), el reenvío conserva una sola firma por versión y el pendiente desaparece tras el acuse', { respuestaFirma: s7.data.integrity.external, respuestaRectificacion: r7.data.integrity.external, reenvioFirma: reS.data.integrity.external, reenvioRectificacion: reR.data.integrity.external, sesionNueva: fresh, trasElAcuse: after, conteo: await counts(id7) }, 'API con dos sesiones y filas de MySQL');
+
+        // Q5: nota ya firmada y también falla la cola
+        await db.query('RENAME TABLE evolution_integrity_delivery TO qa_held_delivery');
+        const inc7 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
+        const lec7 = await call(A, P7, '/evolution-notes');
+        await db.query('RENAME TABLE qa_held_delivery TO evolution_integrity_delivery');
+        assert.equal(inc7.status, 200); assert.equal(inc7.data.version, 1); assert.equal(inc7.data.integrity.external, 'incident');
+        assert.equal(lec7.status, 200); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        record('Q5 firma existente y falla la cola', 'se informa de la incidencia, se conserva la firma y no se pide firmar otra vez', { estado: inc7.status, externo: inc7.data.integrity.external, lecturaSigueFuncionando: lec7.status, conteo: await counts(id7) }, 'API y filas de MySQL');
         reconciler.stop();
-        await witnessServer.close();
-        const P4 = await newPatient(), n4 = await sign(P4);
-        assert.equal(n4.r.data.integrity.external, 'pending'); assert.equal(witness.spoolRead(witness.config()).length, 1);
-        alerts.length = 0; reconciler.start(INTERVAL, { immediate: false });
-        const un = await waitFor(() => alerts.find(a => a.body.code === 'REFERENCE_UNREACHABLE'), 15000, 'inaccesible');
-        const view4 = await call(A, P4, '/evolution-notes');
-        assert.equal(view4.data.integrity.state, 'verified'); assert.ok(!alerts.some(a => a.body.severity === 'critical'));
-        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort });
-        await waitFor(() => wHas(P4, 1), 15000, 'entrega diferida');
-        await waitFor(() => witness.spoolRead(witness.config()).length === 0, 5000, 'cola vacía');
-        const countBefore = wLines().length;
-        await realPublish(witness.config(), { entry: { id_business: 'clinic', id_person: P4, seq: 1, note_id: n4.id, version: 1, format: wHas(P4, 1).rec.format, digest: wHas(P4, 1).rec.digest, previous_digest: null, prev_mac: wHas(P4, 1).rec.prevMac, sealed_at_text: wHas(P4, 1).rec.sealedAt, key_id: 'k1', mac: wHas(P4, 1).rec.mac }, head: { mac: wHas(P4, 1).rec.headMac } });
-        assert.equal(wLines().length, countBefore, 'la reentrega no duplica');
-        const conc = await Promise.all([A, B].map(t => sign(P4, t)));
-        await sleep(INTERVAL * 3);
-        assert.ok(conc.every(c => c.r.status === 200)); assert.ok(wHas(P4, 2) && wHas(P4, 3));
-        assert.ok(!alerts.some(a => a.body.severity === 'critical'), 'sin falsos positivos tras reintento y concurrencia');
-        record('E7 testigo inaccesible, reintento y concurrencia', 'la firma se confirma con la referencia en cola durable, Soporte recibe una advertencia (no una discrepancia), la lectura sigue verificada y la entrega diferida no duplica', { externo: n4.r.data.integrity.external, aviso: un.body.code, severidad: un.body.severity, lecturaDuranteLaCaida: view4.data.integrity.state, reentregaDuplicada: false, concurrentes: conc.map(c => c.r.status) }, 'cola local, archivo del testigo');
 
-        // ===== Reinicio del conciliador con el canal de aviso caído =====
-        reconciler.stop(); const dumpC = dump();
-        const P5 = await newPatient(), n5 = await sign(P5); assert.ok(wHas(P5, 1));
-        await new Promise(r => alertServer.close(r)); alerts.length = 0;
-        restore(dumpC); // P5 desaparece; el canal de Soporte está caído
-        reconciler = makeReconciler(); reconciler.start(INTERVAL);
-        await waitFor(async () => (await incidentsOf()).some(e => e.patient === P5 && e.type === 'open'), 15000, 'incidente P5');
-        assert.ok(!(await incidentsOf()).some(e => e.patient === P5 && e.type === 'delivered'));
-        reconciler.stop(); reconciler = makeReconciler(); // reinicio: sin memoria
-        alertServer = await startAlertServer(alertPort); reconciler.start(INTERVAL);
-        const late = await waitFor(() => alertFor(P5, 'ROLLBACK_SUSPECTED'), 15000, 'aviso tras reinicio');
-        await waitFor(async () => (await incidentsOf()).some(e => e.patient === P5 && e.type === 'delivered'), 5000, 'delivered');
-        const opens = (await incidentsOf()).filter(e => e.patient === P5 && e.type === 'open').length;
-        assert.equal(opens, 1); await sleep(INTERVAL * 3);
-        assert.equal(alerts.filter(a => a.body.patient === P5 && a.body.code === 'ROLLBACK_SUSPECTED').length, 1, 'un solo aviso entregado');
-        record('E8 canal de aviso caído y reinicio del conciliador', 'el incidente queda en el testigo, se entrega al volver el canal tras reiniciar y no se duplica', { incidentesAbiertos: opens, avisosEntregados: 1, incidente: late.body.id }, 'eventos del testigo');
+        // ===================== R2 · aviso a Soporte con reintento durable =====================
+        const dumpS = dump();
+        const P8 = await newPatient(); await sign(P8); assert.ok(wHas(P8, 1));
+        const dumpS2 = dump();
+        await new Promise(r => alertServer.close(r)); alerts.length = 0; // el canal de Soporte cae
+        restore(dumpS); // P8 desaparece: retroceso
+        reconciler = makeReconciler(); startRec(reconciler);
+        const entry1 = await waitFor(() => reconciler.outbox().find(e => e.incident.patient === P8 && e.incident.code === 'ROLLBACK_SUSPECTED' && e.attempts.length >= 3), 20000, 'reintentos');
+        assert.ok(!entry1.delivered);
+        const incId = entry1.id, gaps = entry1.attempts.slice(1).map((a, i) => Date.parse(a.at) - Date.parse(entry1.attempts[i].at));
+        // el testigo también cae y el conciliador se reinicia; el testigo se recupera ANTES que el canal
+        reconciler.stop(); await witnessServer.close();
+        reconciler = makeReconciler(); startRec(reconciler, { immediate: false });
+        const mid = await waitFor(() => { const e = reconciler.outbox().find(x => x.id === incId); return e.attempts.length > entry1.attempts.length && e; }, 20000, 'sigue reintentando');
+        assert.ok(!mid.delivered, 'sigue reintentando con la misma referencia');
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        await sleep(1500);
+        // canal sin configurar: solo registro; la entrega sigue visible como pendiente
+        const savedUrl = process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL; delete process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL;
+        await waitFor(() => reconciler.outbox().find(e => e.id === incId).attempts.some(a => a.channel === 'log_only'), 15000, 'log_only');
+        assert.ok(!reconciler.outbox().find(e => e.id === incId).delivered);
+        process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL = savedUrl;
+        alertServer = await startAlertServer(alertPort);
+        const done = await waitFor(() => { const e = reconciler.outbox().find(x => x.id === incId); return e.delivered && e; }, 20000, 'entrega');
+        const received = alerts.filter(a => a.body.id === incId);
+        assert.equal(received.length, 1); assert.equal(received[0].body.attempt, done.attempts.length);
+        await waitFor(async () => (await incidentsOf()).filter(e => e.id === incId).some(e => e.type === 'delivered'), 15000, 'delivered en el testigo');
+        assert.equal((await incidentsOf()).filter(e => e.id === incId && e.type === 'open').length, 1, 'un solo incidente lógico');
+        assert.ok(!clinicalText.test(JSON.stringify(done)));
+        record('S1 canal y testigo caídos, reinicio del conciliador y recuperación del testigo antes que el canal', 'el incidente se conserva, se reintenta con espera progresiva y la misma referencia hasta que el canal acusa, y llega una sola vez', { incidente: incId, intentos: done.attempts.map(a => ({ canal: a.channel, ok: a.ok })), esperasEntreIntentosMs: gaps, entregadoEn: done.deliveredAt, avisosRecibidosPorElCanal: received.length, numeroDeIntentoRecibido: received[0].body.attempt }, 'cola durable de incidentes (archivo del servidor) y eventos del testigo');
+        // resolución: se recupera el estado correcto
+        reconciler.stop(); restore(dumpS2); startRec(reconciler);
+        await waitFor(async () => (await incidentsOf()).filter(e => e.id === incId).some(e => e.type === 'cleared'), 15000, 'cleared S1');
+        const cliLines = []; await cli.run(['close', incId, '--by', 'soporte-qa', '--evidence', 'corte posterior restaurado; referencia coincide'], { ...process.env }, l => cliLines.push(l));
+        const traza = (await incidentsOf()).filter(e => e.id === incId).map(e => e.type);
+        assert.deepEqual(traza, ['open', 'delivered', 'cleared', 'closed']);
+        record('S2 resolución y cierre del incidente reintentado', 'la traza conserva apertura, entrega, resolución y cierre', { traza }, 'eventos del testigo');
 
-        // ===== Intervalos de exposición medidos =====
-        reconciler.stop(); restore(dumpB); // vuelve a un estado conocido (P5 reaparece en B? no: B es anterior); limpiar incidentes del ensayo no es necesario
-        const P6 = await newPatient();
-        reconciler = makeReconciler();
-        dropNext = true; const tCommit = Date.now();
-        const n6 = await sign(P6); assert.equal(n6.r.data.integrity.external, 'lost');
-        assert.ok(!wHas(P6, 1));
-        reconciler.start(INTERVAL, { immediate: false });
-        await waitFor(() => wHas(P6, 1), 15000, 'extensión');
-        const exposure = Date.now() - tCommit;
-        record('E9 caída entre el commit y la entrega (intervalo de exposición)', 'la firma sin referencia externa se completa desde MySQL en la siguiente conciliación', { exposicionMs: exposure, intervaloMs: INTERVAL, regla: 'solo extiende si continúa exactamente el último registro del testigo' }, 'archivo del testigo');
-        // límite: cola perdida con el servidor de la aplicación mientras el testigo estaba caído
-        reconciler.stop(); const dumpD = dump();
+        // ===================== Límite L1 y costos =====================
+        reconciler.stop(); const dumpL = dump();
         await witnessServer.close();
-        const P7 = await newPatient(), n7 = await sign(P7); assert.equal(n7.r.data.integrity.external, 'pending');
-        fs.rmSync(spoolPath); // el servidor de la aplicación se restaura: la cola local se pierde
-        restore(dumpD);
-        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort });
-        alerts.length = 0; reconciler = makeReconciler(); reconciler.start(INTERVAL); await sleep(INTERVAL * 4);
-        assert.ok(!wHas(P7, 1)); assert.ok(!alerts.some(a => a.body.patient === P7));
-        record('L1 límite: testigo caído y cola local perdida junto con la base', 'NO se detecta: no existe evidencia externa de esa firma (ventana = duración de la caída del testigo)', { detectado: false, firmasSinEvidencia: 1 }, 'testigo sin registro; sin aviso');
+        const P10 = await newPatient(), n10 = await sign(P10); assert.equal(n10.r.data.integrity.external, 'pending');
+        restore(dumpL); // la cola vive en MySQL: se va con la restauración
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        alerts.length = 0; reconciler = makeReconciler(); startRec(reconciler); await sleep(INTERVAL * 4);
+        assert.ok(!wHas(P10, 1)); assert.ok(!alerts.some(a => a.body.patient === P10));
+        record('L1 límite: testigo caído y base restaurada antes del acuse', 'NO se detecta: la firma pendiente y su cola se pierden con MySQL y el testigo nunca la recibió (ventana = tiempo hasta el acuse)', { detectado: false, firmasSinEvidencia: 1 }, 'testigo sin registro; sin aviso');
 
         latencies.sort((a, b) => a - b);
-        const stats = { entregas: latencies.length, medianaMs: +latencies[Math.floor(latencies.length / 2)].toFixed(2), maxMs: +latencies[latencies.length - 1].toFixed(2) };
-        record('M1 costo de la entrega externa en la firma', 'la entrega al testigo ocurre antes de responder y su latencia es acotada', stats, 'temporizador alrededor de la entrega');
+        const stats = { entregasInmediatas: latencies.length, medianaMs: +latencies[Math.floor(latencies.length / 2)].toFixed(2), maxMs: +latencies[latencies.length - 1].toFixed(2) };
+        record('M1 costo del envío inmediato en la firma', 'acotado', stats, 'temporizador alrededor de la entrega');
         if (process.env.NC3_QA_EVIDENCE_DIR) {
             fs.mkdirSync(process.env.NC3_QA_EVIDENCE_DIR, { recursive: true });
-            fs.writeFileSync(path.join(process.env.NC3_QA_EVIDENCE_DIR, 'c22-results.json'), JSON.stringify({ fecha: new Date().toISOString(), entorno: 'MySQL aislado y testigo local, datos sintéticos', intervaloConciliadorMs: INTERVAL, casos: results }, null, 2));
+            fs.writeFileSync(path.join(process.env.NC3_QA_EVIDENCE_DIR, 'c22-r2-results.json'), JSON.stringify({ fecha: new Date().toISOString(), entorno: 'MySQL aislado y testigo local, datos sintéticos', intervaloConciliadorMs: INTERVAL, casos: results }, null, 2));
         }
-        console.log('PASS NC3/C22: ' + results.length + ' casos.');
+        console.log('PASS NC3/C22 R2: ' + results.length + ' casos.');
     } finally {
         if (reconciler) reconciler.stop();
         if (server) await new Promise(r => server.close(r));

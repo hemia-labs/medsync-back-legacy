@@ -1,36 +1,44 @@
 'use strict';
 // NC3/C22: conciliador. Compara las cabeceras de integridad de MySQL con la referencia externa (testigo) y avisa a
-// Soporte aunque nadie abra el expediente. Distingue cuatro situaciones:
+// Soporte aunque nadie abra el expediente. Distingue:
 //   - ROLLBACK_SUSPECTED / HISTORY_DIVERGED / WITNESS_RECORD_INVALID: discrepancia confirmada (el testigo es autoritativo).
-//   - REFERENCE_STALE: el testigo va atrasado respecto de MySQL (mantenimiento, no discrepancia).
-//   - REFERENCE_UNREACHABLE: no se pudo consultar el testigo (nunca se declara discrepancia por eso).
+//   - REFERENCE_STALE / REFERENCE_UNVERIFIABLE: el testigo va atrasado respecto de MySQL (advertencia).
+//   - REFERENCE_UNREACHABLE: no se pudo consultar el testigo (advertencia; nunca se declara discrepancia por eso).
 // El testigo nunca se sobrescribe con el estado de MySQL: solo se extiende si MySQL continúa exactamente su último registro.
+//
+// R2: los incidentes pasan por una cola durable (archivo del servidor, fuera de MySQL). El aviso a Soporte se reintenta con
+// espera progresiva y la MISMA referencia hasta obtener acuse del canal, aunque el testigo y el canal fallen a la vez o el
+// conciliador se reinicie. Cada intento queda registrado (hora, canal, resultado) sin texto clínico.
 const { createHash } = require('node:crypto');
+const path = require('node:path');
 const { QueryTypes } = require('sequelize');
 const integrity = require('./evolutionIntegrity.service');
 const witness = require('./evolutionIntegrityWitness.service');
+const { createOutbox } = require('./evolutionIntegrityIncidentOutbox');
 
 const ACTION = 'Soporte de HEMIA: confirmar con el responsable del consultorio, conservar evidencia y coordinar la recuperación en un entorno aislado.';
 
-async function webhook(incident) {
+// Canal de Soporte: línea estructurada (sin texto clínico) y, si está configurado, webhook JSON. Sin webhook la entrega
+// NO se da por hecha: queda `log_only` y el incidente sigue pendiente de acuse.
+async function defaultAlert(incident, attempt) {
+    console.error('NC3_INTEGRITY_INCIDENT ' + JSON.stringify({ ...incident, attempt }));
     const url = process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL;
-    if (!url) return true;
+    if (!url) return { ok: false, channel: 'log_only' };
     try {
-        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(incident), signal: AbortSignal.timeout(3000) });
-        return r.ok;
-    } catch { return false; }
-}
-// Señal para Soporte: línea estructurada (sin texto clínico) y, si está configurado, webhook. Devuelve si se entregó.
-async function defaultAlert(incident) {
-    console.error('NC3_INTEGRITY_INCIDENT ' + JSON.stringify(incident));
-    return webhook(incident);
+        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...incident, attempt }), signal: AbortSignal.timeout(3000) });
+        return { ok: r.ok, channel: 'webhook', status: r.status };
+    } catch (error) { return { ok: false, channel: 'webhook', error: String(error.code || error.name).slice(0, 30) }; }
 }
 
-function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAlert, now = () => Date.now(), staleMs = 15 * 60000, unreachableAfter = 3 }) {
+function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAlert, now = () => Date.now(), staleMs = 15 * 60000, unreachableAfter = 3,
+    outboxFile = process.env.EVOLUTION_INTEGRITY_INCIDENT_OUTBOX || path.join(path.resolve(process.env.EVOLUTION_INTEGRITY_LOG_DIR || 'logs'), 'evolution-integrity-incident-outbox.json'),
+    alertBackoffMs = Number(process.env.EVOLUTION_INTEGRITY_ALERT_BACKOFF_MS) || 30000 }) {
+    const outbox = createOutbox(outboxFile);
     const active = new Map();      // business|patient -> [{code,id}] condiciones vigentes (alimenta el aviso de lectura)
-    const undelivered = new Map(); // id -> incidente cuyo aviso aún no se entregó
-    let failures = 0, running = false, timer = null, last = null;
+    let failures = 0, running = false, retrying = false, timer = null, retryTimer = null, last = null;
     const idOf = (business, patient, code) => 'INC-' + createHash('sha256').update([witnessCfg.envId, business, patient, code].join('|')).digest('hex').slice(0, 12);
+    const iso = () => new Date(now()).toISOString();
+    const backoff = n => Math.min(15 * 60000, alertBackoffMs * 2 ** Math.min(n, 10));
 
     async function incidentState() {
         const res = await witness.incidents(witnessCfg);
@@ -44,40 +52,63 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
         return state;
     }
 
-    async function raise(found, known, result) {
+    // Un incidente lógico por consultorio, paciente y código. Se crea una vez por ciclo (abierto → resuelto).
+    function ensure(found, known) {
         const id = idOf(found.business, found.patient, found.code);
-        (active.get(found.business + '|' + found.patient) || active.set(found.business + '|' + found.patient, []).get(found.business + '|' + found.patient)).push({ code: found.code, id });
-        const prior = known.get(id);
-        if (prior && prior.state === 'open' && prior.delivered) return;
-        const incident = { id, env: witnessCfg.envId, code: found.code, severity: found.severity, business: found.business, patient: found.patient,
-            note: found.note || null, witnessSeq: found.witnessSeq ?? null, databaseSeq: found.databaseSeq ?? null, detectedAt: new Date(now()).toISOString(), action: ACTION };
-        if (!prior || prior.state !== 'open') {
-            const written = await witness.postIncident(witnessCfg, { ...incident, type: 'open' });
-            if (written.status !== 201) throw new Error('INCIDENT_WRITE_FAILED');
+        if (found.business !== '*') (active.get(found.business + '|' + found.patient) || active.set(found.business + '|' + found.patient, []).get(found.business + '|' + found.patient)).push({ code: found.code, id });
+        else (active.get('*|*') || active.set('*|*', []).get('*|*')).push({ code: found.code, id });
+        const prior = outbox.get(id);
+        if (prior && !prior.cleared) return prior;
+        const witnessSeen = known && known.get(id);
+        const entry = {
+            id, cycle: (prior ? prior.cycle : 0) + 1, cleared: false, delivered: false, witnessOpen: false, witnessDelivered: false, witnessCleared: false,
+            incident: { id, env: witnessCfg.envId, code: found.code, severity: found.severity, business: found.business, patient: found.patient, note: found.note || null,
+                witnessSeq: found.witnessSeq ?? null, databaseSeq: found.databaseSeq ?? null, detectedAt: iso(), action: ACTION },
+            attempts: [], nextAttemptAt: now()
+        };
+        // Reconstrucción tras perder el servidor de la aplicación: el testigo recuerda el ciclo abierto.
+        if (!prior && witnessSeen && witnessSeen.state === 'open') { entry.witnessOpen = true; entry.delivered = witnessSeen.delivered; entry.witnessDelivered = witnessSeen.delivered; }
+        outbox.put(entry);
+        return entry;
+    }
+
+    // Entrega durable: cada intento se anota; la misma referencia se reintenta hasta que el canal acuse.
+    async function deliverIncidents() {
+        const out = [];
+        for (const entry of outbox.all()) {
+            // Eventos de trazabilidad en el testigo; si está caído se reintentan en el siguiente ciclo.
+            try {
+                if (!entry.witnessOpen) { const w = await witness.postIncident(witnessCfg, { ...entry.incident, type: 'open', cycle: entry.cycle }); entry.witnessOpen = w.status === 201; }
+                if (entry.witnessOpen && entry.delivered && !entry.witnessDelivered) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'delivered', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, attempts: entry.attempts.length }); entry.witnessDelivered = w.status === 201; }
+                if (entry.witnessOpen && entry.cleared && !entry.witnessCleared) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'cleared', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, detectedAt: entry.clearedAt }); entry.witnessCleared = w.status === 201; }
+            } catch { /* testigo inaccesible: el incidente sigue en la cola local */ }
+            outbox.put(entry);
+            if (entry.delivered || now() < (entry.nextAttemptAt ?? 0)) continue;
+            const result = await alert({ ...entry.incident, cycle: entry.cycle }, entry.attempts.length + 1).catch(error => ({ ok: false, channel: 'unknown', error: String(error.message).slice(0, 30) }));
+            entry.attempts.push({ at: iso(), channel: result.channel, ok: Boolean(result.ok), ...(result.status ? { status: result.status } : {}), ...(result.error ? { error: result.error } : {}) });
+            if (result.ok) { entry.delivered = true; entry.deliveredAt = iso(); entry.nextAttemptAt = null; }
+            else entry.nextAttemptAt = now() + backoff(entry.attempts.length);
+            outbox.put(entry);
+            out.push({ id: entry.id, attempt: entry.attempts.length, ok: Boolean(result.ok), channel: result.channel });
         }
-        // El aviso se considera entregado solo cuando el canal lo acepta; se anota en el testigo para sobrevivir a reinicios.
-        if (await alert(incident)) await witness.postIncident(witnessCfg, { id, type: 'delivered', code: incident.code, business: incident.business, patient: incident.patient, detectedAt: new Date(now()).toISOString() });
-        result.incidents.push(incident);
+        return out;
     }
 
     async function tick() {
         if (running) return last;
         running = true;
-        const started = now(), result = { at: new Date(started).toISOString(), state: 'ok', incidents: [], flushed: null };
+        const started = now(), result = { at: iso(), state: 'ok', incidents: [], delivered: null };
         try {
-            result.flushed = await witness.flush(witnessCfg);
+            result.delivered = await witness.deliver(db, witnessCfg).catch(() => null);
             let fetched;
             try {
                 fetched = await witness.anchors(witnessCfg);
                 if (fetched.status !== 200) throw new Error('HTTP_' + fetched.status);
-            } catch (error) {
+            } catch {
                 failures++;
                 result.state = 'unreachable';
-                if (failures === unreachableAfter) {
-                    const inc = { id: idOf('*', '*', 'REFERENCE_UNREACHABLE'), env: witnessCfg.envId, code: 'REFERENCE_UNREACHABLE', severity: 'warning', detectedAt: new Date(now()).toISOString(), action: ACTION };
-                    await alert(inc);
-                    result.incidents.push(inc);
-                }
+                if (failures >= unreachableAfter) ensure({ business: '*', patient: '*', code: 'REFERENCE_UNREACHABLE', severity: 'warning' });
+                result.incidents = await deliverIncidents();
                 return (last = result);
             }
             failures = 0;
@@ -85,19 +116,15 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
             const cfg = integrity.config();
             const heads = new Map((await db.query('SELECT * FROM evolution_integrity_head', { type: QueryTypes.SELECT })).map(h => [h.id_business + '|' + h.id_person, h]));
             const patients = new Map();
-            for (const { rec } of fetched.data.anchors) {
+            const patientOf = rec => {
                 const k = rec.business + '|' + rec.patient;
                 if (!patients.has(k)) patients.set(k, { business: rec.business, patient: rec.patient, recs: [], conflicts: [] });
-                patients.get(k).recs.push(rec);
-            }
-            for (const { rec } of fetched.data.conflicts) {
-                const k = rec.business + '|' + rec.patient;
-                if (!patients.has(k)) patients.set(k, { business: rec.business, patient: rec.patient, recs: [], conflicts: [] });
-                patients.get(k).conflicts.push(rec);
-            }
+                return patients.get(k);
+            };
+            for (const { rec } of fetched.data.anchors) patientOf(rec).recs.push(rec);
+            for (const { rec } of fetched.data.conflicts) patientOf(rec).conflicts.push(rec);
             const entryAt = async (p, seq) => (await db.query('SELECT * FROM evolution_integrity_ledger WHERE id_business=:b AND id_person=:p AND seq=:s',
                 { replacements: { b: p.business, p: p.patient, s: seq }, type: QueryTypes.SELECT }))[0];
-            const next = new Map();
             const found = [];
             for (const p of patients.values()) {
                 p.recs.sort((a, b) => a.seq - b.seq);
@@ -106,7 +133,7 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
                     const key = cfg.keys.get(top.keyId);
                     if (key && integrity.entryMac(key, { id_business: top.business, id_person: top.patient, seq: top.seq, note_id: top.note, version: top.version, format: top.format,
                         digest: top.digest, previous_digest: top.previousDigest, prev_mac: top.prevMac, sealed_at_text: top.sealedAt, key_id: top.keyId }) !== top.mac)
-                        found.push({ ...p, code: 'WITNESS_RECORD_INVALID', severity: 'critical', note: top.note, witnessSeq: top.seq });
+                        found.push({ business: p.business, patient: p.patient, code: 'WITNESS_RECORD_INVALID', severity: 'critical', note: top.note, witnessSeq: top.seq });
                 }
                 const head = heads.get(p.business + '|' + p.patient), headSeq = head ? Number(head.last_seq) : 0;
                 const topSeq = top ? top.seq : 0;
@@ -143,25 +170,21 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
                 }
                 const oldest = rows.length ? Date.parse(rows[0].sealed_at_text.replace(' ', 'T') + 'Z') : now();
                 if (extended) {
-                    for (const row of rows) {
-                        const key = cfg.keys.get(row.key_id);
-                        await witness.publish(witnessCfg, { entry: row, head: { mac: integrity.headMac(key, { id_business: row.id_business, id_person: row.id_person, last_seq: row.seq, last_mac: row.mac, key_id: row.key_id }) } });
-                    }
+                    for (const row of rows) await witness.enqueue(db, undefined, { business: row.id_business, patient: row.id_person, note: row.note_id, version: row.version, seq: row.seq });
+                    await witness.deliver(db, witnessCfg, { business: p.business, patient: p.patient, force: true }).catch(() => null);
                 }
                 if (!extended || now() - oldest > staleMs)
                     found.push({ business: p.business, patient: p.patient, code: extended ? 'REFERENCE_STALE' : 'REFERENCE_UNVERIFIABLE', severity: 'warning', witnessSeq: topSeq, databaseSeq: Number(head.last_seq) });
             }
             active.clear();
-            for (const f of found) await raise(f, known, result);
-            // Condición resuelta: se anota en el testigo, pero el cierre exige una acción explícita de Soporte.
-            for (const [id, state] of known) {
-                if (state.state !== 'open') continue;
-                const still = [...active.values()].some(list => list.some(c => c.id === id));
-                if (!still && id.startsWith('INC-')) {
-                    const event = (await witness.incidents(witnessCfg)).data.events.filter(e => e.id === id && e.type === 'open').pop();
-                    if (event) await witness.postIncident(witnessCfg, { id, type: 'cleared', code: event.code, business: event.business, patient: event.patient, detectedAt: new Date(now()).toISOString() });
-                }
+            for (const f of found) ensure(f, known);
+            // Condición resuelta: se anota (local y en el testigo); el cierre exige una acción explícita de Soporte.
+            for (const entry of outbox.all()) {
+                if (entry.cleared) continue;
+                const still = [...active.values()].some(list => list.some(c => c.id === entry.id));
+                if (!still) { entry.cleared = true; entry.clearedAt = iso(); outbox.put(entry); }
             }
+            result.incidents = await deliverIncidents();
             return (last = result);
         } catch (error) {
             result.state = 'error'; result.error = error.message;
@@ -170,18 +193,25 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
         } finally { running = false; result.tookMs = now() - started; }
     }
 
+    // Reintentos: cola de referencias al testigo y cola de incidentes, cada una con su espera progresiva.
+    async function retry() {
+        if (retrying) return null;
+        retrying = true;
+        try { return { references: await witness.deliver(db, witnessCfg).catch(() => null), incidents: await deliverIncidents() }; } finally { retrying = false; }
+    }
+
     return {
-        tick,
-        start(intervalMs = 300000, { immediate = true } = {}) {
+        tick, retry, deliverIncidents,
+        start(intervalMs = 300000, { immediate = true, retryMs = 5000 } = {}) {
             if (timer) return;
-            const every = Math.max(1000, Number(intervalMs));
-            timer = setInterval(() => { tick(); }, every);
-            timer.unref();
+            timer = setInterval(() => { tick(); }, Math.max(500, Number(intervalMs))); timer.unref();
+            retryTimer = setInterval(() => { retry(); }, Math.max(200, Number(retryMs))); retryTimer.unref();
             if (immediate) tick();
         },
-        stop() { if (timer) clearInterval(timer); timer = null; },
+        stop() { if (timer) clearInterval(timer); if (retryTimer) clearInterval(retryTimer); timer = retryTimer = null; },
         // Condiciones vigentes para un paciente: solo de su consultorio (el aviso de lectura no cruza consultorios).
         faultsFor(business, patient) { return (active.get(business + '|' + patient) || []).filter(c => c.code !== 'REFERENCE_STALE').map(c => ({ code: c.code, state: 'discrepancy' })); },
+        outbox: () => outbox.all(),
         last: () => last
     };
 }

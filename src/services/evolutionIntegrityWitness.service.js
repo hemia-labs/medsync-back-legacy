@@ -1,9 +1,18 @@
 'use strict';
-// NC3/C22: cliente de la referencia externa («testigo»). El testigo es un servicio de solo-agregar, fuera de MySQL y
-// del servidor de la aplicación, que guarda por cada sellado identificadores y evidencia de integridad (nunca texto
-// clínico ni claves). La aplicación solo puede AGREGAR; Soporte/el conciliador son los únicos que leen.
-const fs = require('node:fs');
-const path = require('node:path');
+// NC3/C22: cliente de la referencia externa («testigo») y su cola durable.
+// El testigo es un servicio de solo-agregar, fuera de MySQL y del servidor de la aplicación; guarda identificadores y MAC
+// (nunca texto clínico ni claves). La aplicación solo puede AGREGAR; Soporte y el conciliador son los que leen.
+//
+// Cola durable (R2): al firmar, la fila de entrega se escribe en la MISMA transacción que la versión y su sello, así que
+// «firmada» implica «encolada» sin intervalo entre ambos. Cada fila es una referencia con identidad estable
+// (consultorio, paciente, nota, versión) y pasa de `pending` a `acked` solo cuando el testigo acusa recibo.
+// Un acuse perdido o un reinicio solo provocan un reenvío; el testigo distingue el duplicado idéntico (200) del conflicto (409).
+const { randomUUID } = require('node:crypto');
+const { QueryTypes } = require('sequelize');
+const integrity = require('./evolutionIntegrity.service');
+
+const BASE_DELAY_MS = () => Number(process.env.EVOLUTION_INTEGRITY_DELIVERY_BACKOFF_MS) || 5000;
+const MAX_DELAY_MS = 5 * 60000;
 
 function config(env = process.env) {
     const url = String(env.EVOLUTION_INTEGRITY_WITNESS_URL || '').replace(/\/+$/, '');
@@ -12,7 +21,6 @@ function config(env = process.env) {
         url, envId: env.EVOLUTION_INTEGRITY_WITNESS_ENV || '',
         writeToken: env.EVOLUTION_INTEGRITY_WITNESS_WRITE_TOKEN || '',
         supportToken: env.EVOLUTION_INTEGRITY_WITNESS_SUPPORT_TOKEN || '',
-        spoolPath: env.EVOLUTION_INTEGRITY_WITNESS_SPOOL || path.join(path.resolve(env.EVOLUTION_INTEGRITY_LOG_DIR || 'logs'), 'evolution-integrity-witness-spool.jsonl'),
         timeoutMs: Number(env.EVOLUTION_INTEGRITY_WITNESS_TIMEOUT_MS) || 2000
     };
 }
@@ -36,58 +44,81 @@ async function call(cfg, method, route, token, body) {
     return { status: response.status, data };
 }
 
-// La cola local (spool) conserva con fsync lo que no pudo entregarse. Es un respaldo de entrega, no la referencia:
-// si el servidor de la aplicación se restaura, lo que no llegó al testigo se pierde (ver límites en el reporte).
-function spoolAppend(cfg, rec) {
-    fs.mkdirSync(path.dirname(cfg.spoolPath), { recursive: true, mode: 0o700 });
-    const fd = fs.openSync(cfg.spoolPath, 'a', 0o600);
-    try { fs.writeSync(fd, JSON.stringify(rec) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-}
-function spoolRead(cfg) {
-    try { return fs.readFileSync(cfg.spoolPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; }
+// Alta en la cola. Se llama DENTRO de la transacción de la firma (o de la reparación de un reintento).
+async function enqueue(db, transaction, { business, patient, note, version, seq }) {
+    await db.query(`INSERT IGNORE INTO evolution_integrity_delivery (id_business,id_person,note_id,version,seq,state,attempts,queued_at,next_attempt_at)
+        VALUES (:business,:patient,:note,:version,:seq,'pending',0,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))`,
+    { transaction, replacements: { business, patient, note, version, seq } });
 }
 
-const sending = new Set();
-// Entrega al testigo antes de responder al profesional. Si falla, queda en la cola y se reintenta.
-async function publish(cfg, sealed) {
-    if (!cfg.enabled) return { state: 'disabled' };
-    const rec = record(cfg, sealed);
-    try {
-        const result = await call(cfg, 'POST', '/v1/anchors', cfg.writeToken, rec);
-        if ([200, 201].includes(result.status)) return { state: 'recorded' };
-        if (result.status === 409) return { state: 'conflict' };
-        throw new Error('WITNESS_HTTP_' + result.status);
-    } catch (error) {
-        try { spoolAppend(cfg, rec); } catch (spoolError) { console.error('EVOLUTION_INTEGRITY_SPOOL_FAILED', spoolError.code || spoolError.message); return { state: 'lost' }; }
-        console.warn('EVOLUTION_INTEGRITY_WITNESS_PENDING', rec.business, rec.patient, rec.seq, error.code || error.message);
-        return { state: 'pending' };
+const headFor = (cfg, entry) => ({ mac: integrity.headMac(cfg.keys.get(entry.key_id), { id_business: entry.id_business, id_person: entry.id_person, last_seq: entry.seq, last_mac: entry.mac, key_id: entry.key_id }) });
+
+// Entrega pendientes. Reclama filas con un token y plazo (varios procesos no se pisan), envía en orden de cadena por
+// paciente y se detiene en el primer fallo de ese paciente. `force` ignora la espera progresiva (la firma recién hecha).
+async function deliver(db, cfg, { business = null, patient = null, force = false, limit = 50 } = {}) {
+    if (!cfg.enabled) return { sent: 0, failed: 0, pending: 0 };
+    const keys = integrity.config().keys;
+    const token = randomUUID();
+    const scope = (business ? ' AND id_business=:business AND id_person=:patient' : '');
+    await db.query(`UPDATE evolution_integrity_delivery SET claim_token=:token, claimed_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND)
+        WHERE state='pending' AND (claimed_until IS NULL OR claimed_until<UTC_TIMESTAMP(6))${force ? '' : ' AND next_attempt_at<=UTC_TIMESTAMP(6)'}${scope}
+        ORDER BY id_business,id_person,seq LIMIT ${Number(limit)}`, { replacements: { token, business, patient } });
+    const rows = await db.query('SELECT * FROM evolution_integrity_delivery WHERE claim_token=:token ORDER BY id_business,id_person,seq', { replacements: { token }, type: QueryTypes.SELECT });
+    const stopped = new Set();
+    let sent = 0, failed = 0;
+    // Orden de la cadena: si otro proceso ya tiene en vuelo una referencia anterior del mismo paciente, estas esperan.
+    const waiting = new Set();
+    for (const row of rows) {
+        const who = row.id_business + '|' + row.id_person;
+        if (waiting.has(who) || stopped.has(who)) continue;
+        const [blocker] = await db.query(`SELECT 1 AS b FROM evolution_integrity_delivery WHERE id_business=:b AND id_person=:p AND state='pending' AND seq < :s
+            AND claim_token IS NOT NULL AND claim_token<>:token AND claimed_until>=UTC_TIMESTAMP(6) LIMIT 1`, { replacements: { b: row.id_business, p: row.id_person, s: row.seq, token }, type: QueryTypes.SELECT });
+        if (blocker) waiting.add(who);
     }
+    for (const row of rows) {
+        const who = row.id_business + '|' + row.id_person;
+        const release = (state, error) => db.query(`UPDATE evolution_integrity_delivery SET state=:state, attempts=attempts+1, last_attempt_at=UTC_TIMESTAMP(6),
+            acked_at=${state === 'acked' ? 'UTC_TIMESTAMP(6)' : 'acked_at'}, last_error=:error, claim_token=NULL, claimed_until=NULL,
+            next_attempt_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL :delay MICROSECOND)
+            WHERE id_business=:b AND id_person=:p AND note_id=:n AND version=:v AND claim_token=:token`,
+        { replacements: { state, error: error || null, b: row.id_business, p: row.id_person, n: row.note_id, v: row.version, token,
+            delay: Math.min(MAX_DELAY_MS, BASE_DELAY_MS() * 2 ** Math.min(row.attempts, 10)) * 1000 } });
+        if (waiting.has(who)) {
+            await db.query('UPDATE evolution_integrity_delivery SET claim_token=NULL, claimed_until=NULL WHERE id_business=:b AND id_person=:p AND note_id=:n AND version=:v AND claim_token=:token',
+                { replacements: { b: row.id_business, p: row.id_person, n: row.note_id, v: row.version, token } });
+            continue;
+        }
+        if (stopped.has(who)) { await release('pending', 'ORDER_WAIT'); failed++; continue; }
+        try {
+            const [entry] = await db.query(`SELECT *, DATE_FORMAT(sealed_at,'${integrity.TEXT_TIME}') AS sealed_at_text FROM evolution_integrity_ledger
+                WHERE id_business=:b AND id_person=:p AND seq=:s`, { replacements: { b: row.id_business, p: row.id_person, s: row.seq }, type: QueryTypes.SELECT });
+            if (!entry || !keys.get(entry.key_id)) throw new Error(entry ? 'KEY_UNAVAILABLE' : 'LEDGER_ENTRY_MISSING');
+            const result = await call(cfg, 'POST', '/v1/anchors', cfg.writeToken, record(cfg, { entry, head: headFor({ keys }, entry) }));
+            if ([200, 201].includes(result.status)) { await release('acked'); sent++; }
+            else if (result.status === 409) { await release('conflict', 'WITNESS_CONFLICT'); failed++; }
+            else throw new Error('HTTP_' + result.status);
+        } catch (error) {
+            stopped.add(who); failed++;
+            await release('pending', String(error.code || error.message).slice(0, 40));
+        }
+    }
+    return { sent, failed, pending: failed };
 }
 
-// Reintenta la cola. Es idempotente en el testigo, así que un reinicio o una entrega duplicada no crean registros nuevos.
-async function flush(cfg) {
-    if (!cfg.enabled || sending.has(cfg.spoolPath)) return { sent: 0, left: 0 };
-    sending.add(cfg.spoolPath);
-    try {
-        const items = spoolRead(cfg), left = [];
-        if (!items.length) return { sent: 0, left: 0 };
-        let sent = 0;
-        for (const item of items) {
-            try {
-                const result = await call(cfg, 'POST', '/v1/anchors', cfg.writeToken, item);
-                if ([200, 201, 409].includes(result.status)) sent++; else left.push(item);
-            } catch { left.push(item); }
-        }
-        fs.mkdirSync(path.dirname(cfg.spoolPath), { recursive: true, mode: 0o700 });
-        const temp = cfg.spoolPath + '.tmp';
-        fs.writeFileSync(temp, left.map(item => JSON.stringify(item) + '\n').join(''), { mode: 0o600 });
-        fs.renameSync(temp, cfg.spoolPath);
-        return { sent, left: left.length };
-    } finally { sending.delete(cfg.spoolPath); }
+// Estado externo de una versión (para la respuesta de la firma, el reintento y las lecturas).
+async function stateOf(db, { business, patient, note, version }, transaction) {
+    const [row] = await db.query('SELECT state FROM evolution_integrity_delivery WHERE id_business=:business AND id_person=:patient AND note_id=:note AND version=:version',
+        { replacements: { business, patient, note, version }, type: QueryTypes.SELECT, transaction });
+    return row ? row.state : null;
+}
+async function statesFor(db, { business, patient, note = null }, transaction) {
+    const rows = await db.query(`SELECT note_id, version, state FROM evolution_integrity_delivery WHERE id_business=:business AND id_person=:patient${note ? ' AND note_id=:note' : ''}`,
+        { replacements: { business, patient, note }, type: QueryTypes.SELECT, transaction });
+    return new Map(rows.map(r => [r.note_id + '#' + r.version, r.state]));
 }
 
 const anchors = cfg => call(cfg, 'GET', '/v1/anchors', cfg.supportToken);
 const incidents = cfg => call(cfg, 'GET', '/v1/incidents', cfg.supportToken);
 const postIncident = (cfg, event) => call(cfg, 'POST', '/v1/incidents', cfg.supportToken, event);
 
-module.exports = { config, record, publish, flush, spoolRead, anchors, incidents, postIncident };
+module.exports = { config, record, enqueue, deliver, stateOf, statesFor, anchors, incidents, postIncident, headFor };

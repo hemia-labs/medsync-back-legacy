@@ -12,7 +12,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, timingSafeEqual } = require('node:crypto');
 
-function start({ dir, port = 0, envs }) {
+// `hooks` solo para ensayos: delay (ms) retrasa cada respuesta; dropAckOnce registra la referencia y corta la conexión sin acuse.
+function start({ dir, port = 0, envs, hooks = {} }) {
     fs.mkdirSync(dir, { recursive: true });
     const anchorsFile = path.join(dir, 'anchors.jsonl'), incidentsFile = path.join(dir, 'incidents.jsonl');
     const index = new Map(), anchors = [], conflicts = [], incidents = [];
@@ -39,7 +40,11 @@ function start({ dir, port = 0, envs }) {
         && Number.isSafeInteger(r.seq) && r.seq > 0 && typeof r.note === 'string' && r.note.length <= 36 && hex(r.mac, 64) && hex(r.headMac, 64) && hex(r.digest, 64) && hex(r.prevMac, 64)
         && (r.previousDigest === null || hex(r.previousDigest, 64)) && typeof r.sealedAt === 'string' && typeof r.keyId === 'string' && typeof r.format === 'string' && Number.isSafeInteger(r.version);
     const server = http.createServer((req, res) => {
-        const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+        const send = (status, body) => {
+            if (hooks.dropAckOnce && req.method === 'POST' && req.url === '/v1/anchors' && [200, 201].includes(status)) { hooks.dropAckOnce = false; return req.socket.destroy(); }
+            const go = () => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+            if (hooks.delay) setTimeout(go, hooks.delay); else go();
+        };
         const who = auth(req);
         if (!who) return send(401, { error: 'unauthorized' });
         const url = new URL(req.url, 'http://x');

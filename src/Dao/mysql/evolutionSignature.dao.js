@@ -51,6 +51,14 @@ async function baseVerification(replacements, rows, onlyNote, transaction) {
     }
 }
 
+// Estado de la confirmación externa por versión. Solo `pending` y `conflict` se muestran; tras el acuse la lectura lo retira.
+async function externalStates(replacements, note, transaction) {
+    if (!witness.config().enabled) return new Map();
+    try { return await witness.statesFor(db,{business:replacements.business,patient:replacements.patient,note},transaction); }
+    catch (error) { console.error('EVOLUTION_INTEGRITY_DELIVERY_UNREADABLE', error.code || error.message); return new Map(); }
+}
+const externalMark = (states, row) => { const state=states.get(row.note_id+'#'+row.version); return state==='pending'||state==='conflict' ? state : null; };
+
 async function read(body) {
     let page;
     try { page=listPage({page:body.page || '1',page_size:10}); }
@@ -61,6 +69,7 @@ async function read(body) {
         const replacements=keys(body);
         const rows=await db.query('SELECT '+integrity.ROW_SELECT+' FROM '+table+' n WHERE '+(body.id ? noteScope : scope),{transaction,replacements,type:QueryTypes.SELECT});
         const check=await verification(replacements,rows,body.id || null,transaction);
+        const delivery=await externalStates(replacements,body.id || null,transaction);
         const stateOf=(note,version)=>{
             if (check.unavailable) return {state:'unavailable',code:'REFERENCE_UNAVAILABLE'};
             const entry=check.notes.get(note);
@@ -76,7 +85,7 @@ async function read(body) {
                 const row=rows.find(r => r.version===version), mark=stateOf(body.id,version);
                 items.push(!row || mark.state==='discrepancy'
                     ? placeholder({version,integrity:mark},body.id)
-                    : {...snapshot(row),integrity:mark});
+                    : {...snapshot(row),integrity:{...mark,external:externalMark(delivery,row)}});
             }
         } else {
             const latest=new Map();
@@ -86,7 +95,7 @@ async function read(body) {
             for (const row of live) {
                 const mark=stateOf(row.note_id);
                 if (mark.state==='discrepancy') flagged.push(placeholder({integrity:mark},row.note_id));
-                else items.push({...snapshot(row),integrity:mark});
+                else items.push({...snapshot(row),integrity:{...mark,external:externalMark(delivery,row)}});
             }
             for (const [note,entry] of check.notes) if (!latest.has(note)) flagged.push(placeholder({integrity:{state:entry.state,code:entry.code}},note));
             const open=check.faults.find(f => f.state==='discrepancy');
@@ -96,7 +105,7 @@ async function read(body) {
         const window=pageWindow(page,items.length);
         for (const item of items) if (['discrepancy','unavailable'].includes(item.integrity.state))
             integrity.recordEvent({type:'READ_'+item.integrity.state.toUpperCase(),code:item.integrity.code,business:body.id_business,patient:body.id_person,note:item.id,version:item.version,actor:body.id_login});
-        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference};
+        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference,externalPending:items.filter(item => item.integrity.external==='pending').length};
         const data=pageData(items.slice(window.offset,window.offset+window.pageSize),window);
         return response.success({...data,integrity:summary},check.state==='discrepancy' ? 'Se detectó una diferencia en el control de integridad.' : 'Firmas profesionales consultadas.');
     });
@@ -157,7 +166,7 @@ async function attest(body, correcting) {
         if(body.confirmedClosed.length) payload.push([...new Set(body.confirmedClosed)].sort());
     }
     const hash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    let anchor=null;
+    let anchor=null, after=null;
     try {
     const result=await db.transaction(async transaction => {
         await tracing.lockPatient(body,transaction);
@@ -189,7 +198,20 @@ async function attest(body, correcting) {
             if (replay.request_hash!==hash) return conflict('La solicitud anterior tenía otro contenido.');
             const mark=flagged && flagged.versions.get(replay.version);
             if (!mark || mark.state==='unavailable') return unavailable('SEAL_UNAVAILABLE');
-            return response.success({...snapshot(replay),integrity:mark},'Firma registrada.');
+            // Reparación idempotente: una firma anterior sin fila de entrega (p. ej. anterior a la cola) la recupera del asiento existente.
+            const sealedEntry=ref.entries.find(e => e.note_id===body.id && Number(e.version)===replay.version);
+            const marked={...mark};
+            if (witness.config().enabled && sealedEntry) {
+                try {
+                    await witness.enqueue(db,transaction,{business:body.id_business,patient:body.id_person,note:body.id,version:replay.version,seq:sealedEntry.seq});
+                    after={business:body.id_business,patient:body.id_person,note:body.id,version:replay.version};
+                } catch (error) {
+                    // La nota ya está firmada: se informa de la incidencia y se conserva la firma; no se pide firmar otra vez.
+                    integrity.recordEvent({type:'EXTERNAL_QUEUE_FAILED',code:String(error.code || error.message).slice(0,40),business:body.id_business,patient:body.id_person,note:body.id,version:replay.version,actor:body.id_login});
+                    marked.external='incident';
+                }
+            }
+            return response.success({...snapshot(replay),integrity:marked},'Firma registrada.');
         }
         if (!correcting && prior) return conflict('Esta nota ya está firmada. Consulta su historial.');
         if (correcting && (!prior || prior.version!==body.revision)) return conflict('La versión cambió. Consulta el historial antes de rectificar.');
@@ -231,15 +253,29 @@ async function attest(body, correcting) {
         }
         const sealed=integrity.seal({cfg,row:saved,previousDigest,head:ref.head});
         await integrity.persistSeal(db,transaction,sealed);
+        // La entrega al testigo se encola en la MISMA transacción: firmada implica encolada, sin intervalo entre ambas.
+        if (witness.config().enabled) {
+            try { await witness.enqueue(db,transaction,{business:body.id_business,patient:body.id_person,note:body.id,version,seq:sealed.entry.seq}); }
+            catch (error) { throw new integrity.IntegritySealError('QUEUE_WRITE_FAILED',error); }
+            after={business:body.id_business,patient:body.id_person,note:body.id,version};
+        }
         anchor=sealed;
         return response.success({...snapshot(saved),integrity:{state:'verified',code:null}},correcting?'Rectificación firmada.':'Firma profesional registrada.');
     });
-    if (anchor) {
-        await integrity.recordAnchor(anchor);
-        // La referencia externa se entrega antes de responder: si el profesional ve la firma confirmada, o el testigo la tiene
-        // ('recorded') o quedó en la cola durable ('pending'). 'lost' solo si ni la cola local pudo escribirse.
-        const external=await witness.publish(witness.config(),anchor);
-        if (result.data && result.data.integrity) result.data.integrity.external=external.state;
+    if (anchor) await integrity.recordAnchor(anchor);
+    if (after && result.data && result.data.integrity) {
+        // Intento inmediato antes de responder. El estado devuelto sale de la fila persistida, no de este intento: la respuesta
+        // de la firma, el reintento y las lecturas posteriores coinciden. Si el testigo cae, la firma sigue válida y pendiente.
+        const wcfg=witness.config();
+        try {
+            await witness.deliver(db,wcfg,{business:after.business,patient:after.patient,force:true});
+            const state=await witness.stateOf(db,after);
+            result.data.integrity.external=state==='acked' ? 'recorded' : state || 'incident';
+        } catch (error) {
+            // La versión ya está firmada: no se pide firmar otra vez; se informa de la incidencia y se escala a Soporte.
+            integrity.recordEvent({type:'EXTERNAL_STATE_UNKNOWN',code:String(error.code || error.message).slice(0,40),business:body.id_business,patient:body.id_person,note:body.id,version:after.version,actor:body.id_login});
+            result.data.integrity.external='incident';
+        }
     }
     return result;
     } catch (error) {
