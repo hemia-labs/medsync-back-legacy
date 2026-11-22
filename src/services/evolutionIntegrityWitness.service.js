@@ -55,14 +55,22 @@ const headFor = (cfg, entry) => ({ mac: integrity.headMac(cfg.keys.get(entry.key
 
 // Entrega pendientes. Reclama filas con un token y plazo (varios procesos no se pisan), envía en orden de cadena por
 // paciente y se detiene en el primer fallo de ese paciente. `force` ignora la espera progresiva (la firma recién hecha).
-async function deliver(db, cfg, { business = null, patient = null, force = false, limit = 50 } = {}) {
+// `only` limita el intento a una referencia concreta (la de la operación en curso) y solo si es la elegible: si hay una
+// anterior del mismo paciente sin acuse, no se salta el orden ni se espera por un lote: la entrega queda al despachador.
+async function deliver(db, cfg, { business = null, patient = null, force = false, limit = 50, only = null } = {}) {
     if (!cfg.enabled) return { sent: 0, failed: 0, pending: 0 };
+    if (only) {
+        const [earlier] = await db.query(`SELECT 1 AS b FROM evolution_integrity_delivery d JOIN evolution_integrity_delivery t ON t.id_business=d.id_business AND t.id_person=d.id_person
+            WHERE t.id_business=:business AND t.id_person=:patient AND t.note_id=:note AND t.version=:version AND d.state='pending' AND d.seq < t.seq LIMIT 1`,
+        { replacements: { business, patient, note: only.note, version: only.version }, type: QueryTypes.SELECT });
+        if (earlier) return { sent: 0, failed: 0, pending: 1, skipped: 'EARLIER_PENDING' };
+    }
     const keys = integrity.config().keys;
     const token = randomUUID();
-    const scope = (business ? ' AND id_business=:business AND id_person=:patient' : '');
+    const scope = (business ? ' AND id_business=:business AND id_person=:patient' : '') + (only ? ' AND note_id=:note AND version=:version' : '');
     await db.query(`UPDATE evolution_integrity_delivery SET claim_token=:token, claimed_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND)
         WHERE state='pending' AND (claimed_until IS NULL OR claimed_until<UTC_TIMESTAMP(6))${force ? '' : ' AND next_attempt_at<=UTC_TIMESTAMP(6)'}${scope}
-        ORDER BY id_business,id_person,seq LIMIT ${Number(limit)}`, { replacements: { token, business, patient } });
+        ORDER BY id_business,id_person,seq LIMIT ${Number(limit)}`, { replacements: { token, business, patient, note: only && only.note, version: only && only.version } });
     const rows = await db.query('SELECT * FROM evolution_integrity_delivery WHERE claim_token=:token ORDER BY id_business,id_person,seq', { replacements: { token }, type: QueryTypes.SELECT });
     const stopped = new Set();
     let sent = 0, failed = 0;
@@ -111,6 +119,11 @@ async function stateOf(db, { business, patient, note, version }, transaction) {
         { replacements: { business, patient, note, version }, type: QueryTypes.SELECT, transaction });
     return row ? row.state : null;
 }
+// `ok:false` cuando la cola no se puede leer: la lectura lo muestra como «desconocido», nunca como recibido.
+async function readStates(db, { business, patient, note = null }, transaction) {
+    try { return { ok: true, states: await statesFor(db, { business, patient, note }, transaction) }; }
+    catch (error) { console.error('EVOLUTION_INTEGRITY_DELIVERY_UNREADABLE', error.code || error.message); return { ok: false, states: new Map() }; }
+}
 async function statesFor(db, { business, patient, note = null }, transaction) {
     const rows = await db.query(`SELECT note_id, version, state FROM evolution_integrity_delivery WHERE id_business=:business AND id_person=:patient${note ? ' AND note_id=:note' : ''}`,
         { replacements: { business, patient, note }, type: QueryTypes.SELECT, transaction });
@@ -121,4 +134,4 @@ const anchors = cfg => call(cfg, 'GET', '/v1/anchors', cfg.supportToken);
 const incidents = cfg => call(cfg, 'GET', '/v1/incidents', cfg.supportToken);
 const postIncident = (cfg, event) => call(cfg, 'POST', '/v1/incidents', cfg.supportToken, event);
 
-module.exports = { config, record, enqueue, deliver, stateOf, statesFor, anchors, incidents, postIncident, headFor };
+module.exports = { config, record, enqueue, deliver, stateOf, statesFor, readStates, anchors, incidents, postIncident, headFor };

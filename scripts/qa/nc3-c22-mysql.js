@@ -5,7 +5,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { randomUUID, randomBytes } = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -81,10 +81,9 @@ async function run() {
         const witness = require('../../src/services/evolutionIntegrityWitness.service');
         const rec = require('../../src/services/evolutionIntegrityReconciler');
         // Medición de la entrega inmediata y simulación de un proceso que cae justo después del commit.
-        const latencies = []; let skipImmediate = false; const realDeliver = witness.deliver;
+        const latencies = []; const realDeliver = witness.deliver;
         witness.deliver = async (...args) => {
             const scoped = args[2] && args[2].business;
-            if (scoped && skipImmediate) { skipImmediate = false; return { sent: 0, failed: 0, pending: 0 }; }
             const t = process.hrtime.bigint(); const r = await realDeliver(...args);
             if (scoped) latencies.push(Number(process.hrtime.bigint() - t) / 1e6);
             return r;
@@ -126,17 +125,17 @@ async function run() {
         const clinicalText = /Plan original|Evolución sintética|Control sintético|Plan v2/;
 
         // ===== Preparación: paciente legítimo, v1 (corte A), v2, nota posterior (corte B) =====
-        const P3 = await newPatient(), n3 = await sign(P3); assert.equal(n3.r.data.integrity.external, 'recorded');
-        assert.equal((await rectify(P3, n3.id, 1, 'Plan v2 legítimo')).data.integrity.external, 'recorded');
+        const P3 = await newPatient(), n3 = await sign(P3); assert.equal(n3.r.data.integrity.external, 'received');
+        assert.equal((await rectify(P3, n3.id, 1, 'Plan v2 legítimo')).data.integrity.external, 'received');
         const P1 = await newPatient(), n1 = await sign(P1);
-        assert.equal(n1.r.data.integrity.external, 'recorded'); assert.ok(wHas(P1, 1), 'v1 en el testigo (cotejo independiente)');
+        assert.equal(n1.r.data.integrity.external, 'received'); assert.ok(wHas(P1, 1), 'v1 en el testigo (cotejo independiente)');
         reconciler.stop(); const dumpA = dump(); // corte A: v1 firmada
         const v2 = await rectify(P1, n1.id, 1, 'Plan v2');
-        assert.equal(v2.status, 200); assert.equal(v2.data.integrity.external, 'recorded');
+        assert.equal(v2.status, 200); assert.equal(v2.data.integrity.external, 'received');
         const ackedV2 = wHas(P1, 2); assert.ok(ackedV2, 'la referencia de v2 llegó al testigo (cotejo independiente)');
         const P2 = await newPatient(), n2 = await sign(P2); assert.ok(wHas(P2, 1)); // nota creada después de A
         const dumpB = dump(); // corte B: v2 y la nota posterior
-        record('E0 firma, rectificación y referencia externa', 'cada sellado llega al testigo antes de responder', { externalV1: 'recorded', externalV2: 'recorded', witnessSeqP1: [1, 2] }, 'archivo del testigo leído directamente por el guion');
+        record('E0 firma, rectificación y referencia externa', 'cada sellado llega al testigo antes de responder', { externalV1: 'received', externalV2: 'received', witnessSeqP1: [1, 2] }, 'archivo del testigo leído directamente por el guion');
         startRec(reconciler, { immediate: false }); await sleep(INTERVAL * 3);
         assert.equal(alerts.length, 0, 'sin falsos positivos antes del retroceso (incluye rectificación legítima)');
         record('E1 rectificación legítima sin falso positivo', 'ningún aviso tras varias conciliaciones', { avisos: 0, conciliaciones: 3 }, 'canal de Soporte simulado vacío');
@@ -237,36 +236,63 @@ async function run() {
         assert.equal(wCount(P5, 1), 1, 'el reenvío idéntico no duplica');
         record('Q2 acuse perdido', 'la fila sigue pendiente, el reenvío es un duplicado idéntico y se registra una sola vez', { primerEstado: 'pending', anclajesEnTestigo: wCount(P5, 1), intentos: (await deliveryRows(P5))[0].attempts }, 'fila de la cola y archivo del testigo');
 
-        // Q3: el proceso cae después del commit y antes del primer envío; reinicio
-        const P6 = await newPatient(); reconciler.stop(); skipImmediate = true;
-        const t6 = Date.now(), n6 = await sign(P6);
-        assert.equal(n6.r.data.integrity.external, 'pending'); assert.ok(!wHas(P6, 1));
-        reconciler = makeReconciler(); startRec(reconciler); // reinicio: sin memoria; la cola está en MySQL
-        await waitFor(() => wHas(P6, 1), 15000, 'entrega tras reinicio');
-        const ackMs = Date.now() - t6;
-        record('Q3 caída entre el commit y el envío, con reinicio', 'la referencia no se pierde: la cola estaba en la misma transacción y se entrega al reiniciar', { externoAlFirmar: 'pending', hastaElAcuseMs: ackMs }, 'archivo del testigo');
+        // B: proceso de entrega REAL (otro proceso del sistema), terminado con SIGKILL y reiniciado conservando MySQL
+        const P6 = await newPatient(), id6 = randomUUID(), signReq6 = { requestId: randomUUID(), revision: 1 };
+        reconciler.stop(); await witnessServer.close();
+        await call(A, P6, '/evolution-drafts/' + id6, { revision: 0, form });
+        const b1 = await call(A, P6, '/evolution-notes/' + id6 + '/sign', signReq6);
+        const rectReq6 = { requestId: randomUUID(), revision: 1, reason: 'Corrección sintética', form: { ...form, plan: 'Plan v2 con proceso real' } };
+        const b2 = await call(A, P6, '/evolution-notes/' + id6 + '/rectify', rectReq6);
+        assert.equal(b1.data.integrity.external, 'pending'); assert.equal(b2.data.integrity.external, 'pending');
+        const spawnWorker = () => new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, [path.join(__dirname, '../ops/nc3-delivery-worker.js')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: '', DB_NAME: schema, EVOLUTION_INTEGRITY_RETRY_MS: '300', EVOLUTION_INTEGRITY_RECONCILE_MS: '900' } });
+            let seen = ''; const timer = setTimeout(() => reject(Error('worker no listo: ' + seen)), 20000);
+            child.stdout.on('data', c => { seen += c; if (seen.includes('NC3_WORKER_READY')) { clearTimeout(timer); resolve(child); } });
+            child.stderr.on('data', c => { seen += c; });
+        });
+        const w1 = await spawnWorker();
+        await waitFor(async () => (await deliveryRows(P6)).some(r => r.attempts >= 1), 15000, 'el proceso 1 intenta');
+        assert.ok((await deliveryRows(P6)).every(r => r.state === 'pending'));
+        const exited = new Promise(r => w1.once('exit', (code, signal) => r({ code, signal })));
+        const killedPid = w1.pid; w1.kill('SIGKILL'); const exit1 = await exited;
+        hooks.dropAckOnce = true; // el testigo vuelve, registra la primera referencia y pierde el acuse
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        const w2 = await spawnWorker();
+        assert.notEqual(w2.pid, killedPid);
+        await waitFor(async () => (await deliveryRows(P6)).every(r => r.state === 'acked'), 30000, 'el proceso 2 completa la entrega');
+        w2.kill('SIGKILL'); await new Promise(r => w2.once('exit', r));
+        const ledger6 = (await db.query('SELECT version,seq,mac FROM evolution_integrity_ledger WHERE note_id=:id ORDER BY seq', { replacements: { id: id6 } }))[0];
+        const external6 = wLines().filter(l => l.type === 'anchor' && l.rec.patient === P6).map(l => ({ seq: l.rec.seq, version: l.rec.version, mac: l.rec.mac }));
+        assert.deepEqual(external6, ledger6.map(r => ({ seq: Number(r.seq), version: r.version, mac: r.mac })), 'sellos y referencias externas coinciden y en orden');
+        assert.deepEqual(await counts(id6), { versiones: 2, asientos: 2 });
+        const rs = await call(A, P6, '/evolution-notes/' + id6 + '/sign', signReq6), rr = await call(A, P6, '/evolution-notes/' + id6 + '/rectify', rectReq6);
+        assert.equal(rs.data.version, 1); assert.equal(rr.data.version, 2); assert.equal(rs.data.integrity.external, 'received'); assert.equal(rr.data.integrity.external, 'received');
+        assert.deepEqual(await counts(id6), { versiones: 2, asientos: 2 }); assert.equal(wCount(P6, 1), 1); assert.equal(wCount(P6, 2), 1);
+        record('B reinicio real del proceso de entrega, acuse perdido y reenvío de solicitudes originales', 'tras SIGKILL y un proceso nuevo, con un acuse perdido, quedan 2 versiones, 2 sellos y 2 referencias externas ordenadas, sin duplicados', { proceso1: { pid: killedPid, salida: exit1 }, proceso2: { pid: w2.pid }, intentosPorFila: (await deliveryRows(P6)).map(r => r.attempts), versiones: ledger6.map(r => r.version), referenciasExternas: external6.map(r => r.seq), reenvioFirma: rs.data.integrity.external, reenvioRectificacion: rr.data.integrity.external }, 'procesos del sistema, filas de MySQL y archivo del testigo');
+        reconciler = makeReconciler();
 
         // Q4: estado por versión, sesión nueva y reenvío de las solicitudes originales
         const P7 = await newPatient(), id7 = randomUUID(), signReq7 = { requestId: randomUUID(), revision: 1 };
         await call(A, P7, '/evolution-drafts/' + id7, { revision: 0, form });
         const s7 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
-        assert.equal(s7.data.integrity.external, 'recorded');
+        assert.equal(s7.data.integrity.external, 'received');
         await witnessServer.close();
         const rectReq7 = { requestId: randomUUID(), revision: 1, reason: 'Corrección sintética', form: { ...form, plan: 'Plan v2 pendiente' } };
         const r7 = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
         assert.equal(r7.data.integrity.external, 'pending');
         const reS = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7), reR = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
-        assert.equal(reS.data.version, 1); assert.equal(reS.data.integrity.external, 'recorded');
+        assert.equal(reS.data.version, 1); assert.equal(reS.data.integrity.external, 'received');
         assert.equal(reR.data.version, 2); assert.equal(reR.data.integrity.external, 'pending');
         const fresh = await readStates(B, P7, id7); // sesión nueva
-        assert.deepEqual(fresh.lista, ['pending']); assert.deepEqual(fresh.detalle, [[2, 'pending'], [1, null]]); assert.equal(fresh.pendientes, 1);
+        assert.deepEqual(fresh.lista, ['pending']); assert.deepEqual(fresh.detalle, [[2, 'pending'], [1, 'received']]); assert.equal(fresh.pendientes, 1);
         assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
         witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        startRec(reconciler, { immediate: false });
         await waitFor(async () => (await deliveryRows(P7)).every(r => r.state === 'acked'), 15000, 'ack P7');
         const after = await readStates(B, P7, id7);
-        assert.deepEqual(after.lista, [null]); assert.deepEqual(after.detalle, [[2, null], [1, null]]); assert.equal(after.pendientes, 0);
+        assert.deepEqual(after.lista, ['received']); assert.deepEqual(after.detalle, [[2, 'received'], [1, 'received']]); assert.equal(after.pendientes, 0);
         const again = await call(A, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7);
-        assert.equal(again.data.integrity.external, 'recorded'); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        assert.equal(again.data.integrity.external, 'received'); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
         const mismo = await Promise.all([A, B].map(t => call(t, P7, '/evolution-notes/' + id7 + '/rectify', rectReq7)));
         assert.ok(mismo.every(x => x.status === 200 && x.data.version === 2)); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
         record('Q4 estado por versión, sesión nueva y reenvío de las solicitudes originales', 'v2 aparece pendiente solo en su versión (lista, detalle y sesión nueva), el reenvío conserva una sola firma por versión y el pendiente desaparece tras el acuse', { respuestaFirma: s7.data.integrity.external, respuestaRectificacion: r7.data.integrity.external, reenvioFirma: reS.data.integrity.external, reenvioRectificacion: reR.data.integrity.external, sesionNueva: fresh, trasElAcuse: after, conteo: await counts(id7) }, 'API con dos sesiones y filas de MySQL');
@@ -277,14 +303,64 @@ async function run() {
         const D = issue('clinic', 'agenda', 'six'), den = await call(D, P7, '/evolution-notes'), den2 = await call(D, P7, '/evolution-notes/' + id7 + '/versions');
         assert.equal(den.status, 403); assert.equal(den2.status, 403); assert.ok(!/external|pending/.test(JSON.stringify([den, den2])));
         record('Q6 rol de solo Agenda', 'denegación con sesión válida (403) y sin estado de confirmación externa', { lista: den.status, detalle: den2.status }, 'API real');
-        // Q5: nota ya firmada y también falla la cola
+        // A: la tabla de envío se retira (cola ilegible)
+        const P9 = await newPatient(), id9 = randomUUID(), req9 = { requestId: randomUUID(), revision: 1 };
+        assert.equal((await call(A, P9, '/evolution-drafts/' + id9, { revision: 0, form })).status, 200);
+        const headBefore = await headSeq(P9);
         await db.query('RENAME TABLE evolution_integrity_delivery TO qa_held_delivery');
-        const inc7 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
-        const lec7 = await call(A, P7, '/evolution-notes');
+        const tA1 = await call(A, P9, '/evolution-notes/' + id9 + '/sign', req9);
+        const draftAfter = await call(A, P9, '/evolution-drafts/' + id9 + '/review?revision=1');
+        const parcial = { versiones: (await counts(id9)).versiones, asientos: (await counts(id9)).asientos, cabecera: await headSeq(P9) };
         await db.query('RENAME TABLE qa_held_delivery TO evolution_integrity_delivery');
-        assert.equal(inc7.status, 200); assert.equal(inc7.data.version, 1); assert.equal(inc7.data.integrity.external, 'incident');
-        assert.equal(lec7.status, 200); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
-        record('Q5 firma existente y falla la cola', 'se informa de la incidencia, se conserva la firma y no se pide firmar otra vez', { estado: inc7.status, externo: inc7.data.integrity.external, lecturaSigueFuncionando: lec7.status, conteo: await counts(id7) }, 'API y filas de MySQL');
+        assert.equal(tA1.status, 503); assert.deepEqual(parcial, { versiones: 0, asientos: 0, cabecera: headBefore });
+        assert.equal(draftAfter.status, 200, 'el borrador se conserva');
+        const tA2 = await call(A, P9, '/evolution-notes/' + id9 + '/sign', req9);
+        assert.equal(tA2.status, 200); assert.equal(tA2.data.version, 1); assert.deepEqual(await counts(id9), { versiones: 1, asientos: 1 });
+        record('A1 tabla de envío ausente al firmar una nota nueva', '503, borrador conservado, cero versiones, sellos y cabecera sin cambio; al recuperar la tabla el mismo reintento firma una sola vez', { primerIntento: tA1.status, parcial, borradorConservado: draftAfter.status === 200, reintento: { status: tA2.status, version: tA2.data.version }, conteo: await counts(id9) }, 'API y filas de MySQL');
+        await db.query('RENAME TABLE evolution_integrity_delivery TO qa_held_delivery');
+        const a3 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
+        const lecList = await call(A, P7, '/evolution-notes'), lecDet = await call(A, P7, '/evolution-notes/' + id7 + '/versions');
+        await db.query('RENAME TABLE qa_held_delivery TO evolution_integrity_delivery');
+        assert.equal(a3.status, 200); assert.equal(a3.data.version, 1); assert.equal(a3.data.integrity.external, 'unknown');
+        assert.deepEqual(lecList.data.items.filter(i => i.id === id7).map(i => i.integrity.external), ['unknown']);
+        assert.deepEqual(lecDet.data.items.map(i => [i.version, i.integrity.external]), [[2, 'unknown'], [1, 'unknown']]);
+        assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
+        record('A2 nota ya firmada, reenvío y recarga con la cola ilegible', 'la firma se conserva y la respuesta y la lectura dicen «desconocido» (nunca recibido) para que la pantalla no pida firmar otra vez', { respuesta: a3.data.integrity.external, lista: ['unknown'], detalle: [[2, 'unknown'], [1, 'unknown']], conteo: await counts(id7) }, 'API real; el texto visible se verifica en el shell');
+
+        // C: un solo despachador de incidentes, receptor que acepta y pierde la respuesta
+        const nowTag = Date.now();
+        let live = 0, maxLive = 0, calls = 0;
+        const slowAlert = async () => { live++; maxLive = Math.max(maxLive, live); calls++; await sleep(500); live--; return { ok: true, channel: 'prueba' }; };
+        const probeCfg = { ...witness.config() };
+        await witnessServer.close();
+        const solap = rec.createReconciler({ db, witnessCfg: probeCfg, alert: async () => ({ ok: false, channel: 'prueba' }), unreachableAfter: 1, outboxFile: path.join(work, 'solap-' + nowTag + '.json'), alertBackoffMs: 200 });
+        await solap.tick(); await sleep(600);
+        const slow = rec.createReconciler({ db, witnessCfg: probeCfg, alert: slowAlert, unreachableAfter: 1, outboxFile: path.join(work, 'solap-' + nowTag + '.json'), alertBackoffMs: 200 });
+        await Promise.all([slow.tick(), slow.retry(), slow.retry(), slow.deliverIncidents()]);
+        assert.equal(calls, 1); assert.equal(maxLive, 1);
+        const solapEntry = slow.outbox()[0];
+        assert.equal(solapEntry.attempts.length, 2); assert.ok(solapEntry.delivered);
+        record('C1 conciliación y reintentos solapados', 'un incidente no tiene nunca dos envíos simultáneos', { llamadasAlCanal: calls, maximoEnCurso: maxLive, intentosRegistrados: solapEntry.attempts.length }, 'canal instrumentado');
+        const seen = new Map(); let firstLost = true;
+        const lossy = await new Promise(resolve => {
+            const server = http.createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { const body = JSON.parse(b); const k = body.id + '|' + body.cycle; seen.set(k, (seen.get(k) || 0) + 1); if (firstLost) { firstLost = false; return req.socket.destroy(); } res.end('ok'); }); });
+            server.listen(0, '127.0.0.1', () => resolve(server));
+        });
+        const savedHook = process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL; process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL = 'http://127.0.0.1:' + lossy.address().port;
+        const lost = rec.createReconciler({ db, witnessCfg: probeCfg, unreachableAfter: 1, outboxFile: path.join(work, 'perdido-' + nowTag + '.json'), alertBackoffMs: 200 });
+        await lost.tick(); await sleep(450); await lost.retry(); await sleep(500); await lost.retry();
+        const le = lost.outbox()[0];
+        assert.ok(le.delivered && le.attempts.length >= 2 && le.attempts[0].ok === false);
+        assert.equal(seen.size, 1); assert.ok([...seen.values()][0] >= 2, 'el receptor vio la misma referencia más de una vez y puede deduplicarla');
+        witnessServer = await startWitness({ dir: witnessDir, envs, port: witnessPort, hooks });
+        await lost.tick(); await lost.retry();
+        const evs = (await incidentsOf()).filter(e => e.id === le.id).map(e => e.type);
+        assert.ok(evs.includes('open') && evs.includes('delivered') && evs.includes('cleared'), JSON.stringify(evs));
+        await cli.run(['attend', le.id, '--by', 'soporte-qa', '--evidence', 'revisado con el responsable del consultorio'], { ...process.env }, () => {});
+        const evs2 = (await incidentsOf()).filter(e => e.id === le.id).map(e => e.type);
+        assert.ok(evs2.includes('attended')); assert.ok(!evs.includes('attended'), 'el acuse técnico no equivale a atención humana');
+        process.env.EVOLUTION_INTEGRITY_ALERT_WEBHOOK_URL = savedHook; await new Promise(r => lossy.close(r)); lossy.closeAllConnections && lossy.closeAllConnections();
+        record('C2 receptor que acepta y pierde la respuesta; recuperación y resolución', 'el incidente se reintenta con la misma referencia, el receptor puede deduplicar, hay un único incidente lógico, se resuelve y la atención humana es un evento aparte', { intentos: le.attempts.map(a => ({ canal: a.channel, ok: a.ok })), vecesQueElReceptorLoRecibio: [...seen.values()][0], incidentesLogicos: seen.size, trazaAntesDeAtender: evs, trazaConAtencion: evs2 }, 'receptor instrumentado y eventos del testigo');
         reconciler.stop();
 
         // ===================== R2 · aviso a Soporte con reintento durable =====================
@@ -335,9 +411,8 @@ async function run() {
         assert.ok(!wHas(P10, 1)); assert.ok(!alerts.some(a => a.body.patient === P10));
         record('L1 límite: testigo caído y base restaurada antes del acuse', 'NO se detecta: la firma pendiente y su cola se pierden con MySQL y el testigo nunca la recibió (ventana = tiempo hasta el acuse)', { detectado: false, firmasSinEvidencia: 1 }, 'testigo sin registro; sin aviso');
 
-        latencies.sort((a, b) => a - b);
-        const stats = { entregasInmediatas: latencies.length, medianaMs: +latencies[Math.floor(latencies.length / 2)].toFixed(2), maxMs: +latencies[latencies.length - 1].toFixed(2) };
-        record('M1 costo del envío inmediato en la firma', 'acotado', stats, 'temporizador alrededor de la entrega');
+        const spans = (await db.query('SELECT TIMESTAMPDIFF(MICROSECOND,queued_at,acked_at)/1000 AS ms FROM evolution_integrity_delivery WHERE state=\'acked\' ORDER BY ms'))[0].map(r => Number(r.ms));
+        record('M1 intervalo medido por referencia entre la confirmación local y el acuse', 'dato informativo; no es una garantía ni un máximo de exposición (las referencias con el testigo caído suman toda la caída)', { referencias: spans.length, medianaMs: +spans[Math.floor(spans.length / 2)].toFixed(1), maximoMs: +spans[spans.length - 1].toFixed(1), nota: 'incluye las esperas provocadas por las caídas simuladas' }, 'columnas queued_at y acked_at de la cola');
         if (process.env.NC3_QA_EVIDENCE_DIR) {
             fs.mkdirSync(process.env.NC3_QA_EVIDENCE_DIR, { recursive: true });
             fs.writeFileSync(path.join(process.env.NC3_QA_EVIDENCE_DIR, 'c22-r2-results.json'), JSON.stringify({ fecha: new Date().toISOString(), entorno: 'MySQL aislado y testigo local, datos sintéticos', intervaloConciliadorMs: INTERVAL, casos: results }, null, 2));

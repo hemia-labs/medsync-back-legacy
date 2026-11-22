@@ -55,8 +55,8 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
     // Un incidente lógico por consultorio, paciente y código. Se crea una vez por ciclo (abierto → resuelto).
     function ensure(found, known) {
         const id = idOf(found.business, found.patient, found.code);
-        if (found.business !== '*') (active.get(found.business + '|' + found.patient) || active.set(found.business + '|' + found.patient, []).get(found.business + '|' + found.patient)).push({ code: found.code, id });
-        else (active.get('*|*') || active.set('*|*', []).get('*|*')).push({ code: found.code, id });
+        if (found.business !== '*') (active.get(found.business + '|' + found.patient) || active.set(found.business + '|' + found.patient, []).get(found.business + '|' + found.patient)).push({ code: found.code, id, severity: found.severity });
+        else (active.get('*|*') || active.set('*|*', []).get('*|*')).push({ code: found.code, id, severity: found.severity });
         const prior = outbox.get(id);
         if (prior && !prior.cleared) return prior;
         const witnessSeen = known && known.get(id);
@@ -72,26 +72,35 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
         return entry;
     }
 
-    // Entrega durable: cada intento se anota; la misma referencia se reintenta hasta que el canal acuse.
-    async function deliverIncidents() {
-        const out = [];
-        for (const entry of outbox.all()) {
-            // Eventos de trazabilidad en el testigo; si está caído se reintentan en el siguiente ciclo.
-            try {
-                if (!entry.witnessOpen) { const w = await witness.postIncident(witnessCfg, { ...entry.incident, type: 'open', cycle: entry.cycle }); entry.witnessOpen = w.status === 201; }
-                if (entry.witnessOpen && entry.delivered && !entry.witnessDelivered) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'delivered', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, attempts: entry.attempts.length }); entry.witnessDelivered = w.status === 201; }
-                if (entry.witnessOpen && entry.cleared && !entry.witnessCleared) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'cleared', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, detectedAt: entry.clearedAt }); entry.witnessCleared = w.status === 201; }
-            } catch { /* testigo inaccesible: el incidente sigue en la cola local */ }
-            outbox.put(entry);
-            if (entry.delivered || now() < (entry.nextAttemptAt ?? 0)) continue;
-            const result = await alert({ ...entry.incident, cycle: entry.cycle }, entry.attempts.length + 1).catch(error => ({ ok: false, channel: 'unknown', error: String(error.message).slice(0, 30) }));
-            entry.attempts.push({ at: iso(), channel: result.channel, ok: Boolean(result.ok), ...(result.status ? { status: result.status } : {}), ...(result.error ? { error: result.error } : {}) });
-            if (result.ok) { entry.delivered = true; entry.deliveredAt = iso(); entry.nextAttemptAt = null; }
-            else entry.nextAttemptAt = now() + backoff(entry.attempts.length);
-            outbox.put(entry);
-            out.push({ id: entry.id, attempt: entry.attempts.length, ok: Boolean(result.ok), channel: result.channel });
-        }
-        return out;
+    // Despachador ÚNICO de incidentes: el conciliador y el reintento lo invocan, pero solo hay una pasada a la vez, de modo que un
+    // incidente nunca tiene dos envíos simultáneos. Cada intento se anota con su resultado real, y solo se escribe a disco cuando
+    // hay una transición (nuevo intento, entrega, evento de trazabilidad); los incidentes sin cambios no se reescriben.
+    // El acuse del canal prueba recepción técnica, no atención humana: esa es evidencia propia (evento attended de Soporte).
+    let dispatching = null;
+    function deliverIncidents() {
+        if (dispatching) return dispatching;
+        dispatching = (async () => {
+            const out = [];
+            for (const entry of outbox.all()) {
+                let changed = false;
+                try {
+                    if (!entry.witnessOpen) { const w = await witness.postIncident(witnessCfg, { ...entry.incident, type: 'open', cycle: entry.cycle }); if (w.status === 201) { entry.witnessOpen = true; changed = true; } }
+                    if (entry.witnessOpen && entry.delivered && !entry.witnessDelivered) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'delivered', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, attempts: entry.attempts.length, cycle: entry.cycle }); if (w.status === 201) { entry.witnessDelivered = true; changed = true; } }
+                    if (entry.witnessOpen && entry.cleared && !entry.witnessCleared) { const w = await witness.postIncident(witnessCfg, { id: entry.id, type: 'cleared', code: entry.incident.code, business: entry.incident.business, patient: entry.incident.patient, detectedAt: entry.clearedAt, cycle: entry.cycle }); if (w.status === 201) { entry.witnessCleared = true; changed = true; } }
+                } catch { /* testigo inaccesible: el incidente sigue en la cola local */ }
+                if (!entry.delivered && now() >= (entry.nextAttemptAt ?? 0)) {
+                    const result = await alert({ ...entry.incident, cycle: entry.cycle }, entry.attempts.length + 1).catch(error => ({ ok: false, channel: 'unknown', error: String(error.message).slice(0, 30) }));
+                    entry.attempts.push({ at: iso(), channel: result.channel, ok: Boolean(result.ok), ...(result.status ? { status: result.status } : {}), ...(result.error ? { error: result.error } : {}) });
+                    if (result.ok) { entry.delivered = true; entry.deliveredAt = iso(); entry.nextAttemptAt = null; }
+                    else entry.nextAttemptAt = now() + backoff(entry.attempts.length);
+                    changed = true;
+                    out.push({ id: entry.id, attempt: entry.attempts.length, ok: Boolean(result.ok), channel: result.channel });
+                }
+                if (changed) outbox.put(entry);
+            }
+            return out;
+        })().finally(() => { dispatching = null; });
+        return dispatching;
     }
 
     async function tick() {
@@ -210,7 +219,7 @@ function createReconciler({ db, witnessCfg = witness.config(), alert = defaultAl
         },
         stop() { if (timer) clearInterval(timer); if (retryTimer) clearInterval(retryTimer); timer = retryTimer = null; },
         // Condiciones vigentes para un paciente: solo de su consultorio (el aviso de lectura no cruza consultorios).
-        faultsFor(business, patient) { return (active.get(business + '|' + patient) || []).filter(c => c.code !== 'REFERENCE_STALE').map(c => ({ code: c.code, state: 'discrepancy' })); },
+        faultsFor(business, patient) { return (active.get(business + '|' + patient) || []).filter(c => c.severity === 'critical').map(c => ({ code: c.code, state: 'discrepancy' })); },
         outbox: () => outbox.all(),
         last: () => last
     };

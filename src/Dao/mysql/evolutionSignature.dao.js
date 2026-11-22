@@ -35,8 +35,11 @@ async function verification(replacements, rows, onlyNote, transaction) {
     // C22: un retroceso detectado por el conciliador se refleja en el aviso aunque MySQL, por sí solo, se vea coherente.
     const live = reconciler.shared();
     const extra = live ? live.faultsFor(replacements.business, replacements.patient) : [];
-    if (!extra.length) return base;
-    return { ...base, state: 'discrepancy', faults: [...base.faults, ...extra], reference: true };
+    // `correctionBlocked` es la regla local que también aplica la escritura (discrepancia o indisponibilidad de la cadena de la nota):
+    // pantalla y API deciden con ella, no con el aviso del conciliador, que no bloquea nada.
+    const correctionBlocked = ['discrepancy', 'unavailable'].includes(base.state);
+    if (!extra.length) return { ...base, correctionBlocked };
+    return { ...base, state: 'discrepancy', faults: [...base.faults, ...extra], reference: true, correctionBlocked };
 }
 async function baseVerification(replacements, rows, onlyNote, transaction) {
     const cfg = integrity.config();
@@ -51,13 +54,18 @@ async function baseVerification(replacements, rows, onlyNote, transaction) {
     }
 }
 
-// Estado de la confirmación externa por versión. Solo `pending` y `conflict` se muestran; tras el acuse la lectura lo retira.
+// Estado de la confirmación externa por versión: pending, conflict, received (acuse), unknown (cola ilegible) o null
+// (nota heredada o ambiente sin testigo: no hay nada que comprobar).
 async function externalStates(replacements, note, transaction) {
-    if (!witness.config().enabled) return new Map();
-    try { return await witness.statesFor(db,{business:replacements.business,patient:replacements.patient,note},transaction); }
-    catch (error) { console.error('EVOLUTION_INTEGRITY_DELIVERY_UNREADABLE', error.code || error.message); return new Map(); }
+    if (!witness.config().enabled) return { disabled: true, ok: true, states: new Map() };
+    return witness.readStates(db,{business:replacements.business,patient:replacements.patient,note},transaction);
 }
-const externalMark = (states, row) => { const state=states.get(row.note_id+'#'+row.version); return state==='pending'||state==='conflict' ? state : null; };
+const externalMark = (delivery, row, mark) => {
+    if (delivery.disabled || mark.state === 'historical') return null;
+    if (!delivery.ok) return 'unknown';
+    const state = delivery.states.get(row.note_id+'#'+row.version);
+    return state === 'acked' ? 'received' : state || null;
+};
 
 async function read(body) {
     let page;
@@ -85,7 +93,7 @@ async function read(body) {
                 const row=rows.find(r => r.version===version), mark=stateOf(body.id,version);
                 items.push(!row || mark.state==='discrepancy'
                     ? placeholder({version,integrity:mark},body.id)
-                    : {...snapshot(row),integrity:{...mark,external:externalMark(delivery,row)}});
+                    : {...snapshot(row),integrity:{...mark,external:externalMark(delivery,row,mark)}});
             }
         } else {
             const latest=new Map();
@@ -95,7 +103,7 @@ async function read(body) {
             for (const row of live) {
                 const mark=stateOf(row.note_id);
                 if (mark.state==='discrepancy') flagged.push(placeholder({integrity:mark},row.note_id));
-                else items.push({...snapshot(row),integrity:{...mark,external:externalMark(delivery,row)}});
+                else items.push({...snapshot(row),integrity:{...mark,external:externalMark(delivery,row,mark)}});
             }
             for (const [note,entry] of check.notes) if (!latest.has(note)) flagged.push(placeholder({integrity:{state:entry.state,code:entry.code}},note));
             const open=check.faults.find(f => f.state==='discrepancy');
@@ -105,7 +113,7 @@ async function read(body) {
         const window=pageWindow(page,items.length);
         for (const item of items) if (['discrepancy','unavailable'].includes(item.integrity.state))
             integrity.recordEvent({type:'READ_'+item.integrity.state.toUpperCase(),code:item.integrity.code,business:body.id_business,patient:body.id_person,note:item.id,version:item.version,actor:body.id_login});
-        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference,externalPending:items.filter(item => item.integrity.external==='pending').length};
+        const summary={state:check.state,faults:check.faults.map(f => f.code),reference:check.reference,correctionBlocked:Boolean(check.correctionBlocked),externalPending:items.filter(item => item.integrity.external==='pending').length};
         const data=pageData(items.slice(window.offset,window.offset+window.pageSize),window);
         return response.success({...data,integrity:summary},check.state==='discrepancy' ? 'Se detectó una diferencia en el control de integridad.' : 'Firmas profesionales consultadas.');
     });
@@ -208,7 +216,7 @@ async function attest(body, correcting) {
                 } catch (error) {
                     // La nota ya está firmada: se informa de la incidencia y se conserva la firma; no se pide firmar otra vez.
                     integrity.recordEvent({type:'EXTERNAL_QUEUE_FAILED',code:String(error.code || error.message).slice(0,40),business:body.id_business,patient:body.id_person,note:body.id,version:replay.version,actor:body.id_login});
-                    marked.external='incident';
+                    marked.external='unknown';
                 }
             }
             return response.success({...snapshot(replay),integrity:marked},'Firma registrada.');
@@ -268,13 +276,14 @@ async function attest(body, correcting) {
         // de la firma, el reintento y las lecturas posteriores coinciden. Si el testigo cae, la firma sigue válida y pendiente.
         const wcfg=witness.config();
         try {
-            await witness.deliver(db,wcfg,{business:after.business,patient:after.patient,force:true});
+            // Un solo intento, limitado a la referencia de esta operación y solo si es la elegible; el resto lo entrega el despachador.
+            await witness.deliver(db,wcfg,{business:after.business,patient:after.patient,force:true,only:{note:after.note,version:after.version}});
             const state=await witness.stateOf(db,after);
-            result.data.integrity.external=state==='acked' ? 'recorded' : state || 'incident';
+            result.data.integrity.external=state==='acked' ? 'received' : state || 'unknown';
         } catch (error) {
             // La versión ya está firmada: no se pide firmar otra vez; se informa de la incidencia y se escala a Soporte.
             integrity.recordEvent({type:'EXTERNAL_STATE_UNKNOWN',code:String(error.code || error.message).slice(0,40),business:body.id_business,patient:body.id_person,note:body.id,version:after.version,actor:body.id_login});
-            result.data.integrity.external='incident';
+            result.data.integrity.external='unknown';
         }
     }
     return result;

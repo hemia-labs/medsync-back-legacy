@@ -13,7 +13,7 @@ async function run(argv, env = process.env, out = console.log) {
     const events = (await witness.incidents(cfg)).data.events;
     if (cmd === 'list') {
         const byId = new Map();
-        for (const e of events) { const cur = byId.get(e.id) || { id: e.id, events: [] }; cur.events.push(e.type + '@' + e.receivedAt); if (e.code) cur.code = e.code; if (e.business) { cur.business = e.business; cur.patient = e.patient; } cur.state = ['open', 'cleared', 'closed'].includes(e.type) ? e.type : cur.state; byId.set(e.id, cur); }
+        for (const e of events) { const cur = byId.get(e.id) || { id: e.id, events: [] }; cur.events.push(e.type + '@' + e.receivedAt); if (e.code) cur.code = e.code; if (e.business) { cur.business = e.business; cur.patient = e.patient; } cur.state = ['open', 'cleared', 'closed'].includes(e.type) ? e.type : cur.state; if (e.type === 'attended') cur.attended = e.by; byId.set(e.id, cur); }
         out(JSON.stringify([...byId.values()], null, 2));
         return;
     }
@@ -27,7 +27,15 @@ async function run(argv, env = process.env, out = console.log) {
         out(JSON.stringify(done.data));
         return;
     }
-    throw Error('Uso: list | close <id> --by <quien> --evidence <referencia>');
+    if (cmd === 'attend') {
+        // Atención humana: evidencia propia, distinta del acuse técnico del canal.
+        if (!events.some(e => e.id === id)) throw Error('Incidente desconocido.');
+        if (!flag('by') || !flag('evidence')) throw Error('Indica --by y --evidence.');
+        const first = events.find(e => e.id === id);
+        out(JSON.stringify((await witness.postIncident(cfg, { id, type: 'attended', code: first.code, business: first.business, patient: first.patient, by: flag('by'), evidence: flag('evidence') })).data));
+        return;
+    }
+    throw Error('Uso: list | attend <id> | close <id> --by <quien> --evidence <referencia>');
 }
 if (require.main === module) run(process.argv.slice(2)).catch(error => { console.error(error.message); process.exitCode = 1; });
 module.exports = { run };
