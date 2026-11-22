@@ -10,6 +10,8 @@ const dental = require('../../services/odontogramPlanDental.service');
 const effectivePermissions = require('../../util/effectivePermissions');
 const response = require('../../util/responsedata');
 const integrity = require('../../services/evolutionIntegrity.service');
+const witness = require('../../services/evolutionIntegrityWitness.service');
+const reconciler = require('../../services/evolutionIntegrityReconciler');
 const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { recordPerformedExtra } = require('../../services/evolutionPerformedExtra');
 
@@ -29,6 +31,14 @@ function snapshot(row) {
 
 const placeholder = (extra, note) => ({ id: note, version: null, author: null, signer: null, license: null, signedAt: null, reason: null, form: null, ...extra });
 async function verification(replacements, rows, onlyNote, transaction) {
+    const base = await baseVerification(replacements, rows, onlyNote, transaction);
+    // C22: un retroceso detectado por el conciliador se refleja en el aviso aunque MySQL, por sí solo, se vea coherente.
+    const live = reconciler.shared();
+    const extra = live ? live.faultsFor(replacements.business, replacements.patient) : [];
+    if (!extra.length) return base;
+    return { ...base, state: 'discrepancy', faults: [...base.faults, ...extra], reference: true };
+}
+async function baseVerification(replacements, rows, onlyNote, transaction) {
     const cfg = integrity.config();
     try {
         const ref = await integrity.loadReference(db, transaction, replacements);
@@ -224,7 +234,13 @@ async function attest(body, correcting) {
         anchor=sealed;
         return response.success({...snapshot(saved),integrity:{state:'verified',code:null}},correcting?'Rectificación firmada.':'Firma profesional registrada.');
     });
-    if (anchor) await integrity.recordAnchor(anchor);
+    if (anchor) {
+        await integrity.recordAnchor(anchor);
+        // La referencia externa se entrega antes de responder: si el profesional ve la firma confirmada, o el testigo la tiene
+        // ('recorded') o quedó en la cola durable ('pending'). 'lost' solo si ni la cola local pudo escribirse.
+        const external=await witness.publish(witness.config(),anchor);
+        if (result.data && result.data.integrity) result.data.integrity.external=external.state;
+    }
     return result;
     } catch (error) {
         if (!error.integrity) throw error;

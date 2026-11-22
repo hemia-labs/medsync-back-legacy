@@ -137,12 +137,21 @@ app.use(function(err, req, res, next) {
   res.render('error');
 });
 
+// NC3/C22: conciliación periódica con la referencia externa; solo si el testigo está configurado.
+function startEvolutionIntegrityReconciler() {
+  const witnessCfg = require('./services/evolutionIntegrityWitness.service').config();
+  if (!witnessCfg.enabled) return;
+  const { createReconciler, install } = require('./services/evolutionIntegrityReconciler');
+  install(createReconciler({ db: Sequelize, witnessCfg })).start(Number(process.env.EVOLUTION_INTEGRITY_RECONCILE_MS) || 300000);
+}
+
 const server = app.listen(app.get('port'), () => {
   console.log("server runing in: "+ app.get('port'));
   readiness.initialize().then(() => {
     console.log("Autenticacion correcta a mysql");
     startSaasTrialLifecycleJob();
     startBusinessPulseJob();
+    startEvolutionIntegrityReconciler();
     require('./services/registration/legalRegistration.service').startLegalEvidenceJob(Sequelize);
     require('./services/registration/registrationWelcome.service').startRegistrationWelcomeJob(Sequelize);
     require('./services/payments/contractWelcome.service').startContractWelcomeJob(Sequelize);

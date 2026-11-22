@@ -34,7 +34,10 @@
     "qa:nc5-chat-mysql": "bash scripts/qa/nc5-chat.docker.sh",
     "migration:nc5-chat": "node scripts/migrations/nc5-internal-chat.js",
     "qa:nc3-integrity": "node --test scripts/qa/nc3-evolution-integrity.test.js",
-    "qa:nc3-integrity-mysql": "bash scripts/qa/nc3-integrity.docker.sh"
+    "qa:nc3-integrity-mysql": "bash scripts/qa/nc3-integrity.docker.sh",
+    "qa:nc3-c22": "bash scripts/qa/nc3-c22.docker.sh",
+    "nc3:witness": "node scripts/ops/nc3-witness-server.js",
+    "nc3:incident": "node scripts/ops/nc3-incident.js"
   },
   "engines": {
     "node": ">=22.12 <23"
