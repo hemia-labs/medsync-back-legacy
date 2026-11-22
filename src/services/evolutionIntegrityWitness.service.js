@@ -12,7 +12,7 @@ const { QueryTypes } = require('sequelize');
 const integrity = require('./evolutionIntegrity.service');
 
 const BASE_DELAY_MS = () => Number(process.env.EVOLUTION_INTEGRITY_DELIVERY_BACKOFF_MS) || 5000;
-const MAX_DELAY_MS = 5 * 60000;
+const MAX_DELAY_MS = 60000; // tope de la espera progresiva: tras recuperarse el testigo, el pendiente se resuelve en menos de un minuto
 
 function config(env = process.env) {
     const url = String(env.EVOLUTION_INTEGRITY_WITNESS_URL || '').replace(/\/+$/, '');

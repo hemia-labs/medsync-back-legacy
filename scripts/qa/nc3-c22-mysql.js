@@ -271,6 +271,12 @@ async function run() {
         assert.ok(mismo.every(x => x.status === 200 && x.data.version === 2)); assert.deepEqual(await counts(id7), { versiones: 2, asientos: 2 });
         record('Q4 estado por versión, sesión nueva y reenvío de las solicitudes originales', 'v2 aparece pendiente solo en su versión (lista, detalle y sesión nueva), el reenvío conserva una sola firma por versión y el pendiente desaparece tras el acuse', { respuestaFirma: s7.data.integrity.external, respuestaRectificacion: r7.data.integrity.external, reenvioFirma: reS.data.integrity.external, reenvioRectificacion: reR.data.integrity.external, sesionNueva: fresh, trasElAcuse: after, conteo: await counts(id7) }, 'API con dos sesiones y filas de MySQL');
 
+        // Q6: rol de solo Agenda con sesión válida: denegación (403), sin estado de confirmación externa
+        await db.query("INSERT INTO login VALUES ('agenda','clinic','a','agenda@example.invalid',0,1,'agenda')"); await db.query("INSERT INTO rol VALUES ('a','assistant','Assistant',1)"); await db.query("INSERT INTO session VALUES ('six','agenda',1,1)");
+        await db.query("INSERT INTO cat_permission VALUES (4,'px.dates',1,1,NULL,NULL)"); await db.query("INSERT INTO permission_rol VALUES ('a',4,1)");
+        const D = issue('clinic', 'agenda', 'six'), den = await call(D, P7, '/evolution-notes'), den2 = await call(D, P7, '/evolution-notes/' + id7 + '/versions');
+        assert.equal(den.status, 403); assert.equal(den2.status, 403); assert.ok(!/external|pending/.test(JSON.stringify([den, den2])));
+        record('Q6 rol de solo Agenda', 'denegación con sesión válida (403) y sin estado de confirmación externa', { lista: den.status, detalle: den2.status }, 'API real');
         // Q5: nota ya firmada y también falla la cola
         await db.query('RENAME TABLE evolution_integrity_delivery TO qa_held_delivery');
         const inc7 = await call(A, P7, '/evolution-notes/' + id7 + '/sign', signReq7);
