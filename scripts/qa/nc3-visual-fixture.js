@@ -35,7 +35,7 @@ const tables = [
 async function main() {
     await admin.query('CREATE DATABASE ' + schema + ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
     for (const spec of tables) await db.query('CREATE TABLE ' + spec);
-    for (const file of ['nc5-evolution-draft.sql', 'nc5-evolution-signed.sql', 'nc5-performed-extra.sql', 'nc3-evolution-integrity.sql'])
+    for (const file of ['nc5-evolution-draft.sql', 'nc5-evolution-signed.sql', 'nc5-performed-extra.sql', 'nc3-evolution-integrity.sql', 'nc3-evolution-integrity-delivery.sql'])
         for (const statement of fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8').replace(/^--.*$/gm, '').split(';')) if (statement.trim()) await db.query(statement);
     for (const sql of [
         'INSERT INTO patient_code_counter VALUES (1,1)',
@@ -44,13 +44,20 @@ async function main() {
         "INSERT INTO login VALUES ('doctor','clinic','r','doctor@example.invalid',0,1,'Valeria')",
         "INSERT INTO rol VALUES ('r','doctor','Doctor',1)", "INSERT INTO session VALUES ('one','doctor',1,1)",
         "INSERT INTO cat_permission VALUES (1,'px.tab.monitoring',1,1,NULL,NULL),(2,'tracing.create',1,1,NULL,NULL),(3,'tracing.correct',1,1,NULL,NULL)",
-        "INSERT INTO permission_rol VALUES ('r',1,1),('r',2,1),('r',3,1)"
+        "INSERT INTO permission_rol VALUES ('r',1,1),('r',2,1),('r',3,1)",
+        "INSERT INTO login VALUES ('agenda','clinic','a','agenda@example.invalid',0,1,'Recepción')", "INSERT INTO rol VALUES ('a','assistant','Assistant',1)", "INSERT INTO session VALUES ('six','agenda',1,1)",
+        "INSERT INTO cat_permission VALUES (4,'px.dates',1,1,NULL,NULL)", "INSERT INTO permission_rol VALUES ('a',4,1)"
     ]) await db.query(sql);
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nc3-visual-'));
     const keys = 'k1:' + randomBytes(32).toString('hex');
     Object.assign(process.env, { JWT_SECRET: randomBytes(48).toString('hex'), AUTH_COOKIE_MODE: 'legacy', BROWSER_AUTH_TRANSPORT: 'bearer', CSRF_ENABLED: 'false',
         EVOLUTION_INTEGRITY_KEYS: keys, EVOLUTION_INTEGRITY_KEY_ID: 'k1', EVOLUTION_INTEGRITY_ADOPTION_AT: new Date(Date.now() - 3600e3).toISOString(),
         EVOLUTION_INTEGRITY_LOG_DIR: work, EVOLUTION_INTEGRITY_ANCHOR_PATH: path.join(work, 'anchor.jsonl') });
+    const witnessDir = path.join(work, 'witness'), wEnv = [{ env: 'visual-env', write: randomBytes(8).toString('hex'), support: randomBytes(8).toString('hex') }];
+    const { start: startWitness } = require('../ops/nc3-witness-server');
+    let witnessServer = await startWitness({ dir: witnessDir, envs: wEnv });
+    const witnessPort = witnessServer.port;
+    Object.assign(process.env, { EVOLUTION_INTEGRITY_WITNESS_URL: 'http://127.0.0.1:' + witnessPort, EVOLUTION_INTEGRITY_WITNESS_ENV: 'visual-env', EVOLUTION_INTEGRITY_WITNESS_WRITE_TOKEN: wEnv[0].write, EVOLUTION_INTEGRITY_WITNESS_SUPPORT_TOKEN: wEnv[0].support, EVOLUTION_INTEGRITY_WITNESS_TIMEOUT_MS: '800', EVOLUTION_INTEGRITY_DELIVERY_BACKOFF_MS: '1000', EVOLUTION_INTEGRITY_INCIDENT_OUTBOX: path.join(work, 'incident-outbox.json') });
     const dep = require.resolve('../../src/db/Sequelize.connection');
     require.cache[dep] = { id: dep, filename: dep, loaded: true, exports: db };
     const express = require('express'), app = express();
@@ -75,6 +82,13 @@ async function main() {
         res.json({ ok: true, key: req.params.mode });
     });
     app.use((err, req, res, next) => { console.error(err.message); res.sendStatus(500); });
+    app.get('/qa/witness/:mode', async (req, res) => {
+        if (req.params.mode === 'down' && witnessServer) { await witnessServer.close(); witnessServer = null; }
+        if (req.params.mode === 'up' && !witnessServer) witnessServer = await startWitness({ dir: witnessDir, envs: wEnv, port: witnessPort });
+        res.json({ witness: req.params.mode });
+    });
+    const agendaToken = require('../../src/auth/authenticate').GetAccessToken({ id_business: 'clinic', id_login: 'agenda', id_session: 'six' }).token;
+    app.get('/qa/agenda', (req, res) => res.json({ token: 'Bearer ' + agendaToken }));
     const server = await new Promise(resolve => { const s = app.listen(apiPort, '127.0.0.1', () => resolve(s)); });
     let n = 0;
     const seed = async (key, label, versions, after) => {
@@ -97,6 +111,27 @@ async function main() {
     await seed('v1ausente', 'Original ausente', 2, (p, id) => db.query('DELETE FROM evolution_note_signed_version WHERE note_id=:id AND version=1', { replacements: { id } }));
     await seed('ultima', 'Última ausente', 2, (p, id) => db.query('DELETE FROM evolution_note_signed_version WHERE note_id=:id AND version=2', { replacements: { id } }));
     await seed('todas', 'Todas ausentes', 2, (p, id) => db.query('DELETE FROM evolution_note_signed_version WHERE note_id=:id', { replacements: { id } }));
+    // Estados de la confirmación externa: v1 firmada con el testigo caído, y v2 pendiente sobre v1 ya confirmada.
+    const pendingSeed = async (key, label, rectifyDown) => {
+        const patient = 'v' + (++n);
+        await db.query("INSERT INTO person (id_person,id_business,active,code,name,surname) VALUES (:p,'clinic',1,:c,'Paciente',:s)", { replacements: { p: patient, c: String(200000 + n), s: label } });
+        const id = randomUUID();
+        if (rectifyDown) witnessServer = witnessServer || await startWitness({ dir: witnessDir, envs: wEnv, port: witnessPort });
+        else if (witnessServer) { await witnessServer.close(); witnessServer = null; }
+        await call(patient, '/evolution-drafts/' + id, { revision: 0, form: form() });
+        await call(patient, '/evolution-notes/' + id + '/sign', { requestId: randomUUID(), revision: 1 });
+        if (rectifyDown) {
+            await witnessServer.close(); witnessServer = null;
+            await call(patient, '/evolution-notes/' + id + '/rectify', { requestId: randomUUID(), revision: 1, reason: 'Se precisó el plan', form: form({ plan: 'Revisión en tres semanas.' }) });
+        }
+        notes.push({ key, label, patient, note: id });
+    };
+    await seed('confirmada', 'Confirmada', 2);
+    await pendingSeed('firmaPendiente', 'Firma pendiente', false);
+    await pendingSeed('rectificacionPendiente', 'Rectificación pendiente', true);
+    // El testigo queda caído al terminar la siembra: las confirmaciones pendientes se ven hasta llamar a /qa/witness/up.
+    const reconciler = require('../../src/services/evolutionIntegrityReconciler');
+    reconciler.install(reconciler.createReconciler({ db })).start(60000, { immediate: false, retryMs: 1000 });
     console.log('FIXTURE_READY ' + base + ' ' + schema);
     const stop = async () => { await new Promise(r => server.close(r)); await db.close(); await admin.query('DROP DATABASE ' + schema); await admin.close(); fs.rmSync(work, { recursive: true, force: true }); process.exit(0); };
     process.on('SIGINT', stop); process.on('SIGTERM', stop);
