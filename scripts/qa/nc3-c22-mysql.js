@@ -173,7 +173,19 @@ async function run() {
         assert.equal(wHas(P1, 2).rec.mac, before2, 'el testigo conserva la referencia original');
         const dv = await waitFor(() => alertFor(P1, 'HISTORY_DIVERGED'), 15000, 'divergencia');
         assert.ok(wLines().some(l => l.type === 'conflict' && l.rec.patient === P1));
-        record('E5 firmar tras el retroceso no sustituye la referencia', 'el testigo rechaza la referencia distinta (409), conserva la original y Soporte recibe HISTORY_DIVERGED', { externo: n1b.r.data.integrity.external, codigo: dv.body.code, macOriginalConservado: true }, 'archivo del testigo: anchor seq=2 original + línea conflict');
+        // Un asiento más de la historia divergente (seq 3, enlazado al seq 2 rechazado) no recibe acuse ni avanza la cabecera externa.
+        const n1c = await rectify(P1, n1b.id, 1, 'Plan divergente v2');
+        assert.equal(n1c.status, 200, 'la firma local se conserva'); assert.equal(n1c.data.integrity.external, 'conflict');
+        assert.equal(await headSeq(P1), 3); assert.equal(wHas(P1, 3), undefined, 'el testigo no acepta el descendiente divergente');
+        const desc = wLines().find(l => l.type === 'conflict' && l.rec.patient === P1 && l.rec.seq === 3);
+        assert.ok(desc && desc.reason === 'NOT_SUCCESSOR' && desc.headSeq === 2 && desc.headMac === before2);
+        const [descRow] = (await db.query('SELECT state FROM evolution_integrity_delivery WHERE id_person=:p AND seq=3', { replacements: { p: P1 } }))[0];
+        assert.equal(descRow.state, 'conflict');
+        const conflictLines = wLines().filter(l => l.type === 'conflict').length;
+        const replay = await fetch(witness.config().url + '/v1/anchors', { method: 'POST', headers: { authorization: 'Bearer ' + envs[0].write, 'content-type': 'application/json' }, body: JSON.stringify(desc.rec) });
+        const replayOk = await fetch(witness.config().url + '/v1/anchors', { method: 'POST', headers: { authorization: 'Bearer ' + envs[0].write, 'content-type': 'application/json' }, body: JSON.stringify(wHas(P1, 2).rec) });
+        assert.equal(replay.status, 409); assert.equal(replayOk.status, 200); assert.equal(wLines().filter(l => l.type === 'conflict').length, conflictLines, 'el reenvío no duplica líneas');
+        record('E5 firmar tras el retroceso no sustituye la referencia', 'el testigo rechaza la referencia distinta (409), conserva la original y Soporte recibe HISTORY_DIVERGED; una versión adicional de la historia divergente queda sin acuse', { externo: n1b.r.data.integrity.external, codigo: dv.body.code, macOriginalConservado: true, descendiente: { seq: 3, externo: n1c.data.integrity.external, fila: descRow.state, motivo: desc.reason, cabeceraTestigo: desc.headSeq }, reenvio: { divergente: replay.status, legitimo: replayOk.status } }, 'archivo del testigo: anchor seq=2 original + conflict seq=2 + conflict NOT_SUCCESSOR seq=3; fila de entrega seq=3 en conflict');
 
         // ===== Recuperación y cierre =====
         reconciler.stop(); restore(dumpB);
@@ -185,13 +197,14 @@ async function run() {
         const healed = await call(A, P1, '/evolution-notes/' + n1.id + '/versions');
         assert.equal(healed.data.integrity.state, 'verified'); assert.deepEqual(healed.data.items.map(i => i.integrity.state), ['verified', 'verified']);
         assert.equal(rec.shared().faultsFor('clinic', P1).length, 0);
+        assert.equal(Math.max(...wLines().filter(l => l.type === 'anchor' && l.rec.patient === P1).map(l => l.rec.seq)), 2, 'la cabecera externa sigue en la cadena legítima');
         const cli = require('../ops/nc3-incident');
         const lines = []; const cliEnv = { ...process.env };
         await assert.rejects(cli.run(['close', a1.body.id, '--by', 'x'], cliEnv, l => lines.push(l)));
         await cli.run(['close', a1.body.id, '--by', 'soporte-qa', '--evidence', 'corte B restaurado; v1 y v2 coinciden con la referencia externa'], cliEnv, l => lines.push(l));
         const trace = (await incidentsOf()).filter(e => e.id === a1.body.id).map(e => e.type);
         assert.deepEqual(trace, ['open', 'delivered', 'cleared', 'closed']);
-        record('E6 recuperación al corte B y cierre', 'la condición se anota como resuelta, las dos versiones vuelven a verificarse y el cierre conserva la traza', { traza: trace, resueltoMs: clearMs, lectura: healed.data.integrity.state }, 'eventos del testigo + API');
+        record('E6 recuperación al corte B y cierre', 'tras el descendiente divergente, la condición se anota como resuelta, las dos versiones vuelven a verificarse, la cabecera externa sigue en seq 2 legítimo y el cierre conserva la traza', { traza: trace, resueltoMs: clearMs, lectura: healed.data.integrity.state, cabeceraTestigoP1: 2 }, 'eventos del testigo + API');
 
         // ===================== R2 · cola durable de referencias =====================
         reconciler.stop(); alerts.length = 0;

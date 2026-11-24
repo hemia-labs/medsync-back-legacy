@@ -5,7 +5,9 @@
 //   NC3_WITNESS_ENVS    JSON: [{"env":"alameda-test","write":"<token app>","support":"<token Soporte>"}]
 // El token de escritura solo agrega referencias. El de Soporte lee referencias e incidentes y agrega eventos de incidente.
 // Nadie puede modificar ni borrar por la API. Una referencia distinta para el mismo (env, consultorio, paciente, seq)
-// no sustituye a la existente: se conserva ambas y se registra el conflicto.
+// no sustituye a la existente: se conserva ambas y se registra el conflicto. Una secuencia nueva solo se acepta si continúa
+// la última referencia aceptada del paciente (seq siguiente y prevMac igual a su MAC; la primera parte de la génesis).
+// Lo demás —p. ej. un asiento que prolonga una historia ya rechazada— se registra como conflicto y no avanza la cabecera.
 'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
@@ -16,13 +18,16 @@ const { createHash, timingSafeEqual } = require('node:crypto');
 function start({ dir, port = 0, envs, hooks = {} }) {
     fs.mkdirSync(dir, { recursive: true });
     const anchorsFile = path.join(dir, 'anchors.jsonl'), incidentsFile = path.join(dir, 'incidents.jsonl');
-    const index = new Map(), anchors = [], conflicts = [], incidents = [];
-    let chain = '0'.repeat(64);
+    const index = new Map(), heads = new Map(), seen = new Set(), anchors = [], conflicts = [], incidents = [];
+    const GENESIS = '0'.repeat(64);
+    let chain = GENESIS;
     const load = (file, fn) => { try { for (const line of fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)) fn(JSON.parse(line)); } catch (error) { if (error.code !== 'ENOENT') throw error; } };
     const key = r => [r.env, r.business, r.patient, r.seq].join('|');
+    const headKey = r => [r.env, r.business, r.patient].join('|');
+    const accept = rec => { index.set(key(rec), rec); const h = heads.get(headKey(rec)); if (!h || rec.seq > h.seq) heads.set(headKey(rec), { seq: rec.seq, mac: rec.mac }); };
     load(anchorsFile, line => {
         chain = line.chain;
-        if (line.type === 'anchor') { anchors.push(line); index.set(key(line.rec), line.rec); } else conflicts.push(line);
+        if (line.type === 'anchor') { anchors.push(line); accept(line.rec); } else { conflicts.push(line); seen.add(key(line.rec) + '|' + line.rec.mac); }
     });
     load(incidentsFile, line => incidents.push(line));
     const append = (file, line) => { const fd = fs.openSync(file, 'a', 0o600); try { fs.writeSync(fd, JSON.stringify(line) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); } };
@@ -57,16 +62,22 @@ function start({ dir, port = 0, envs, hooks = {} }) {
                 if (who.role !== 'write') return send(403, { error: 'forbidden' });
                 if (!valid(body) || body.env !== who.env) return send(400, { error: 'invalid' });
                 const k = key(body), existing = index.get(k);
-                if (existing) {
-                    if (existing.mac === body.mac) return send(200, { status: 'duplicate' });
+                if (existing && existing.mac === body.mac) return send(200, { status: 'duplicate' });
+                const head = heads.get(headKey(body));
+                const successor = !existing && body.seq === (head ? head.seq + 1 : 1) && body.prevMac === (head ? head.mac : GENESIS);
+                if (!successor) {
+                    // Reenvío del mismo rechazo: se responde igual sin volver a escribirlo.
+                    if (seen.has(k + '|' + body.mac)) return send(409, { status: 'conflict' });
                     chain = createHash('sha256').update(chain + JSON.stringify(body)).digest('hex');
-                    const line = { type: 'conflict', receivedAt: new Date().toISOString(), chain, existingMac: existing.mac, rec: body };
-                    append(anchorsFile, line); conflicts.push(line);
+                    const line = existing
+                        ? { type: 'conflict', receivedAt: new Date().toISOString(), chain, existingMac: existing.mac, rec: body }
+                        : { type: 'conflict', reason: 'NOT_SUCCESSOR', receivedAt: new Date().toISOString(), chain, headSeq: head ? head.seq : 0, headMac: head ? head.mac : GENESIS, rec: body };
+                    append(anchorsFile, line); conflicts.push(line); seen.add(k + '|' + body.mac);
                     return send(409, { status: 'conflict' });
                 }
                 chain = createHash('sha256').update(chain + JSON.stringify(body)).digest('hex');
                 const line = { type: 'anchor', receivedAt: new Date().toISOString(), chain, rec: body };
-                append(anchorsFile, line); anchors.push(line); index.set(k, body);
+                append(anchorsFile, line); anchors.push(line); accept(body);
                 return send(201, { status: 'recorded', receivedAt: line.receivedAt });
             }
             if (who.role !== 'support') return send(403, { error: 'forbidden' });
