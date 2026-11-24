@@ -74,7 +74,8 @@ jobs:
             --username "$REGISTRY_USERNAME" --password-stdin "$registry"
           unset REGISTRY_PASSWORD
 
-          docker buildx build --platform linux/amd64 --provenance=false \
+          builder="$(docker buildx create --driver docker-container)"
+          docker buildx build --builder "$builder" --platform linux/amd64 --provenance=false \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag "$image:$tag" --output "type=docker,dest=$DOCKER_CONFIG/image.tar" .
           skopeo copy --dest-authfile /work/auth.json --image-parallel-copies 2 \
