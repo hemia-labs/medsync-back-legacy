@@ -41,10 +41,13 @@ function importXlsxRelease(buffer, meta) {
     const family = getFamily(meta.family);
     if (!family || !family.source) fail(`La familia ${meta.family} no tiene lector configurado.`);
     const cfg = family.source;
+    const sourceSha256 = sha256(buffer);
+    const reviewedHeaders = cfg.reviewedHeaders?.[sourceSha256];
+    const reviewedVariant = cfg.reviewedVariants?.[sourceSha256];
     const rows = sheetRows(buffer, cfg.sheet);
     const { index } = headerIndex(rows, cfg.headerRow);
     const codeAt = index(cfg.code), labelAt = index(cfg.label);
-    const attrAt = cfg.attributes.map(name => [name, index(name)]);
+    const attrAt = cfg.attributes.map(name => [name, index(reviewedHeaders?.[name] ?? name)]);
     const issues = [];
     const entries = [];
     let numericCells = 0;
@@ -55,7 +58,20 @@ function importXlsxRelease(buffer, meta) {
         if (numericCell) numericCells++;
         const attributes = {};
         for (const [name, i] of attrAt) attributes[name] = row[i] ? row[i].value.trim() : '';
-        entries.push({ code, label: row[labelAt] ? row[labelAt].value.trim() : '', attributes });
+        const label = row[labelAt]?.value.trim() || '';
+        if (meta.family === 'sis.referral_service') {
+            if (!label) fail(`Especialidad sin nombre en la fila ${r + 1}.`);
+            for (const profile of ['REF CE', 'REF SB']) {
+                if (attributes[profile] !== '' && attributes[profile] !== 'X') fail(`Marca inválida para ${profile} en la fila ${r + 1}.`);
+            }
+        }
+        if (reviewedVariant && r + 1 === reviewedVariant.variantRow) {
+            const primary = entries.find(entry => entry.code === reviewedVariant.code);
+            if (!primary || code !== reviewedVariant.code) fail('La variante no coincide con la clave revisada.');
+            primary.attributes[reviewedVariant.attribute] = JSON.stringify({ label, ...attributes });
+            continue;
+        }
+        entries.push({ code, label, attributes });
     }
     if (numericCells) issues.push({ code: 'NUMERIC_CODE_CELLS', count: numericCells, message: 'Códigos guardados como número en el Excel; se conservan como texto literal sin rellenar ceros.' });
 
@@ -66,13 +82,23 @@ function importXlsxRelease(buffer, meta) {
         const header = relRows[rel.headerRow].map(c => c.value.trim());
         const rightAt = header.indexOf(rel.rightCode);
         if (rightAt < 0) fail('Columna de relación ausente: ' + rel.rightCode);
-        const leftColumns = header.map((h, i) => [i, (h.match(/^(\d+)\s*[.-]/) || [])[1]]).filter(([, code]) => code);
-        if (!leftColumns.length) fail('No se encontraron columnas de tipo de personal en la hoja de relación.');
+        const personnelByColumn = header.map(h => /^(\d+)\s*[.\-–—]/u.exec(h)?.[1]);
+        if (!personnelByColumn.some(Boolean)) fail('No se encontraron columnas de tipo de personal en la hoja de relación.');
         for (let r = rel.headerRow + 1; r < relRows.length; r++) {
             const row = relRows[r];
-            if (!row[rightAt] || !row[rightAt].value.trim()) continue;
-            const right = row[rightAt].value.trim();
-            for (const [i, left] of leftColumns) if (row[i] && row[i].value.trim().toUpperCase() === 'X') relations.push({ left, right });
+            const right = row[rightAt]?.value.trim();
+            row.forEach((cell, column) => {
+                if (column === rightAt || header[column] === 'SERVICIOS_ATENCION') return;
+                const mark = cell.value.trim().toUpperCase();
+                if (!mark) return;
+                const left = personnelByColumn[column];
+                if (mark === 'X') {
+                    if (!left || !right) fail(`Marca X sin tipo de personal o servicio en fila ${r + 1}, columna ${column + 1}.`);
+                    relations.push({ left, right });
+                } else if (left) {
+                    fail(`Marca desconocida en la matriz, fila ${r + 1}, columna ${column + 1}.`);
+                }
+            });
         }
     }
     const manifest = {
@@ -80,13 +106,15 @@ function importXlsxRelease(buffer, meta) {
         encoding: 'xlsx/utf-8',
         columnMapping: {
             sheet: cfg.sheet, code: cfg.code, label: cfg.label, attributes: cfg.attributes,
+            ...(reviewedHeaders && { reviewedHeaders }),
+            ...(reviewedVariant && { reviewedVariant }),
             relationSheet: family.relation ? family.relation.sheet : null,
             relationLeftFamily: family.relation ? family.relation.leftFamily : null
         },
         status: 'staged',
         verifiedAt: null,
         ...meta,
-        sha256: sha256(buffer)
+        sha256: sourceSha256
     };
     if (manifest.status !== 'staged' || manifest.verifiedAt !== null) fail('Un import siempre produce un release staged; la verificación es un paso aparte.');
     return { release: buildRelease(manifest, entries, { relations, sourceBuffer: buffer }), issues };

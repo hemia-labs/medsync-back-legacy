@@ -1,0 +1,94 @@
+{
+  "sourcePage": "https://gobi.salud.gob.mx/",
+  "validityBasis": "download_date",
+  "timeZone": "America/Mexico_City",
+  "sources": [
+    {
+      "family": "sis.personnel_type",
+      "sourceVersion": "TIPO_PERSONAL-SIS_202611.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/TIPO_PERSONAL-SIS_202611.xlsx?v=2026.11.20",
+      "sha256": "ae39460931f77c048f56b28093e296348be08ea087458016d6a822799ffc662a",
+      "downloadedAt": "2026-11-25T05:39:54.898Z",
+      "bytes": 11792,
+      "releaseId": "sis.personnel_type-20261124",
+      "validFrom": "2026-11-24",
+      "entries": 40,
+      "relations": 0,
+      "contentSha256": "ca86c4565da1614af44899bad6476b43fc062a460235b1dfcb030d932290feea",
+      "warnings": [
+        [
+          "NUMERIC_CODE_CELLS",
+          40
+        ]
+      ]
+    },
+    {
+      "family": "sis.diagnosis",
+      "sourceVersion": "DIAGNOSTICOS_SIS_20260615.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/DIAGNOSTICOS_SIS_20260615.xlsx?v=2026.11.20",
+      "sha256": "ec0e014f6026d2bf8895beaa4fe6a1f1d2ea55ee364112f0a560924fbfacd69e",
+      "downloadedAt": "2026-11-25T05:39:55.798Z",
+      "bytes": 1365986,
+      "releaseId": "sis.diagnosis-20261124",
+      "validFrom": "2026-11-24",
+      "entries": 9332,
+      "relations": 0,
+      "contentSha256": "3fd0f88ed3cc8b5a63b9e20c700ad8b3c336c6e0c18d07a2f2a68d68557953fd",
+      "warnings": []
+    },
+    {
+      "family": "sis.personnel_service_ce",
+      "sourceVersion": "SERVICIOS_ATENCION_POR_TIPO_PERSONAL_SIS-CE_202611.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/SERVICIOS_ATENCION_POR_TIPO_PERSONAL_SIS-CE_202611.xlsx?v=2026.11.20",
+      "sha256": "077c93df5b4b1ddc317ec51abc8b6ee6d92602f514cf28d4da5c9890f4e1e0bb",
+      "downloadedAt": "2026-11-25T05:39:55.873Z",
+      "bytes": 22611,
+      "releaseId": "sis.personnel_service_ce-20261124",
+      "validFrom": "2026-11-24",
+      "entries": 75,
+      "relations": 254,
+      "contentSha256": "0ff4b026ff357b548b2708ee8e4bd39ffeb81ef622747928266fef3b8d6c12ca",
+      "warnings": [
+        [
+          "NUMERIC_CODE_CELLS",
+          72
+        ]
+      ]
+    },
+    {
+      "family": "sis.personnel_service_sb",
+      "sourceVersion": "SERVICIOS_ATENCION_POR_TIPO_PERSONAL_SIS-SB_202611.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/SERVICIOS_ATENCION_POR_TIPO_PERSONAL_SIS-SB_202611.xlsx?v=2026.11.20",
+      "sha256": "b8acb72909361a08a127406a35491c2c8e5b08a26fd4d63e2515e98c52dd2b4c",
+      "downloadedAt": "2026-11-25T05:39:55.913Z",
+      "bytes": 18101,
+      "releaseId": "sis.personnel_service_sb-20261124",
+      "validFrom": "2026-11-24",
+      "entries": 75,
+      "relations": 10,
+      "contentSha256": "3b982434a4de5ba4553e2bbc80965890ff8e782e4f1d457555c03d2ce475f40e",
+      "warnings": [
+        [
+          "NUMERIC_CODE_CELLS",
+          72
+        ]
+      ]
+    },
+    {
+      "family": "sis.referral_service",
+      "sourceVersion": "SERVICIO_DE_ATENCION_POR_REFERENCIA_202611.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/SERVICIO_DE_ATENCION_POR_REFERENCIA_202611.xlsx?v=2026.11.20",
+      "sha256": "6565e97e499435cad6d0f35f79aca25ee4b49491c17ddd3203c32a11cde9c84c",
+      "downloadedAt": "2026-11-25T05:53:31.649Z",
+      "bytes": 14095,
+      "releaseId": "sis.referral_service-20261124",
+      "validFrom": "2026-11-24",
+      "sourceRows": 62,
+      "entries": 61,
+      "relations": 0,
+      "eligibleByProfile": { "REF CE": 60, "REF SB": 33 },
+      "contentSha256": "5405908b2aa5d1ac76fc36ed05756be12c15343321d377a4dc304c4f10a79277",
+      "warnings": [["NUMERIC_CODE_CELLS", 60]]
+    }
+  ]
+}

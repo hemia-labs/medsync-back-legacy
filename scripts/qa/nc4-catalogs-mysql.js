@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const mysql = require('mysql2/promise');
 const migration = require('../migrations/nc4-catalogs');
 const { buildRelease } = require('../../src/domain/sisCatalog/release');
+const { installRelease } = require('../../src/domain/sisCatalog/installRelease');
 
 if (process.env.NC4_QA_ISOLATED !== '1' || !process.env.NC4_QA_PORT) {
     console.error('Solo en MySQL aislado: defina NC4_QA_ISOLATED=1 y NC4_QA_PORT (use nc4-catalogs.docker.sh).');
@@ -133,14 +134,20 @@ async function main() {
     const service = buildRelease(manifest({ releaseId: 'qa-sb-1', family: 'sis.personnel_service_sb', sourceCatalogName: 'SIS-SB', sha256: '1'.repeat(64),
         columnMapping: { sheet: 0, relationLeftFamily: 'sis.personnel_type' } }), [{ code: '10', label: 'ODONTOLOGÍA' }, { code: '12', label: 'ODONTOPEDIATRÍA' }],
     { relations: [{ left: '13', right: '10' }, { left: '14', right: '12' }] });
-    await step('relaciones: carga staged, verificación y bloqueo posterior', async () => {
-        await insertRelease(conn, service);
-        await conn.query(verified, ['qa-sb-1']);
+    await step('relaciones: el importador conserva familia y códigos en instalación y reintento', async () => {
+        const options = { verify: true, sourceSha256: service.manifest.sha256 };
+        const installed = await installRelease(conn, service, options);
+        assert.equal(installed.status, 'verified');
+        assert.equal(installed.alreadyApplied, false);
+        const repeated = await installRelease(conn, service, options);
+        assert.equal(repeated.alreadyApplied, true);
         await rejects(conn, "INSERT INTO sis_catalog_relation VALUES ('sis.personnel_service_sb','qa-sb-1','sis.personnel_type','13','12')", [], /staged/);
         await rejects(conn, "UPDATE sis_catalog_relation SET left_code='12' WHERE release_id='qa-sb-1'", [], /inmutable/);
         await rejects(conn, "DELETE FROM sis_catalog_relation WHERE release_id='qa-sb-1'", [], /inmutable/);
-        const [rows] = await conn.query("SELECT left_code, right_code FROM sis_catalog_relation WHERE release_id='qa-sb-1' ORDER BY left_code");
-        assert.deepEqual(rows.map(r => [r.left_code, r.right_code]), [['13', '10'], ['14', '12']]);
+        const [rows] = await conn.query("SELECT left_family, left_code, right_code FROM sis_catalog_relation WHERE release_id='qa-sb-1' ORDER BY left_code");
+        assert.deepEqual(rows.map(r => [r.left_family, r.left_code, r.right_code]), [
+            ['sis.personnel_type', '13', '10'], ['sis.personnel_type', '14', '12']
+        ]);
     });
     await step('verified → retired conserva verified_at y sigue resoluble', async () => {
         await conn.query("UPDATE sis_catalog_release SET status='retired' WHERE release_id='qa-sb-1'");
