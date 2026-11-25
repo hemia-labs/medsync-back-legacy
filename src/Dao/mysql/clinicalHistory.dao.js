@@ -292,7 +292,10 @@ class ClinicalHistoryDao {
 
     // Lectura clínica (NC2): el evento VIEWED queda en la bitácora o, si ésta falla, en el respaldo durable del servidor antes de
     // entregar el contenido. Si ambos fallan se lanza el error y la lectura se bloquea.
+    // Dentro de una transacción (respuesta interna de guardar, finalizar o cancelar) el evento sigue a esa transacción: si se
+    // revierte, no queda acceso registrado ni respaldo fuera de ella.
     recordView(history, body, context, transaction = null) {
+        if (transaction) return this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context }, transaction);
         return accessAudit.record('clinical_history_view', {
             actor: body.id_login, business: body.id_business, resource: history.id_clinical_history, patient: history.patient_id, context
         }, transaction);
@@ -524,19 +527,18 @@ class ClinicalHistoryDao {
             );
 
             const history = rows[0] || null;
-            if (history) {
-                await this.recordView(history, body, 'patient_latest');
-            }
-
             const consent = await this.getSensitiveConsent(body.patient_id, body.id_business);
-            return responseData.success({
+            const data = {
                 patient,
                 history: this.hydrate(history, await PatientAllergyDao.getCurrent(history ? history.patient_id : body.patient_id, body.id_business)),
                 consent_status: consent.status,
                 consent_token: consent.token,
                 has_later_signed_consent: consent.hasLaterSignedConsent,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
-            }, Messages.DATA_GET_SUCCESSFULLY);
+            };
+            // El acceso se registra con el contenido ya preparado: si la preparación falla, no queda un acceso que no se entregó.
+            if (history) await this.recordView(history, body, 'patient_latest');
+            return responseData.success(data, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
@@ -633,7 +635,6 @@ class ClinicalHistoryDao {
                 return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
-            await this.recordView(history, body, 'detail', transaction);
             const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
             const isDraft = history.status === STATUS.DRAFT;
             const business = await this.getBusiness(body.id_business, transaction, isDraft);
@@ -641,7 +642,7 @@ class ClinicalHistoryDao {
             const doctor = await this.getDoctorForHistory(history, transaction);
             const linkedConsent = await this.getConsentDocumentById(history.consent_document_id, body.id_business, history.patient_id, transaction);
 
-            return responseData.success({
+            const data = {
                 patient,
                 business,
                 document_logo: logo,
@@ -653,7 +654,10 @@ class ClinicalHistoryDao {
                 consent_token: consent.token,
                 has_later_signed_consent: consent.hasLaterSignedConsent,
                 consent_document_id: consent.document ? consent.document.id_patient_document : null
-            }, Messages.DATA_GET_SUCCESSFULLY);
+            };
+            // Contenido preparado antes de registrar el acceso que se va a devolver.
+            await this.recordView(history, body, 'detail', transaction);
+            return responseData.success(data, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
             return SequelizeException(error, Messages.DATA_GET_ERROR);
         }
