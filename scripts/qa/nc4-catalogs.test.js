@@ -102,14 +102,40 @@ test('CatalogRef: código string exacto, ceros iniciales y forma estricta (CR-1)
     assert.equal(classifyRef({ family: 'sis.federal_entity', releaseId: 'r1', code: 'X'.repeat(LIMITS.code + 1) }).kind, 'invalid');
 });
 
-test('familias v1.1: diez del contrato, cinco aceptadas sin lector y literal ESTABLECIMIENTO_DE_SALUD_SIS', () => {
+test('familias v1.1: diez del contrato, cinco aceptadas y literal ESTABLECIMIENTO_DE_SALUD_SIS', () => {
     assert.equal(contractFamilies().length, 10);
     assert.deepEqual(acceptedFamilies().sort(), ['inegi.locality', 'inegi.municipality', 'inegi.state', 'renapo.nationality', 'sepomex.postal_code']);
-    for (const key of acceptedFamilies()) assert.equal(readerAvailable(key), false, key);
+    assert.equal(readerAvailable('renapo.nationality'), true);
     assert.equal(readerAvailable('sis.establishments'), true);
     assert.equal(FAMILIES['sis.establishments'].sourceCatalogName, 'ESTABLECIMIENTO_DE_SALUD_SIS');
     assert.notEqual(FAMILIES['renapo.nationality'].sourceCatalogName, FAMILIES['sis.country'].sourceCatalogName);
     assert.throws(() => importXlsxRelease(sbBook(), sbMeta({ family: 'renapo.nationality' })), /no tiene lector/);
+});
+
+const { importRenapoNationality } = require('../../src/domain/sisCatalog/renapoImporter');
+const renapoTsv = fs.readFileSync(path.join(__dirname, '../nc4/data/renapo-nacionalidad-2021.tsv'));
+const renapoMeta = { releaseId: 'renapo-test', downloadedAt: '2026-11-25T02:15:00Z' };
+
+test('RENAPO: la transcripción conserva su huella y un PDF distinto se rechaza', () => {
+    assert.equal(sha256(renapoTsv), '8fe5d27e874e5447e7d8f1114089e1814a81a10fff11da4c236cfff9e70d8c06');
+    assert.throws(() => importRenapoNationality(Buffer.from('otro PDF'), renapoTsv, renapoMeta), /PDF de RENAPO/);
+});
+
+test('RENAPO: la edición revisada conserva las claves de nacionalidad y exige su transcripción íntegra', {
+    skip: !process.env.NC4_RENAPO_PDF
+}, () => {
+    const pdf = fs.readFileSync(process.env.NC4_RENAPO_PDF);
+    const release = importRenapoNationality(pdf, renapoTsv, renapoMeta);
+    assert.equal(release.entryCount, 258);
+    assert.equal(release.manifest.validFrom, '2026-11-24');
+    assert.equal(release.manifest.status, 'staged');
+    assert.equal(release.get('MEX').label, 'MEXICO');
+    assert.equal(release.get('APT').label, 'APATRIDA');
+    assert.equal(release.get('COG').label, 'CONGO');
+    assert.equal(release.get('COD').label, 'CONGO');
+    assert.equal(release.has('NND'), false);
+    const altered = Buffer.from(renapoTsv.toString('utf8').replace('MEX\tMEXICO', 'APT\tMEXICO'));
+    assert.throws(() => importRenapoNationality(pdf, altered, renapoMeta), /transcripción cotejada/);
 });
 
 // ---------- releases y registro ----------
