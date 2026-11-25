@@ -39,7 +39,7 @@ function headerIndex(rows, headerRow) {
  */
 function importXlsxRelease(buffer, meta) {
     const family = getFamily(meta.family);
-    if (!family || !family.source) fail(`La familia ${meta.family} no tiene lector configurado.`);
+    if (family?.source?.sheet === undefined) fail(`La familia ${meta.family} no tiene lector XLSX configurado.`);
     const cfg = family.source;
     const rows = sheetRows(buffer, cfg.sheet);
     const { index } = headerIndex(rows, cfg.headerRow);

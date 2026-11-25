@@ -1,8 +1,7 @@
 'use strict';
 // NC4/L2: familias de catálogo del contrato NC1 v1.1 §5. Las diez SIS tienen status 'contract'.
-// Las cinco de nacionalidad y geografía (CR-2) tienen status 'accepted' desde v1.1, pero todavía
-// no tienen lector ni fuente descargada: readerAvailable es false y no existe ningún release.
-// `source` describe cómo leer el archivo oficial cotejado el 2026-11-13 (nombres de hoja/columna reales).
+// 'source' describe los campos del archivo oficial. Los lectores geográficos tienen su propio mapeo.
+// Las familias aceptadas se mantienen separadas de los diez catálogos del contrato SIS.
 
 const FAMILIES = Object.freeze({
     'sis.country': {
@@ -54,8 +53,8 @@ const FAMILIES = Object.freeze({
         source: { sheet: 0, headerRow: 0, code: 'CATALOG_KEY', label: 'DESCRIPCION', attributes: [] },
         relation: { sheet: 'POR_PERSONAL_SALUD_BUCAL', headerRow: 1, rightCode: 'CATALOG_KEY', leftFamily: 'sis.personnel_type' }
     },
-    // Aceptadas en v1.1 (NOM-024 Tabla 1 y Apéndice A). Sin lector ni fuente oficial descargada todavía.
-    'renapo.nationality': { status: 'accepted', sourceCatalogName: 'CAT_NACIONALIDAD (Catálogo de Nacionalidades RENAPO)', rector: 'RENAPO', codePattern: /^[A-Z]{3}$/, source: null },
+    // Familias aceptadas en v1.1 (NOM-024 Tabla 1 y Apéndice A).
+    'renapo.nationality': { status: 'accepted', sourceCatalogName: 'CAT_NACIONALIDAD (Catálogo de Nacionalidades RENAPO)', rector: 'RENAPO', codePattern: /^[A-Z]{3}$/, source: { format: 'pdf', code: 'Clave País', label: 'Nombre del País' } },
     'inegi.state': { status: 'accepted', sourceCatalogName: 'CAT_ENTIDADES (INEGI)', rector: 'INEGI', codePattern: /^\d{2}$/, source: null },
     'inegi.municipality': { status: 'accepted', sourceCatalogName: 'CAT_MUNICIPIOS (INEGI); código compuesto EE+MMM', rector: 'INEGI', codePattern: /^\d{5}$/, source: null },
     'inegi.locality': { status: 'accepted', sourceCatalogName: 'CAT_LOCALIDADES (INEGI); código compuesto EE+MMM+LLLL', rector: 'INEGI', codePattern: /^\d{9}$/, source: null },
