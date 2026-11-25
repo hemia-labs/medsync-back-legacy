@@ -311,7 +311,9 @@ class PrescriptionDao {
         }
     }
 
-    async getById(body) {
+    // audit: lectura solicitada por el usuario (GET /prescription/:id). Las respuestas internas
+    // tras guardar, emitir o cancelar ya quedan registradas por su propia acción.
+    async getById(body, { audit = false } = {}) {
         try {
             const access = await this.getViewAccess(body.id_login);
             if (!access.canViewOwn && !access.canViewAll) {
@@ -329,6 +331,16 @@ class PrescriptionDao {
 
             const items = await this.getItems(body.id_prescription, body.id_business);
             prescription.items = items;
+            // Igual que la historia clínica: sin evidencia de la consulta no se entrega la receta.
+            if (audit) await this.audit({
+                id_business: body.id_business,
+                id_prescription: body.id_prescription,
+                id_user: body.id_login,
+                action: 'viewed',
+                previous_status: prescription.status,
+                new_status: prescription.status,
+                metadata: { context: 'detail' }
+            });
 
             return responseData.success(prescription, Messages.DATA_GET_SUCCESSFULLY);
         } catch (error) {
