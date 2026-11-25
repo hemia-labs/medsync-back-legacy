@@ -416,7 +416,15 @@ async function main() {
             const files = fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
             assert.equal(files.length, 1);
             const event = JSON.parse(fs.readFileSync(path.join(dir, 'pending', files[0]), 'utf8'));
-            fs.unlinkSync(path.join(dir, 'alerts')); // el directorio de avisos vuelve a estar disponible
+            const rowsFor = async () => Number((await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log = ?', [event.id]))[0][0].n);
+            // Orden reproducido por Codex: vuelve MySQL, el directorio de avisos sigue caído y el webhook falla. El mismo trabajador
+            // vacía: el aviso sólo existe en memoria, así que la evidencia del acceso no puede retirarse.
+            const stuck = await captureErrors(() => spoolModule().shared().drain().catch(error => ({ error: error.code || error.message })));
+            assert.equal(await rowsFor(), 0, 'sin aviso durable no se retira la evidencia (fila insertada antes de tiempo)');
+            assert.equal(fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json')).length, 1, 'el archivo del acceso sigue en disco');
+            assert.ok(stuck.logged.some(l => l.startsWith('NC2_ACCESS_AUDIT_ALERT_QUEUE_FAILED')), 'aviso no durable comunicado');
+            // Se recupera el directorio y el trabajador reinicia (otro proceso, sólo el disco); el primer envío vuelve a fallar.
+            fs.unlinkSync(path.join(dir, 'alerts'));
             const first = drainInChildProcess({ dir, alertOk: false });
             assert.equal(first.inserted, 1, 'fila recuperada');
             let outbox = readOutbox(dir);
@@ -428,10 +436,45 @@ async function main() {
             outbox = readOutbox(dir);
             assert.equal(outbox.length, 1); assert.equal(outbox[0].delivered, true);
             assert.deepEqual(outbox[0].attempts.map(a => a.ok), [false, true]);
-            const [rows] = await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log = ?', [event.id]);
-            assert.equal(Number(rows[0].n), 1);
-            return { fila: 1, aviso: { id: outbox[0].id, ciclo: outbox[0].cycle, intentos: outbox[0].attempts.map(a => a.ok) }, segundoVaciado: second };
+            assert.equal(await rowsFor(), 1);
+            return { mismoTrabajador: stuck.value, fila: 1, aviso: { id: outbox[0].id, ciclo: outbox[0].cycle, intentos: outbox[0].attempts.map(a => a.ok) }, segundoVaciado: second };
         } finally { hook.fail = false; spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+    await step('Q5b', 'Escritura parcial del archivo de avisos: no retira la evidencia; el mismo trabajador reintenta la entrada en memoria y queda una fila y un aviso aceptado para ese ciclo', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q5b-')), previous = spoolModule().shared();
+        const worker = spoolModule().install(spoolModule().createAccessAuditSpool({ dir }));
+        const realWrite = fs.writeSync;
+        let partialWrites = 0;
+        hook.fail = true;
+        try {
+            // El sistema de archivos acepta sólo 12 bytes de cada escritura del archivo de avisos (sin error).
+            fs.writeSync = function (fd, buf) {
+                if (typeof buf === 'string' && buf.includes('"ACCESS_AUDIT_SPOOLED"')) { partialWrites++; return realWrite.call(fs, fd, buf.slice(0, 12)); }
+                return realWrite.apply(fs, arguments);
+            };
+            let event;
+            try {
+                const r = await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
+                assert.equal(r.status, 200);
+                const [name] = fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
+                event = JSON.parse(fs.readFileSync(path.join(dir, 'pending', name), 'utf8'));
+                await captureErrors(() => worker.drain().catch(error => ({ error: error.code || error.message }))); // MySQL ya está sano
+            } finally { fs.writeSync = realWrite; }
+            assert.ok(partialWrites >= 1, 'se simuló la escritura parcial');
+            assert.deepEqual(readOutbox(dir), [], 'archivo de avisos truncado en disco');
+            const rowsFor = async () => Number((await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log = ?', [event.id]))[0][0].n);
+            assert.equal(await rowsFor(), 0, 'con el aviso truncado no se retira la evidencia');
+            hook.fail = false;
+            await wait(900);
+            const retried = await worker.drain(); // el mismo trabajador, sin reiniciar
+            assert.equal(retried.inserted, 1); assert.equal(await rowsFor(), 1);
+            const restarted = spoolModule().createAccessAuditSpool({ dir }).outages(); // reinicio: sólo el disco
+            assert.equal(restarted.length, 1);
+            assert.deepEqual([restarted[0].cycle, restarted[0].delivered, restarted[0].incident.table], [1, true, 'prescription_audit_log']);
+            const accepted = hook.received.filter(a => a.id === restarted[0].id);
+            assert.deepEqual(accepted.map(a => a.cycle), [1], 'un aviso aceptado para ese ciclo');
+            return { escriturasParciales: partialWrites, fila: 1, aviso: { id: restarted[0].id, ciclo: 1, intentos: restarted[0].attempts.map(a => a.ok) } };
+        } finally { fs.writeSync = realWrite; hook.fail = false; spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
     });
     await step('Q6', 'Hallazgo 3: la lectura interna dentro de una transacción revertida no deja acceso ni respaldo; el GET independiente sigue usando el respaldo y prepara el contenido antes de registrar', async () => {
         const sequelize = require('../../src/db/Sequelize.connection');
