@@ -1,17 +1,22 @@
 # NC1 catalogs / NC4 versioned sources
 
-This batch connects identity to the existing NC4 tables. It does not add DDL, import on startup, contact a source during a clinical request, or transmit to DGIS. All downloads and database tests for this delivery were local. Test and production catalogs were not changed.
+This batch connects identity to the existing NC4 tables. It does not add DDL, import on startup, contact a source during a clinical request, or transmit to DGIS. The initial review on 2026-11-17 used local downloads and database tests. Subsequent Alameda TEST results for RENAPO and SEPOMEX appear below.
 
-## Reviewed sources
+## Sources reviewed on 2026-11-17
 
 `sources-reviewed-20261117.json` contains URLs, raw-file SHA-256, source labels, download timestamps, CSV members, mappings, entry counts and staged content hashes. It contains no catalog entries or patient data. Keep original downloads and staged bundles outside the repository in controlled storage; never bundle them into the application image.
 
 - SIS: country (225), birth federal entity (35, including excluded sentinels), affiliations (13), personnel types (30), operating SIS establishments (15,358). Numeric Excel codes remain literal strings; no invented zero padding. Personnel codes 31–34 were absent in the published source and are not invented.
 - INEGI: states (32), municipalities (2,478), localities without bajas (296,643). Preserve 2/5/9 characters. Every municipality and locality in the reviewed files has its parent. Birth entity remains SIS, residence remains INEGI.
 - SEPOMEX: 31,862 distinct postal codes were parsed and exercised privately. The downloaded file contains restrictions on commercial use/redistribution: **do not install this dataset in a shared environment or distribute it until reuse conditions are resolved**. The generic reader and manual/unverified fallback are ready.
-- RENAPO nationality: no verifiable official download located. Do not replace it with ISO or the country catalog. It remains unavailable/unverified.
+- RENAPO nationality was unavailable at this initial review.
 
 INEGI uses the downloaded member name as `sourceVersion` and `download_date` as the effective boundary (America/Mexico_City). This is not an invented publication/effectivity date. Review any new download again: these URLs are mutable.
+
+## Alameda TEST update on 2026-11-25
+
+- **RENAPO nationality.** Alameda TEST has 258 verified nationality codes in release `renapo.nationality-20261125`. The source is Annex 05, pages 164–168 of the CURP rules dated 2021-12-17. To reproduce the release, download the PDF from the official page and run `node scripts/nc4/stage-renapo.js --help` for the staging command. The reader checks the PDF and the reviewed UTF-8 transcription by SHA-256. [Official RENAPO publication](https://www.gob.mx/segob%7Crenapo/documentos/reglas-para-la-ejecucion-de-los-procedimientos-para-la-asignacion-de-la-clave-unica-de-registro-de-poblacion) · [Staging CLI](../../scripts/nc4/stage-renapo.js) · [Reviewed transcription](../../scripts/nc4/data/renapo-nacionalidad-2021.tsv)
+- **SEPOMEX postal codes.** The 2026-11-23 edition yielded 31,860 distinct codes in private validation. Shared installation remains pending the resolution of the source's reuse conditions. Manual, unverified capture remains available in Alameda TEST.
 
 ## API and stored references
 
