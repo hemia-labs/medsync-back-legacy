@@ -6,6 +6,7 @@ const { listPage, pageWindow, pageData } = require('../../util/listPage');
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
+const accessAudit = require('../../services/accessAuditSpool');
 const responseData = require('../../util/responsedata');
 // STG-UX4-ARCH1: an archived patient still belongs to the clinic. Reads keep working;
 // writes answer 409. Neither case is an authentication failure (401 ends the client session).
@@ -331,15 +332,11 @@ class PrescriptionDao {
 
             const items = await this.getItems(body.id_prescription, body.id_business);
             prescription.items = items;
-            // Igual que la historia clínica: sin evidencia de la consulta no se entrega la receta.
-            if (audit) await this.audit({
-                id_business: body.id_business,
-                id_prescription: body.id_prescription,
-                id_user: body.id_login,
-                action: 'viewed',
-                previous_status: prescription.status,
-                new_status: prescription.status,
-                metadata: { context: 'detail' }
+            // Sin evidencia de la consulta no se entrega la receta: el evento queda en la bitácora o, si ésta falla, en el
+            // respaldo durable del servidor (NC2, cola con alerta). Si ambos fallan, se lanza el error y la lectura se bloquea.
+            if (audit) await accessAudit.record('prescription_view', {
+                actor: body.id_login, business: body.id_business, resource: body.id_prescription,
+                status: prescription.status, context: 'detail'
             });
 
             return responseData.success(prescription, Messages.DATA_GET_SUCCESSFULLY);

@@ -5,6 +5,7 @@ const { canReadClinicalHistory } = require('../../domain/clinicalHistory/access'
 const { QueryTypes } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const sequelize = require('../../db/Sequelize.connection');
+const accessAudit = require('../../services/accessAuditSpool');
 const responseData = require('../../util/responsedata');
 const Messages = require('../../util/common.messages.util');
 const { SequelizeException } = require('../../util/sequelizeException');
@@ -289,6 +290,14 @@ class ClinicalHistoryDao {
         return sensitiveConsent.load(patientId, businessId, transaction);
     }
 
+    // Lectura clínica (NC2): el evento VIEWED queda en la bitácora o, si ésta falla, en el respaldo durable del servidor antes de
+    // entregar el contenido. Si ambos fallan se lanza el error y la lectura se bloquea.
+    recordView(history, body, context, transaction = null) {
+        return accessAudit.record('clinical_history_view', {
+            actor: body.id_login, business: body.id_business, resource: history.id_clinical_history, patient: history.patient_id, context
+        }, transaction);
+    }
+
     async addEvent(historyId, businessId, patientId, userId, eventType, metadata = null, transaction = null) {
         await sequelize.query(
             `INSERT INTO clinical_history_events (
@@ -516,7 +525,7 @@ class ClinicalHistoryDao {
 
             const history = rows[0] || null;
             if (history) {
-                await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context: 'patient_latest' });
+                await this.recordView(history, body, 'patient_latest');
             }
 
             const consent = await this.getSensitiveConsent(body.patient_id, body.id_business);
@@ -624,7 +633,7 @@ class ClinicalHistoryDao {
                 return responseData.forbidden('Paciente no disponible para esta operacion en el consultorio.');
             }
 
-            await this.addEvent(history.id_clinical_history, body.id_business, history.patient_id, body.id_login, EVENT.VIEWED, { context: 'detail' }, transaction);
+            await this.recordView(history, body, 'detail', transaction);
             const consent = await this.getSensitiveConsent(history.patient_id, body.id_business, transaction);
             const isDraft = history.status === STATUS.DRAFT;
             const business = await this.getBusiness(body.id_business, transaction, isDraft);

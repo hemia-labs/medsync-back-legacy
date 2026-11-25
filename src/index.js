@@ -152,6 +152,8 @@ const server = app.listen(app.get('port'), () => {
     startSaasTrialLifecycleJob();
     startBusinessPulseJob();
     startEvolutionIntegrityReconciler();
+    // NC2: vacía hacia MySQL las lecturas clínicas respaldadas en disco durante una falla de la bitácora y avisa a Soporte.
+    require('./services/accessAuditSpool').shared().start(Number(process.env.ACCESS_AUDIT_DRAIN_MS) || 30000);
     require('./services/registration/legalRegistration.service').startLegalEvidenceJob(Sequelize);
     require('./services/registration/registrationWelcome.service').startRegistrationWelcomeJob(Sequelize);
     require('./services/payments/contractWelcome.service').startContractWelcomeJob(Sequelize);

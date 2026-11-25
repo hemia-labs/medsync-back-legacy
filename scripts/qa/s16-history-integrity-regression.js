@@ -53,6 +53,7 @@ dao.getDoctorProfile = async (business, id) => profiles[id] ? clone(profiles[id]
 dao.getConsentDocumentById = async () => null;
 dao.getSensitiveConsent = async () => ({ status: signed ? 'FIRMADO' : 'PENDIENTE_FIRMA', signedDocument: signed ? { id_patient_document: 'consent' } : null, refusalDocument: refused ? { id_patient_document: 'refusal' } : null });
 dao.addEvent = async () => {};
+dao.recordView = async () => {}; // NC2: la lectura registra su evento por recordView (bitácora o respaldo durable), fuera del alcance de S16.
 dao.validateRequiredFieldsFromTemplate = () => ({ ok: true });
 allergy.lockPatient = async () => !archived;
 allergy.getCurrent = async () => ({ review_status: 'NONE_KNOWN', revision: 1 });
