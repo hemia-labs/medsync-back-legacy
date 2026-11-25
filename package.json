@@ -39,7 +39,8 @@
     "qa:nc3-c22": "bash scripts/qa/nc3-c22.docker.sh",
     "nc3:witness": "node scripts/ops/nc3-witness-server.js",
     "nc3:incident": "node scripts/ops/nc3-incident.js",
-    "qa:nc2-access-mysql": "bash scripts/qa/nc2-access-traceability.docker.sh"
+    "qa:nc2-access-mysql": "bash scripts/qa/nc2-access-traceability.docker.sh",
+    "qa:nc2-receiver-contract": "node scripts/qa/nc2-support-receiver-contract.js"
   },
   "engines": {
     "node": ">=22.12 <23"

@@ -21,7 +21,7 @@ const os = require('node:os');
 const http = require('node:http');
 const { execFileSync } = require('node:child_process');
 const SPOOL = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-access-spool-'));
-Object.assign(process.env, { ACCESS_AUDIT_SPOOL_DIR: SPOOL, ACCESS_AUDIT_ENV: 'nc2-qa', ACCESS_AUDIT_ALERT_BACKOFF_MS: '200' });
+Object.assign(process.env, { ACCESS_AUDIT_SPOOL_DIR: SPOOL, ACCESS_AUDIT_ENV: 'nc2-qa', ACCESS_AUDIT_ALERT_BACKOFF_MS: '200', ACCESS_AUDIT_START_RETRY_MS: '300' });
 const hook = { fail: false, received: [] };
 const hookServer = http.createServer((req, res) => {
     let body = ''; req.on('data', c => { body += c; });
@@ -110,10 +110,16 @@ const newSince = before => pendingFiles().filter(f => !before.includes(f));
 const SPOOL_FIELDS = ['actor', 'at', 'business', 'context', 'failure', 'id', 'kind', 'resource', 'v'];
 const wait = ms => new Promise(r => setTimeout(r, ms));
 // Reinicio real: otro proceso de Node, sin memoria compartida, vacía el respaldo leyendo sólo el disco.
-const drainInChildProcess = () => JSON.parse(execFileSync(process.execPath, ['-e',
-    "const s=require('./src/services/accessAuditSpool').createAccessAuditSpool({alert:async()=>({ok:true,channel:'qa'})});" +
+const drainInChildProcess = ({ dir = SPOOL, alertOk = true } = {}) => JSON.parse(execFileSync(process.execPath, ['-e',
+    `const s=require('./src/services/accessAuditSpool').createAccessAuditSpool({alert:async()=>({ok:${alertOk},channel:'qa'})});` +
     "s.drain().then(r=>{process.stdout.write('\\n'+JSON.stringify(r));return require('./src/db/Sequelize.connection').close();})"],
-    { cwd: path.resolve(__dirname, '../..'), env: process.env, encoding: 'utf8' }).trim().split('\n').pop());
+    { cwd: path.resolve(__dirname, '../..'), env: { ...process.env, ACCESS_AUDIT_SPOOL_DIR: dir }, encoding: 'utf8' }).trim().split('\n').pop());
+const readOutbox = dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'alerts', 'outbox.json'), 'utf8')); } catch { return []; } };
+async function captureErrors(fn) {
+    const logged = [], original = console.error;
+    console.error = (...args) => logged.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '));
+    try { return { value: await fn(), logged }; } finally { console.error = original; }
+}
 
 async function main() {
     await setup();
@@ -390,6 +396,150 @@ async function main() {
         const drained = await spoolModule().shared().drain();
         assert.equal(drained.inserted, 1); assert.deepEqual(pendingFiles(), []);
         return out;
+    });
+
+    // 4c. Correcciones de la revisión cruzada de Codex (una prueba dirigida por hallazgo; el contrato del receptor está en
+    // nc2-support-receiver-contract.js).
+    await step('Q5', 'Hallazgo 2: acceso respaldado sin aviso persistido; tras reiniciar con MySQL sano queda una fila y un aviso lógico, aunque el primer envío falle', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q5-')), previous = spoolModule().shared();
+        spoolModule().install(spoolModule().createAccessAuditSpool({ dir }));
+        hook.fail = true;
+        try {
+            fs.writeFileSync(path.join(dir, 'alerts'), 'directorio de avisos indisponible');
+            const recorded = await withEventWritesFailing('prescription_audit_log', async logged => {
+                const r = await call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } });
+                assert.equal(r.status, 200);
+                assert.ok(logged.some(l => l.startsWith('NC2_ACCESS_AUDIT_ALERT_QUEUE_FAILED')), 'falla al persistir el aviso');
+                return r;
+            });
+            assert.equal(recorded.status, 200);
+            const files = fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
+            assert.equal(files.length, 1);
+            const event = JSON.parse(fs.readFileSync(path.join(dir, 'pending', files[0]), 'utf8'));
+            fs.unlinkSync(path.join(dir, 'alerts')); // el directorio de avisos vuelve a estar disponible
+            const first = drainInChildProcess({ dir, alertOk: false });
+            assert.equal(first.inserted, 1, 'fila recuperada');
+            let outbox = readOutbox(dir);
+            assert.equal(outbox.length, 1, 'aviso lógico persistido antes de retirar la evidencia: ' + outbox.length);
+            assert.deepEqual([outbox[0].incident.table, outbox[0].incident.detectedAt, outbox[0].delivered], ['prescription_audit_log', event.at, false]);
+            assert.ok(/^INC-[a-f0-9]{12}$/.test(outbox[0].id));
+            await wait(450);
+            const second = drainInChildProcess({ dir, alertOk: true });
+            outbox = readOutbox(dir);
+            assert.equal(outbox.length, 1); assert.equal(outbox[0].delivered, true);
+            assert.deepEqual(outbox[0].attempts.map(a => a.ok), [false, true]);
+            const [rows] = await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log = ?', [event.id]);
+            assert.equal(Number(rows[0].n), 1);
+            return { fila: 1, aviso: { id: outbox[0].id, ciclo: outbox[0].cycle, intentos: outbox[0].attempts.map(a => a.ok) }, segundoVaciado: second };
+        } finally { hook.fail = false; spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+    await step('Q6', 'Hallazgo 3: la lectura interna dentro de una transacción revertida no deja acceso ni respaldo; el GET independiente sigue usando el respaldo y prepara el contenido antes de registrar', async () => {
+        const sequelize = require('../../src/db/Sequelize.connection');
+        const HistoryDao = require('../../src/Dao/mysql/clinicalHistory.dao');
+        const viewed = () => historyEvents("AND event_type = 'VIEWED' AND clinical_history_id = 'ch-a-v2'");
+        const internal = async () => {
+            const t = await sequelize.transaction();
+            try {
+                await sequelize.query("UPDATE clinical_histories SET version_number = 99 WHERE id_clinical_history = 'ch-a-v2'", { transaction: t });
+                return await HistoryDao.getById({ id_clinical_history: 'ch-a-v2', id_business: A, id_login: 'valeria' }, t);
+            } finally { await t.rollback(); }
+        };
+        const before = pendingFiles(), events = await viewed();
+        const failing = await withEventWritesFailing('clinical_history_events', internal);
+        assert.notEqual(failing.status, 200, 'con la bitácora caída la respuesta interna no se entrega');
+        const healthy = await internal();
+        assert.equal(healthy.status, 200);
+        const [[version]] = await root.query("SELECT version_number FROM clinical_histories WHERE id_clinical_history = 'ch-a-v2'");
+        assert.equal(Number(version.version_number), 2, 'transacción revertida');
+        assert.deepEqual(newSince(before), [], 'sin archivos de respaldo');
+        await spoolModule().shared().drain();
+        assert.equal(await viewed(), events, 'sin VIEWED fuera de la transacción');
+        // Si la preparación del contenido falla, no queda un acceso registrado que no se entregó.
+        const consent = HistoryDao.getSensitiveConsent;
+        HistoryDao.getSensitiveConsent = async () => { throw new Error('NC2 synthetic preparation failure'); };
+        let prepared;
+        try { prepared = await captureErrors(() => call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } })); }
+        finally { HistoryDao.getSensitiveConsent = consent; }
+        assert.notEqual(prepared.value.status, 200); noClinicalText(prepared.value.text);
+        assert.equal(await viewed(), events, 'sin VIEWED cuando la preparación falla');
+        // El GET independiente con la bitácora caída sigue usando el respaldo.
+        const independent = await withEventWritesFailing('clinical_history_events', () => call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } }));
+        assert.equal(independent.status, 200);
+        assert.equal(newSince(before).length, 1);
+        assert.equal((await spoolModule().shared().drain()).inserted, 1);
+        return { internaConBitacoraCaida: failing.status, internaSana: healthy.status, versionTrasRollback: 2, getIndependiente: independent.status };
+    });
+    await step('Q7', 'Hallazgo 4: con el directorio de respaldo inutilizable el arranque no lanza; la API sirve con SQL sano, bloquea con ambos caídos y el vaciado reintenta', async () => {
+        const blocker = path.join(SPOOL, 'q7-not-a-dir'), previous = spoolModule().shared();
+        fs.writeFileSync(blocker, 'x');
+        const broken = spoolModule().install(spoolModule().createAccessAuditSpool({ dir: path.join(blocker, 'spool') }));
+        try {
+            const source = fs.readFileSync(path.resolve(__dirname, '../../src/index.js'), 'utf8');
+            assert.ok(source.includes("require('./services/accessAuditSpool').startWorker("), 'src/index.js arranca con startWorker');
+            let threw = null;
+            const started = await captureErrors(() => { try { return spoolModule().startWorker(60000); } catch (error) { threw = error; return null; } });
+            assert.equal(threw, null, 'el arranque no lanza: ' + (threw && threw.code));
+            assert.equal(started.value, false);
+            assert.ok(started.logged.some(l => l.startsWith('NC2_ACCESS_AUDIT_SPOOL_UNAVAILABLE')), 'indisponibilidad comunicada');
+            const events = await historyEvents("AND event_type = 'VIEWED'");
+            const served = await call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } });
+            assert.equal(served.status, 200); assert.equal(await historyEvents("AND event_type = 'VIEWED'"), events + 1, 'evento en MySQL');
+            const blocked = await withEventWritesFailing('clinical_history_events', () => call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } }));
+            assert.notEqual(blocked.status, 200); noClinicalText(blocked.text);
+            fs.unlinkSync(blocker); // el volumen vuelve a estar disponible
+            await wait(700);
+            assert.equal(broken.running(), true, 'el vaciado arrancó en el reintento');
+            return { arranque: started.value, sqlSano: served.status, ambosCaidos: blocked.status, reintento: 'activo' };
+        } finally { broken.stop(); spoolModule().install(previous); try { fs.rmSync(blocker, { recursive: true, force: true }); } catch { /* ya retirado */ } }
+    });
+    await step('Q8', 'Hallazgo 5: una escritura parcial se completa antes de publicar; si no puede completarse, la lectura se bloquea sin archivo truncado', async () => {
+        const realWrite = fs.writeSync;
+        const isSpool = buf => (typeof buf === 'string' || Buffer.isBuffer(buf)) && String(buf).includes('"kind"');
+        const partial = (fd, buf, off) => (typeof buf === 'string' ? realWrite.call(fs, fd, buf.slice(0, 12)) : realWrite.call(fs, fd, buf, off || 0, 12));
+        const out = {};
+        let calls = 0;
+        // a) El sistema de archivos acepta sólo 12 bytes en la primera llamada.
+        fs.writeSync = function (fd, buf, off) { if (isSpool(buf) && calls++ === 0) return partial(fd, buf, off); return realWrite.apply(fs, arguments); };
+        try {
+            const before = pendingFiles();
+            const r = await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
+            assert.equal(r.status, 200);
+            const [file] = readPending(newSince(before));
+            assert.ok(file, 'archivo publicado');
+            assert.deepEqual([file.event.kind, file.event.actor, file.event.resource], ['prescription_view', 'valeria', 'rx-a'], 'JSON íntegro');
+            out.parcial = { llamadas: calls, json: 'íntegro' };
+        } finally { fs.writeSync = realWrite; }
+        // b) Tras 12 bytes el disco se llena: no hay archivo final ni temporal y la lectura se bloquea.
+        calls = 0;
+        fs.writeSync = function (fd, buf, off) {
+            if (isSpool(buf)) { if (calls++ === 0) return partial(fd, buf, off); throw Object.assign(new Error('no space left'), { code: 'ENOSPC' }); }
+            return realWrite.apply(fs, arguments);
+        };
+        try {
+            const before = pendingFiles();
+            const r = await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
+            assert.notEqual(r.status, 200); noClinicalText(r.text);
+            assert.deepEqual(newSince(before), []);
+            assert.deepEqual(fs.readdirSync(pendingDir).filter(f => f.endsWith('.tmp')), [], 'sin temporal truncado');
+            out.sinEspacio = r.status;
+        } finally { fs.writeSync = realWrite; }
+        assert.equal((await spoolModule().shared().drain()).inserted, 1);
+        return out;
+    });
+    await step('Q9', 'Una caída nueva en el mismo segundo en que se resolvió la anterior abre otro ciclo de aviso (reloj inyectado, sin MySQL)', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q9-'));
+        try {
+            let clock = Date.UTC(2026, 10, 25, 12, 0, 0, 200), db;
+            const failingDb = { query: async () => { throw Object.assign(new Error('synthetic'), { original: { code: 'ER_SIGNAL_EXCEPTION' } }); } };
+            const spool = spoolModule().createAccessAuditSpool({ dir, db: () => db, now: () => clock, alert: async () => ({ ok: true, channel: 'qa' }), env: 'nc2-qa' });
+            const read = () => spool.record('prescription_view', { actor: 'valeria', business: A, resource: 'rx-a', status: 'issued', context: 'detail' });
+            db = failingDb; await read(); await spool.deliverAlerts();
+            db = { query: async () => [] }; clock += 300; await spool.drain(); // se resuelve en el mismo segundo
+            clock += 200; db = failingDb; await read(); await spool.deliverAlerts();
+            const cycles = spool.outages().map(o => [o.cycle, o.cleared, o.delivered]).sort();
+            assert.deepEqual(cycles, [[1, true, true], [2, false, true]], JSON.stringify(cycles));
+            return { ciclos: cycles };
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     });
 
     // 5. Recuperación de la evidencia y ausencia de contenido clínico.
