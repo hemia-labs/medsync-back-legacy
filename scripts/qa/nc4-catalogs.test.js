@@ -369,6 +369,35 @@ test('L2-R5: límites en horas con fecha civil dan valid, invalid o unverified, 
 });
 
 // ---------- XLSX, importador y staging (L2-R4) ----------
+test('SIS 2026: la raya de las columnas nuevas conserva las X y un encabezado desconocido con X bloquea la matriz', () => {
+    const book = (secondHeader, mark) => xlsx([
+        { name: 'SERVICIOS', rows: [['CATALOG_KEY', 'DESCRIPCION'], ['10', 'Consulta']] },
+        { name: 'POR_PERSONAL_CONSULTA_EXTERNA', rows: [
+            ['', '', 'TIPO PERSONAL'], ['CATALOG_KEY', 'SERVICIOS_ATENCION', '2- MÉDICA(O) GENERAL', secondHeader],
+            ['10', 'Consulta', 'X', mark]
+        ] }
+    ]);
+    const meta = sbMeta({ family: 'sis.personnel_service_ce' });
+    const { release } = importXlsxRelease(book('32 – ENFERMERA(O) ESPECIALISTA', 'X'), meta);
+    assert.equal(release.relationCount, 2);
+    assert.ok(release.hasPair('32', '10'));
+    assert.throws(() => importXlsxRelease(book('PERSONAL NUEVO', 'X'), meta), /Marca X sin tipo/);
+    assert.throws(() => importXlsxRelease(book('32 – ENFERMERA(O) ESPECIALISTA', '?'), meta), /Marca desconocida/);
+});
+
+test('el encabezado roto de diagnósticos solo se interpreta en el XLSX oficial revisado', () => {
+    const cfg = FAMILIES['sis.diagnosis'].source;
+    const fields = [cfg.code, cfg.label, ...cfg.attributes];
+    const book = column => xlsx([{ name: 'CIE', rows: [
+        fields.map(name => name === 'TIPO_PERSONAL_SUBSEC_CE' ? column : name),
+        ['A000', 'Cólera', 'A', 'NO', 'NO', 'NO', '01', '1,2', '4,5', 'NO']
+    ] }]);
+    const meta = sbMeta({ family: 'sis.diagnosis' });
+    const { release } = importXlsxRelease(book('TIPO_PERSONAL_SUBSEC_CE'), meta);
+    assert.equal(release.get('A000').attributes.TIPO_PERSONAL_SUBSEC_CE, '4,5');
+    assert.throws(() => importXlsxRelease(book('}'), meta), /Columna ausente: TIPO_PERSONAL_SUBSEC_CE/);
+});
+
 test('XLSX: texto con ceros, número literal e importación staged con relaciones', () => {
     const book = sbBook();
     const read = readXlsx(book);

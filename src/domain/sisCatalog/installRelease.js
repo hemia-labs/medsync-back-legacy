@@ -47,7 +47,13 @@ async function installRelease(conn, release, { verify = false, sourceSha256, act
             const batch=entries.slice(i,i+500).map(e=>[m.family,m.releaseId,e.code,e.label,JSON.stringify(e.attributes),e.sentinel?1:0]);
             await conn.query('INSERT INTO sis_catalog_entry (family,release_id,code,label,attributes_json,is_sentinel) VALUES ?', [batch]);
         }
-        for (const pair of release.pairs()) await conn.query('INSERT INTO sis_catalog_relation (family,release_id,left_family,left_code,right_code) VALUES (?,?,?,?,?)',[m.family,m.releaseId,pair.leftFamily,pair.leftCode,pair.rightCode]);
+        const pairs = release.pairs();
+        for (let i = 0; i < pairs.length; i += 500) {
+            const batch = pairs.slice(i, i + 500).map(pair => [
+                m.family, m.releaseId, m.columnMapping.relationLeftFamily, pair.left, pair.right
+            ]);
+            await conn.query('INSERT INTO sis_catalog_relation (family,release_id,left_family,left_code,right_code) VALUES ?', [batch]);
+        }
         if (verify) await conn.query("UPDATE sis_catalog_release SET status='verified',verified_at=?,status_changed_at=UTC_TIMESTAMP(3),status_changed_by=? WHERE release_id=?", [new Date(verifiedAt),actor,m.releaseId]);
         await conn.commit();
         return { releaseId:m.releaseId,entries:release.entryCount,status:verify?'verified':'staged',alreadyApplied:false };
