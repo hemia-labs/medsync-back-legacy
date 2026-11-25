@@ -16,6 +16,17 @@ if (process.env.NC2_QA_ISOLATED !== '1' || !process.env.NC2_QA_PORT) {
 const DATABASE = 'nc1_qa_nc2_access';
 const PASSWORD = 'isolated-test-only';
 Object.assign(process.env, { DB_HOST: '127.0.0.1', DB_PORT: process.env.NC2_QA_PORT, DB_USER: 'root', DB_PASSWORD: PASSWORD, DB_NAME: DATABASE });
+// Respaldo durable de lecturas (cola con alerta) en un directorio temporal y canal de Soporte local controlable.
+const os = require('node:os');
+const http = require('node:http');
+const { execFileSync } = require('node:child_process');
+const SPOOL = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-access-spool-'));
+Object.assign(process.env, { ACCESS_AUDIT_SPOOL_DIR: SPOOL, ACCESS_AUDIT_ENV: 'nc2-qa', ACCESS_AUDIT_ALERT_BACKOFF_MS: '200' });
+const hook = { fail: false, received: [] };
+const hookServer = http.createServer((req, res) => {
+    let body = ''; req.on('data', c => { body += c; });
+    req.on('end', () => { if (hook.fail) { res.statusCode = 503; return res.end(); } hook.received.push(JSON.parse(body)); res.end('{}'); });
+});
 
 const schemaDir = [process.env.NC2_SCHEMA_DIR, path.resolve(__dirname, '../../../u575589445_orrico/Tables'), path.resolve(__dirname, '../../../../u575589445_orrico/Tables')]
     .find(dir => dir && fs.existsSync(path.join(dir, 'login.sql')));
@@ -91,8 +102,23 @@ async function withEventWritesFailing(table, fn) {
 
 const noClinicalText = text => { for (const mark of Object.values(MARK)) assert.ok(!text.includes(mark), 'contenido clínico presente: ' + mark); };
 
+const spoolModule = () => require('../../src/services/accessAuditSpool');
+const pendingDir = path.join(SPOOL, 'pending');
+const pendingFiles = () => (fs.existsSync(pendingDir) && fs.statSync(pendingDir).isDirectory() ? fs.readdirSync(pendingDir).filter(f => f.endsWith('.json')).sort() : []);
+const readPending = names => names.map(n => ({ raw: fs.readFileSync(path.join(pendingDir, n), 'utf8') })).map(f => ({ ...f, event: JSON.parse(f.raw) }));
+const newSince = before => pendingFiles().filter(f => !before.includes(f));
+const SPOOL_FIELDS = ['actor', 'at', 'business', 'context', 'failure', 'id', 'kind', 'resource', 'v'];
+const wait = ms => new Promise(r => setTimeout(r, ms));
+// Reinicio real: otro proceso de Node, sin memoria compartida, vacía el respaldo leyendo sólo el disco.
+const drainInChildProcess = () => JSON.parse(execFileSync(process.execPath, ['-e',
+    "const s=require('./src/services/accessAuditSpool').createAccessAuditSpool({alert:async()=>({ok:true,channel:'qa'})});" +
+    "s.drain().then(r=>{process.stdout.write('\\n'+JSON.stringify(r));return require('./src/db/Sequelize.connection').close();})"],
+    { cwd: path.resolve(__dirname, '../..'), env: process.env, encoding: 'utf8' }).trim().split('\n').pop());
+
 async function main() {
     await setup();
+    await new Promise(r => hookServer.listen(0, '127.0.0.1', r));
+    process.env.ACCESS_AUDIT_ALERT_WEBHOOK_URL = 'http://127.0.0.1:' + hookServer.address().port + '/soporte';
     if (process.env.NC2_DEBUG === '1') { // Solo diagnóstico local con datos sintéticos: muestra el mensaje del driver.
         const mod = require('../../src/util/sequelizeException'); const original = mod.SequelizeException;
         mod.SequelizeException = (error, message) => { console.log('NC2_DEBUG', error && error.message); return original(error, message); };
@@ -147,15 +173,24 @@ async function main() {
         assert.equal(await historyEvents(), before);
         return 'Las denegaciones no dejan evento clínico; solo la línea HTTP de morgan sin actor.';
     });
-    await step('H7', 'Falla de escritura del evento al abrir la historia: no entrega contenido y deja una línea con referencia en stderr', async () => {
-        const out = await withEventWritesFailing('clinical_history_events', async logged => {
-            const r = await call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } });
-            assert.notEqual(r.status, 200); noClinicalText(r.text);
-            assert.ok(r.payload.data && r.payload.data.reference, 'respuesta con referencia');
-            assert.ok(logged.some(line => line.includes('[DATABASE_OPERATION_FAILED]') && line.includes(r.payload.data.reference)));
-            return { status: r.status, log: logged.find(line => line.includes('[DATABASE_OPERATION_FAILED]')) };
+    await step('H7', 'Falla la bitácora al abrir la historia o una versión: entrega el contenido sólo con cada acceso respaldado en disco, sin texto clínico', async () => {
+        return withEventWritesFailing('clinical_history_events', async () => {
+            const before = pendingFiles(), rows = await historyEvents("AND event_type = 'VIEWED'");
+            const latest = await call(History.latestByPatient, 'valeria', { params: { patientId: 'px-a' }, body: { id_login: 'forjado', id_business: B } });
+            const version = await call(History.getById, 'valeria', { params: { id: 'ch-a-v1' } });
+            assert.equal(latest.status, 200, 'historia vigente: ' + latest.status); assert.ok(latest.text.includes(MARK.history));
+            assert.equal(version.status, 200, 'versión: ' + version.status); assert.ok(version.text.includes(MARK.old));
+            assert.equal(await historyEvents("AND event_type = 'VIEWED'"), rows, 'la bitácora no debía aceptar escrituras');
+            const spooled = readPending(newSince(before));
+            assert.equal(spooled.length, 2, 'accesos respaldados: ' + spooled.length);
+            for (const { raw, event } of spooled) {
+                noClinicalText(raw); assert.ok(!/token|https?:/i.test(raw), 'sin tokens ni URL');
+                assert.deepEqual(Object.keys(event).filter(k => k !== 'patient').sort(), SPOOL_FIELDS);
+                assert.deepEqual([event.kind, event.actor, event.business, event.patient], ['clinical_history_view', 'valeria', A, 'px-a']);
+            }
+            assert.deepEqual(spooled.map(s => [s.event.resource, s.event.context]).sort(), [['ch-a-v1', 'detail'], ['ch-a-v2', 'patient_latest']]);
+            return { respaldo: spooled.map(s => s.event) };
         });
-        return out;
     });
 
     // 2. Documento: listado, detalle, observación VIEWED/PRINTED declarada por el cliente.
@@ -254,14 +289,107 @@ async function main() {
         }
         assert.equal(await prescriptionAudit(), before);
     });
-    await step('R6', 'Falla de escritura del evento: ni la consulta ni la salida entregan la receta', async () => {
-        return withEventWritesFailing('prescription_audit_log', async logged => {
+    await step('R6a', 'Falla la bitácora al consultar la receta: entrega el detalle sólo con el acceso respaldado en disco', async () => {
+        return withEventWritesFailing('prescription_audit_log', async () => {
+            const before = pendingFiles(), viewed = await prescriptionAudit('viewed');
             const view = await call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } });
-            const output = await call(Prescriptions.prepareOutput, 'valeria', { body: { id_prescription: 'rx-a', action: 'printed' } });
-            for (const r of [view, output]) { assert.notEqual(r.status, 200); noClinicalText(r.text); }
-            assert.ok(logged.filter(line => line.includes('[DATABASE_OPERATION_FAILED]')).length >= 2);
-            return { consulta: view.status, salida: output.status };
+            assert.equal(view.status, 200, 'consulta: ' + view.status); assert.ok(view.text.includes(MARK.rx));
+            assert.equal(await prescriptionAudit('viewed'), viewed);
+            const spooled = readPending(newSince(before));
+            assert.equal(spooled.length, 1);
+            const { raw, event } = spooled[0];
+            noClinicalText(raw); assert.ok(!/token|https?:/i.test(raw));
+            assert.deepEqual([event.kind, event.actor, event.business, event.resource, event.status, event.context], ['prescription_view', 'valeria', A, 'rx-a', 'issued', 'detail']);
+            return { respaldo: event };
         });
+    });
+    await step('R6b', 'Falla la bitácora al preparar la salida de receta (imprimir o PDF): sigue bloqueada y no usa el respaldo', async () => {
+        return withEventWritesFailing('prescription_audit_log', async logged => {
+            const before = pendingFiles();
+            const outputs = [];
+            for (const action of ['printed', 'downloaded']) outputs.push(await call(Prescriptions.prepareOutput, 'valeria', { body: { id_prescription: 'rx-a', action } }));
+            for (const r of outputs) { assert.notEqual(r.status, 200); noClinicalText(r.text); }
+            assert.deepEqual(newSince(before), []);
+            assert.ok(logged.filter(line => line.includes('[DATABASE_OPERATION_FAILED]')).length >= 2);
+            return { salida: outputs.map(r => r.status) };
+        });
+    });
+
+    // 4b. Cola con alerta: aviso agrupado, fallo doble, reinicio y recuperación, reintento del aviso.
+    await step('Q1', 'Aviso a Soporte agrupado por avería: un aviso por bitácora caída aunque haya varios accesos, sin texto clínico ni identificadores de paciente', async () => {
+        await spoolModule().shared().deliverAlerts();
+        const alerts = hook.received.filter(a => a.code === 'ACCESS_AUDIT_SPOOLED');
+        assert.deepEqual(alerts.map(a => a.table).sort(), ['clinical_history_events', 'prescription_audit_log']);
+        const raw = JSON.stringify(alerts); noClinicalText(raw);
+        assert.ok(!raw.includes('px-a') && !raw.includes('valeria'), 'el aviso no lleva paciente ni actor');
+        assert.equal(spoolModule().shared().outages().filter(o => !o.cleared).length, 2);
+        return { avisos: alerts.map(a => ({ table: a.table, error: a.error, cycle: a.cycle, pendingAccesses: a.pendingAccesses })) };
+    });
+    await step('Q2', 'Fallo doble (bitácora y respaldo en disco): la consulta de historia y la de receta se bloquean sin contenido', async () => {
+        const aside = pendingDir + '.aside';
+        fs.renameSync(pendingDir, aside); fs.writeFileSync(pendingDir, 'no es un directorio'); // el respaldo no puede escribirse
+        try {
+            const out = {};
+            await withEventWritesFailing('clinical_history_events', async logged => {
+                const r = await call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } });
+                assert.notEqual(r.status, 200); noClinicalText(r.text); assert.ok(r.payload.data && r.payload.data.reference);
+                assert.ok(logged.some(l => l.startsWith('NC2_ACCESS_AUDIT_SPOOL_FAILED')), 'línea de fallo del respaldo');
+                out.historia = r.status;
+            });
+            await withEventWritesFailing('prescription_audit_log', async () => {
+                const r = await call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } });
+                assert.notEqual(r.status, 200); noClinicalText(r.text);
+                out.receta = r.status;
+            });
+            return out;
+        } finally { fs.unlinkSync(pendingDir); fs.renameSync(aside, pendingDir); }
+    });
+    await step('Q3', 'Reinicio y recuperación: otro proceso vacía el respaldo; cada acceso aparece una sola vez, con su identificador y hora original', async () => {
+        const spooled = readPending(pendingFiles()).map(s => s.event);
+        assert.equal(spooled.length, 3, 'accesos respaldados antes del reinicio: ' + spooled.length);
+        await wait(2100); // la hora de inserción quedaría al menos 2 s después del acceso
+        const first = drainInChildProcess();
+        assert.equal(first.inserted, 3); assert.deepEqual(pendingFiles(), []);
+        // Un archivo que reaparece (corte entre insertar y borrar) no duplica el acceso.
+        fs.writeFileSync(path.join(pendingDir, 'replay-' + spooled[0].id + '.json'), JSON.stringify(spooled[0]));
+        const second = drainInChildProcess();
+        assert.deepEqual([second.inserted, second.duplicates], [0, 1]); assert.deepEqual(pendingFiles(), []);
+        for (const e of spooled) {
+            const sql = e.kind === 'clinical_history_view'
+                ? 'SELECT user_id AS actor, business_id AS business, clinical_history_id AS resource, created_at, metadata_json AS meta FROM clinical_history_events WHERE id_clinical_history_event = ?'
+                : 'SELECT id_user AS actor, id_business AS business, id_prescription AS resource, created_at, metadata AS meta FROM prescription_audit_log WHERE id_prescription_audit_log = ?';
+            const [rows] = await root.query(sql, [e.id]);
+            assert.equal(rows.length, 1, 'acceso ' + e.id + ' aparece ' + rows.length + ' veces');
+            assert.deepEqual([rows[0].actor, rows[0].business, rows[0].resource], [e.actor, e.business, e.resource]);
+            assert.equal(rows[0].created_at.getTime(), Date.parse(e.at), 'hora original');
+            assert.deepEqual(JSON.parse(rows[0].meta), { context: e.context });
+        }
+        // La instancia de la aplicación tras el reinicio sólo conoce lo que hay en disco: las averías quedaron resueltas.
+        const restarted = spoolModule().install(spoolModule().createAccessAuditSpool());
+        assert.equal(restarted.outages().filter(o => !o.cleared).length, 0);
+        return { vaciado: first, repetido: second };
+    });
+    await step('Q4', 'Falla sólo el aviso a Soporte: la lectura respaldada continúa y el aviso se reintenta hasta entregarse', async () => {
+        hook.fail = true;
+        const before = hook.received.length;
+        const out = await withEventWritesFailing('clinical_history_events', async () => {
+            const r = await call(History.getById, 'valeria', { params: { id: 'ch-a-v2' } });
+            assert.equal(r.status, 200); assert.ok(r.text.includes(MARK.history));
+            await spoolModule().shared().deliverAlerts();
+            const open = spoolModule().shared().outages().filter(o => !o.cleared);
+            assert.equal(open.length, 1); assert.equal(open[0].cycle, 2, 'ciclo nuevo de la misma avería');
+            assert.equal(open[0].delivered, false); assert.ok(open[0].attempts.length >= 1 && open[0].attempts.every(a => !a.ok));
+            hook.fail = false;
+            await wait(450);
+            await spoolModule().shared().deliverAlerts();
+            const entry = spoolModule().shared().outages().find(o => o.id === open[0].id && o.cycle === 2);
+            assert.equal(entry.delivered, true);
+            return { intentos: entry.attempts.map(a => ({ ok: a.ok, status: a.status })) };
+        });
+        assert.equal(hook.received.length - before, 1, 'un aviso entregado');
+        const drained = await spoolModule().shared().drain();
+        assert.equal(drained.inserted, 1); assert.deepEqual(pendingFiles(), []);
+        return out;
     });
 
     // 5. Recuperación de la evidencia y ausencia de contenido clínico.
@@ -281,6 +409,8 @@ async function main() {
 
     await root.end();
     await require('../../src/db/Sequelize.connection').close();
+    hookServer.close();
+    fs.rmSync(SPOOL, { recursive: true, force: true });
     const failed = results.filter(r => r.result === 'FAIL');
     for (const r of results) console.log(`${r.result} ${r.id} ${r.name}${r.error ? ' :: ' + r.error : ''}`);
     console.log(failed.length ? `FAIL: ${failed.length} de ${results.length}` : `PASS: ${results.length} de ${results.length}`);
