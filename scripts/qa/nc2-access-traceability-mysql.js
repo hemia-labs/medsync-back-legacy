@@ -440,40 +440,54 @@ async function main() {
             return { mismoTrabajador: stuck.value, fila: 1, aviso: { id: outbox[0].id, ciclo: outbox[0].cycle, intentos: outbox[0].attempts.map(a => a.ok) }, segundoVaciado: second };
         } finally { hook.fail = false; spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
     });
-    await step('Q5b', 'Escritura parcial del archivo de avisos: no retira la evidencia; el mismo trabajador reintenta la entrada en memoria y queda una fila y un aviso aceptado para ese ciclo', async () => {
+    await step('Q5b', 'Escritura parcial y fallida del archivo de avisos: no retira la evidencia; el mismo trabajador reintenta la entrada en memoria, escribe todos los bytes y queda una fila y un aviso aceptado para ese ciclo', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q5b-')), previous = spoolModule().shared();
         const worker = spoolModule().install(spoolModule().createAccessAuditSpool({ dir }));
+        const receivedBefore = hook.received.length; // el identificador INC- es el de la misma avería en otras pruebas: sólo cuentan los avisos de este caso
         const realWrite = fs.writeSync;
-        let partialWrites = 0;
+        const isAlertWrite = buf => (typeof buf === 'string' || Buffer.isBuffer(buf)) && String(buf).includes('"ACCESS_AUDIT_SPOOLED"');
+        const twelveBytes = (fd, buf, off, len) => (typeof buf === 'string' ? realWrite.call(fs, fd, buf.slice(0, 12)) : realWrite.call(fs, fd, buf, off || 0, Math.min(12, len ?? buf.length)));
+        let mode = 'enospc', calls = 0;
+        // enospc: 12 bytes y después «disco lleno»; partial: el sistema de archivos acepta sólo 12 bytes por llamada, sin error.
+        fs.writeSync = function (fd, buf, off, len) {
+            if (!isAlertWrite(buf)) return realWrite.apply(fs, arguments);
+            calls++;
+            if (mode === 'enospc' && calls % 2 === 0) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+            return twelveBytes(fd, buf, off, len);
+        };
         hook.fail = true;
         try {
-            // El sistema de archivos acepta sólo 12 bytes de cada escritura del archivo de avisos (sin error).
-            fs.writeSync = function (fd, buf) {
-                if (typeof buf === 'string' && buf.includes('"ACCESS_AUDIT_SPOOLED"')) { partialWrites++; return realWrite.call(fs, fd, buf.slice(0, 12)); }
-                return realWrite.apply(fs, arguments);
-            };
             let event;
-            try {
-                const r = await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
-                assert.equal(r.status, 200);
-                const [name] = fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
-                event = JSON.parse(fs.readFileSync(path.join(dir, 'pending', name), 'utf8'));
-                await captureErrors(() => worker.drain().catch(error => ({ error: error.code || error.message }))); // MySQL ya está sano
-            } finally { fs.writeSync = realWrite; }
-            assert.ok(partialWrites >= 1, 'se simuló la escritura parcial');
-            assert.deepEqual(readOutbox(dir), [], 'archivo de avisos truncado en disco');
             const rowsFor = async () => Number((await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log = ?', [event.id]))[0][0].n);
-            assert.equal(await rowsFor(), 0, 'con el aviso truncado no se retira la evidencia');
+            const r = await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
+            assert.equal(r.status, 200);
+            const [name] = fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
+            event = JSON.parse(fs.readFileSync(path.join(dir, 'pending', name), 'utf8'));
+            // Fase 1: MySQL ya está sano, pero guardar el aviso falla tras una escritura parcial.
+            await captureErrors(() => worker.drain().catch(error => ({ error: error.code || error.message })));
+            assert.ok(calls >= 2, 'se simuló la escritura fallida del aviso');
+            assert.equal(await rowsFor(), 0, 'sin aviso completo en disco no se retira la evidencia');
+            assert.equal(readOutbox(dir).length, 0, 'ningún archivo de avisos truncado publicado');
+            // Fase 2: cada escritura entrega sólo 12 bytes; el mismo trabajador reintenta la entrada que quedó en memoria.
+            mode = 'partial'; calls = 0;
+            const retried = await captureErrors(() => worker.drain());
+            assert.ok(calls > 1, 'escritura completada en varias llamadas: ' + calls);
+            assert.equal(retried.value.inserted, 1); assert.equal(await rowsFor(), 1);
+            const onDisk = readOutbox(dir);
+            assert.equal(onDisk.length, 1, 'aviso completo en disco antes de retirar la evidencia');
+            assert.deepEqual([onDisk[0].cycle, onDisk[0].incident.table], [1, 'prescription_audit_log']);
+            // La entrada nació en vivo, al guardar el acceso: misma avería y mismo segundo que el acceso.
+            assert.equal(Math.floor(Date.parse(onDisk[0].incident.detectedAt) / 1000) * 1000, Date.parse(event.at));
+            fs.writeSync = realWrite;
             hook.fail = false;
-            await wait(900);
-            const retried = await worker.drain(); // el mismo trabajador, sin reiniciar
-            assert.equal(retried.inserted, 1); assert.equal(await rowsFor(), 1);
+            // El canal se recupera: reintentos con su espera progresiva hasta el acuse (máximo 6 s).
+            for (let i = 0; i < 30 && !worker.outages()[0].delivered; i++) { await wait(200); await worker.deliverAlerts(); }
             const restarted = spoolModule().createAccessAuditSpool({ dir }).outages(); // reinicio: sólo el disco
             assert.equal(restarted.length, 1);
             assert.deepEqual([restarted[0].cycle, restarted[0].delivered, restarted[0].incident.table], [1, true, 'prescription_audit_log']);
-            const accepted = hook.received.filter(a => a.id === restarted[0].id);
+            const accepted = hook.received.slice(receivedBefore).filter(a => a.id === restarted[0].id);
             assert.deepEqual(accepted.map(a => a.cycle), [1], 'un aviso aceptado para ese ciclo');
-            return { escriturasParciales: partialWrites, fila: 1, aviso: { id: restarted[0].id, ciclo: 1, intentos: restarted[0].attempts.map(a => a.ok) } };
+            return { llamadasParciales: calls, fila: 1, aviso: { id: restarted[0].id, ciclo: 1, intentos: restarted[0].attempts.map(a => a.ok) } };
         } finally { fs.writeSync = realWrite; hook.fail = false; spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
     });
     await step('Q6', 'Hallazgo 3: la lectura interna dentro de una transacción revertida no deja acceso ni respaldo; el GET independiente sigue usando el respaldo y prepara el contenido antes de registrar', async () => {
