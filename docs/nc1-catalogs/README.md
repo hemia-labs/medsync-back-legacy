@@ -30,6 +30,44 @@ CAT-O2: a residence edit is checked against the merged residence. An officially 
 5. After review and a scheduled test window: the same command plus `--apply --verify --database <exact-configured-test-database>`. It uses the existing env loader (never print secrets), one connection, a per-family lock and a transaction. Repeat with identical immutable metadata/content is a no-op; changed metadata/content under an existing ID is rejected. No implicit overwrite, delete or partial bulk install.
 6. Order: backend -> approved source imports -> frontend -> authenticated test on a new synthetic patient, own/admin professional identity and establishment. Coordinate with the separate B session before using shared test. Do not install SEPOMEX yet. No production promotion is part of this batch.
 
+## Actualización semanal de CLUES
+
+El sincronizador consulta la fuente oficial DGIS para `sis.establishments` cada **sábado a las 23:00, hora de Ciudad de México**. Una consulta sin novedades conserva la versión vigente. Una actualización válida publica la nueva versión con su procedencia. Las referencias ya capturadas conservan su versión. Si falla el contenido o el número de unidades cae más de un 10 % respecto de la edición anterior, el archivo pasa a revisión. Si aún no hay ediciones instaladas, se usa como referencia la primera carga revisada de 15,358 establecimientos. Es un umbral operativo que permite comprobar con DGIS una baja excepcional.
+
+### Habilitar en un ambiente
+
+Tras desplegar el backend que contiene `src/jobs/syncClues.js`, ejecuta estos comandos **en el host Linux del ambiente autorizado**, desde una copia de los archivos `ops/nc4` de esa revisión. La instancia `qa` usa el proyecto Docker Compose `medsync-qa` y el servicio `api`. Para producción, la instancia `prod` selecciona `medsync-prod` en su propio host. El proceso se ejecuta con el usuario y las variables de la API del ambiente.
+
+```sh
+sudo install -D -m 0755 ops/nc4/sync-clues.sh /usr/local/lib/medsync/sync-clues.sh
+sudo install -m 0644 ops/nc4/medsync-clues@.service ops/nc4/medsync-clues@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+systemd-analyze calendar 'Sat *-*-* 23:00:00 America/Mexico_City'
+sudo systemctl enable --now medsync-clues@qa.timer
+systemctl list-timers medsync-clues@qa.timer --all
+```
+
+El temporizador persistente recupera una ejecución programada perdida mientras el host estuvo apagado. Una comprobación manual autorizada sigue la misma ruta y puede instalar una publicación válida (`sudo systemctl start medsync-clues@qa.service`). El código temporal 75 reintenta una sola vez, cinco minutos después. Un error de contenido o configuración termina la ejecución y deja disponible el último catálogo válido.
+
+### Consultar resultados
+
+```sh
+journalctl -u medsync-clues@qa.service -n 30 --no-pager
+systemctl show medsync-clues@qa.service -p Result -p ExecMainStatus
+```
+
+El registro del servicio muestra la comprobación y su resultado, incluida una descarga sin cambios o una incidencia. Para ver la última versión instalada, consulta la base del mismo ambiente:
+
+```sql
+SELECT release_id, source_url, source_version, downloaded_at, sha256, entry_count, verified_at
+FROM sis_catalog_release
+WHERE family = 'sis.establishments' AND status = 'verified'
+ORDER BY valid_from DESC, release_id DESC
+LIMIT 1;
+```
+
+Para suspender futuras ejecuciones, usa `sudo systemctl disable --now medsync-clues@qa.timer`. El catálogo publicado y sus referencias permanecen disponibles.
+
 ## Recovery
 
 Keep references and releases; never delete or rewrite a verified release. For a reviewed bad-source incident, use the existing NC4 `verified -> retired` transition with operator/change identity and timestamp, after checking the exact release ID and impact. Retirement is one way and preserves the historical version; a replacement uses a new ID. No automatic reactivation of an older release. NC4 rejects two verified releases of a family with the same validFrom, including a retired one: a replacement needs a later reviewed boundary (for example a new download date), and retiring the newest release without a replacement leaves the family unavailable (unverified) instead of reviving the previous one. Frontend can revert to its prior version (reference DTO unchanged), and backend can revert without dropping catalog data. Source absence remains unverified rather than preventing capture.

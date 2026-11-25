@@ -12,7 +12,7 @@ function manifest(row) {
         provenance: row.provenance, status: row.status, verifiedAt: dt(row.verified_at),
         columnMapping: typeof row.column_mapping_json === 'string' ? JSON.parse(row.column_mapping_json) : row.column_mapping_json };
 }
-async function installRelease(conn, release, { verify = false, sourceSha256, actor = 'nc1-catalog-import' } = {}) {
+async function installRelease(conn, release, { verify = false, sourceSha256, actor = 'nc1-catalog-import', reviewCurrent } = {}) {
     if (!isRelease(release) || release.manifest.status !== 'staged') fail('CATALOG_STAGE_REQUIRED');
     if (sourceSha256 !== release.manifest.sha256) fail('CATALOG_SOURCE_HASH_MISMATCH');
     const m = release.manifest, lock = 'nc4-import-' + m.family;
@@ -21,6 +21,14 @@ async function installRelease(conn, release, { verify = false, sourceSha256, act
     try {
         await conn.beginTransaction();
         const [existing] = await conn.query('SELECT * FROM sis_catalog_release WHERE family=? ORDER BY valid_from,release_id FOR UPDATE', [m.family]);
+        // A scheduled publisher must evaluate the current edition under the same lock as manual imports.
+        if (reviewCurrent) {
+            const current = reviewCurrent(existing, release);
+            if (current) {
+                await conn.commit();
+                return { releaseId: current.release_id, entries: Number(current.entry_count), alreadyApplied: true, status: current.status };
+            }
+        }
         const same = existing.find(r => r.release_id === m.releaseId);
         if (same) {
             if (same.sha256 !== m.sha256 || same.content_sha256 !== release.contentSha256 || Number(same.entry_count) !== release.entryCount || same.status === 'retired') fail('CATALOG_IMPORT_CONFLICT');

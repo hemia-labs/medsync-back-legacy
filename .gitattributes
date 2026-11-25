@@ -1,2 +1,4 @@
 scripts/ops/*.sh text eol=lf
+ops/nc4/* text eol=lf
+scripts/qa/nc4-catalogs.docker.sh text eol=lf
 scripts/qa/nc1-identity.docker.sh text eol=lf

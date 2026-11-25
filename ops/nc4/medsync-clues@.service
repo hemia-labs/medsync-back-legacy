@@ -1,0 +1,9 @@
+[Unit]
+Description=Actualización del catálogo CLUES de MedSync (%i)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/lib/medsync/sync-clues.sh %i
+TimeoutStartSec=30min
