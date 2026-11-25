@@ -73,6 +73,22 @@
           72
         ]
       ]
+    },
+    {
+      "family": "sis.referral_service",
+      "sourceVersion": "SERVICIO_DE_ATENCION_POR_REFERENCIA_202611.xlsx",
+      "sourceUrl": "https://gobi.salud.gob.mx/gobi/guias/sis/catalogos/SERVICIO_DE_ATENCION_POR_REFERENCIA_202611.xlsx?v=2026.11.20",
+      "sha256": "6565e97e499435cad6d0f35f79aca25ee4b49491c17ddd3203c32a11cde9c84c",
+      "downloadedAt": "2026-11-25T05:53:31.649Z",
+      "bytes": 14095,
+      "releaseId": "sis.referral_service-20261124",
+      "validFrom": "2026-11-24",
+      "sourceRows": 62,
+      "entries": 61,
+      "relations": 0,
+      "eligibleByProfile": { "REF CE": 60, "REF SB": 33 },
+      "contentSha256": "5405908b2aa5d1ac76fc36ed05756be12c15343321d377a4dc304c4f10a79277",
+      "warnings": [["NUMERIC_CODE_CELLS", 60]]
     }
   ]
 }

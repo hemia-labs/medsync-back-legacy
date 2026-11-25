@@ -43,6 +43,7 @@ function importXlsxRelease(buffer, meta) {
     const cfg = family.source;
     const sourceSha256 = sha256(buffer);
     const reviewedHeaders = cfg.reviewedHeaders?.[sourceSha256];
+    const reviewedVariant = cfg.reviewedVariants?.[sourceSha256];
     const rows = sheetRows(buffer, cfg.sheet);
     const { index } = headerIndex(rows, cfg.headerRow);
     const codeAt = index(cfg.code), labelAt = index(cfg.label);
@@ -57,7 +58,20 @@ function importXlsxRelease(buffer, meta) {
         if (numericCell) numericCells++;
         const attributes = {};
         for (const [name, i] of attrAt) attributes[name] = row[i] ? row[i].value.trim() : '';
-        entries.push({ code, label: row[labelAt] ? row[labelAt].value.trim() : '', attributes });
+        const label = row[labelAt]?.value.trim() || '';
+        if (meta.family === 'sis.referral_service') {
+            if (!label) fail(`Especialidad sin nombre en la fila ${r + 1}.`);
+            for (const profile of ['REF CE', 'REF SB']) {
+                if (attributes[profile] !== '' && attributes[profile] !== 'X') fail(`Marca inválida para ${profile} en la fila ${r + 1}.`);
+            }
+        }
+        if (reviewedVariant && r + 1 === reviewedVariant.variantRow) {
+            const primary = entries.find(entry => entry.code === reviewedVariant.code);
+            if (!primary || code !== reviewedVariant.code) fail('La variante no coincide con la clave revisada.');
+            primary.attributes[reviewedVariant.attribute] = JSON.stringify({ label, ...attributes });
+            continue;
+        }
+        entries.push({ code, label, attributes });
     }
     if (numericCells) issues.push({ code: 'NUMERIC_CODE_CELLS', count: numericCells, message: 'Códigos guardados como número en el Excel; se conservan como texto literal sin rellenar ceros.' });
 
@@ -93,6 +107,7 @@ function importXlsxRelease(buffer, meta) {
         columnMapping: {
             sheet: cfg.sheet, code: cfg.code, label: cfg.label, attributes: cfg.attributes,
             ...(reviewedHeaders && { reviewedHeaders }),
+            ...(reviewedVariant && { reviewedVariant }),
             relationSheet: family.relation ? family.relation.sheet : null,
             relationLeftFamily: family.relation ? family.relation.leftFamily : null
         },

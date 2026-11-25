@@ -369,6 +369,66 @@ test('L2-R5: límites en horas con fecha civil dan valid, invalid o unverified, 
 });
 
 // ---------- XLSX, importador y staging (L2-R4) ----------
+const referralHeader = ['CATALOG_KEY', 'SERVICIO ATENCIÓN AL QUE PUEDE REFERIR', 'REF CE', 'REF SB', 'REF SM', 'REF PF'];
+const referralMeta = () => sbMeta({ family: 'sis.referral_service', releaseId: 'ref-test' });
+const referralBook = (...rows) => xlsx([{ name: 'SERVICIO_ATENCIÓN vs REFERENCIA', rows: [referralHeader, ...rows] }]);
+
+test('referencias: conserva elegibilidad por perfil y distingue los códigos de salida de las especialidades', () => {
+    const book = referralBook(
+        [3, 'CIRUGÍA', 'X', '', '', 'X'], ['10', 'ODONTOLOGÍA', 'X', 'X', '17,18,19,24', ''],
+        [22, 'SERVICIO AMIGABLE', '', '', '', 'X'], [88, 'OTROS', 'X', '', '', '']
+    );
+    const { release, issues } = importXlsxRelease(book, referralMeta());
+    assert.equal(release.entryCount, 4);
+    assert.deepEqual(issues.map(i => [i.code, i.count]), [['NUMERIC_CODE_CELLS', 3]]);
+    assert.deepEqual(release.get('10').attributes, { 'REF CE': 'X', 'REF SB': 'X', 'REF SM': '17,18,19,24', 'REF PF': '' });
+    assert.equal(release.get('22').attributes['REF CE'], '');
+    assert.equal(release.get('22').attributes['REF SB'], '');
+    assert.equal(release.get('22').attributes['REF PF'], 'X');
+    assert.equal(release.get('88').sentinel, false);
+    assert.equal(release.has('-1'), false);
+});
+
+test('referencias: una marca CE/SB desconocida o una clave 70 duplicada en otro archivo bloquea la carga', () => {
+    for (const [ce, sb, profile] of [['?', 'X', 'REF CE'], ['X', '?', 'REF SB']]) {
+        assert.throws(() => importXlsxRelease(referralBook([10, 'ODONTOLOGÍA', ce, sb, '', '']), referralMeta()),
+            new RegExp('Marca inválida para ' + profile));
+    }
+    const duplicate = referralBook(
+        [70, 'SERVICIO ESPECIALIZADO PARA LA ATENCIÓN DE VIH/ITS (SAIH)', 'X', 'X', '17,18,19,24', 'X'],
+        [70, 'SERVICIO ESPECIALIZADO PARA LA ATENCIÓN DE VIH/ITS', 'X', '', '', '']
+    );
+    assert.throws(() => importXlsxRelease(duplicate, referralMeta()), { code: 'CATALOG_CODE_DUPLICATE' });
+});
+
+test('referencias: edición oficial de noviembre, las dos filas 70 se pueden reconstruir sin cambiar elegibilidad', {
+    skip: !process.env.NC4_REFERRAL_XLSX
+}, () => {
+    const original = fs.readFileSync(process.env.NC4_REFERRAL_XLSX);
+    assert.equal(sha256(original), '6565e97e499435cad6d0f35f79aca25ee4b49491c17ddd3203c32a11cde9c84c');
+    const rows = readXlsx(original).rows.slice(1).filter(row => row[0]?.value.trim());
+    assert.equal(rows.length, 62);
+    const { release, issues } = importXlsxRelease(original, referralMeta());
+    assert.equal(release.entryCount, 61);
+    assert.deepEqual(issues.map(i => [i.code, i.count]), [['NUMERIC_CODE_CELLS', 60]]);
+    for (const [column, expected] of [['REF CE', 60], ['REF SB', 33]]) {
+        const index = referralHeader.indexOf(column);
+        const sourceCodes = new Set(rows.filter(row => row[index]?.value === 'X').map(row => row[0].value));
+        const importedCodes = new Set(release.list().filter(entry => entry.attributes[column] === 'X').map(entry => entry.code));
+        assert.equal(sourceCodes.size, expected);
+        assert.deepEqual(importedCodes, sourceCodes);
+    }
+    const primary = release.get('70');
+    assert.equal(primary.label, 'SERVICIO ESPECIALIZADO PARA LA ATENCIÓN DE VIH/ITS (SAIH)');
+    assert.equal(primary.attributes['REF SM'], '17,18,19,24');
+    assert.equal(primary.attributes['REF PF'], 'X');
+    assert.deepEqual(JSON.parse(primary.attributes.variantRow), {
+        label: 'SERVICIO ESPECIALIZADO PARA LA ATENCIÓN DE VIH/ITS', 'REF CE': 'X', 'REF SB': '', 'REF SM': '', 'REF PF': ''
+    });
+    assert.deepEqual(release.manifest.columnMapping.reviewedVariant, { code: '70', primaryRow: 58, variantRow: 61, attribute: 'variantRow' });
+    assert.equal(release.has('-1'), false);
+});
+
 test('SIS 2026: la raya de las columnas nuevas conserva las X y un encabezado desconocido con X bloquea la matriz', () => {
     const book = (secondHeader, mark) => xlsx([
         { name: 'SERVICIOS', rows: [['CATALOG_KEY', 'DESCRIPCION'], ['10', 'Consulta']] },
