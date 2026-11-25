@@ -1,0 +1,10 @@
+[Unit]
+Description=Consulta semanal de CLUES de MedSync (%i)
+
+[Timer]
+OnCalendar=Sat *-*-* 23:00:00 America/Mexico_City
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
