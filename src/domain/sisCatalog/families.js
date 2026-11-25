@@ -38,10 +38,29 @@ const FAMILIES = Object.freeze({
         codePattern: /^[A-Z0-9]{4}$/,
         source: {
             sheet: 0, headerRow: 0, code: 'CATALOG_KEY', label: 'NOMBRE',
-            attributes: ['LETRA', 'LSEX', 'LINF', 'LSUP', 'EPI_CLAVE', 'TIPO_PERSONAL_1VEZ_CE', 'TIPO_PERSONAL_SUBSEC_CE', 'VALIDO_SB']
+            attributes: ['LETRA', 'LSEX', 'LINF', 'LSUP', 'EPI_CLAVE', 'TIPO_PERSONAL_1VEZ_CE', 'TIPO_PERSONAL_SUBSEC_CE', 'VALIDO_SB'],
+            // En la edición 15/jun/2026, “Descripción Catalogo” identifica la columna entre
+            // TIPO_PERSONAL_1VEZ_CE y VALIDO_SM como TIPO_PERSONAL_SUBSEC_CE. El encabezado literal es }.
+            reviewedHeaders: {
+                ec0e014f6026d2bf8895beaa4fe6a1f1d2ea55ee364112f0a560924fbfacd69e: { TIPO_PERSONAL_SUBSEC_CE: '}' }
+            }
         }
     },
-    'sis.referral_service': { status: 'contract', sourceCatalogName: 'SERVICIO DE ATENCIÓN POR REFERENCIA', rector: 'DGIS', source: null },
+    'sis.referral_service': {
+        status: 'contract', sourceCatalogName: 'SERVICIO DE ATENCIÓN POR REFERENCIA', rector: 'DGIS',
+        codePattern: /^\d+$/,
+        source: {
+            sheet: 0, headerRow: 0, code: 'CATALOG_KEY', label: 'SERVICIO ATENCIÓN AL QUE PUEDE REFERIR',
+            attributes: ['REF CE', 'REF SB', 'REF SM', 'REF PF'],
+            // En noviembre de 2026 la fila 58 contiene el nombre (SAIH) y todos sus perfiles.
+            // La fila 61 reutiliza la clave con otro rótulo y habilita sólo REF CE.
+            reviewedVariants: {
+                '6565e97e499435cad6d0f35f79aca25ee4b49491c17ddd3203c32a11cde9c84c': {
+                    code: '70', primaryRow: 58, variantRow: 61, attribute: 'variantRow'
+                }
+            }
+        }
+    },
     'sis.friendly_service': { status: 'contract', sourceCatalogName: 'DIRECTORIO SERVICIOS AMIGABLES', rector: 'DGIS', source: null },
     'sis.personnel_service_ce': {
         status: 'contract', sourceCatalogName: 'SERVICIOS DE ATENCIÓN POR TIPO DE PERSONAL SIS-CE', rector: 'DGIS',
