@@ -653,8 +653,29 @@ async function main() {
             assert.deepEqual(receiver.posts.map(p => [p.cycle, p.status]), [[1, 201], [1, 200], [2, 201]]);
             assert.equal(receiver.acks.size, 2, 'dos avisos lógicos para dos averías');
             assert.equal(await rows(), 2);
-            return { filas: 2, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status) };
-        } finally { spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
+            // Avería 3 en un proceso que arranca con el archivo de avisos inaccesible: su ciclo provisional (1) coincide con el
+            // historial y el receptor lo toma por repetición. Al volver el volumen se renumera y se avisa como ciclo 3.
+            worker = make();
+            fs.renameSync(alertsPath, alertsPath + '.away'); fs.writeFileSync(alertsPath, 'volumen temporalmente inaccesible');
+            assert.equal((await read()).status, 200);
+            ids.push(JSON.parse(fs.readFileSync(path.join(dir, 'pending', pendingIn()[0]), 'utf8')).id);
+            await worker.deliverAlerts();
+            assert.deepEqual(receiver.posts.at(-1), { id: receiver.posts[0].id, cycle: 1, status: 200 }, 'ciclo provisional repetido');
+            assert.equal((await captureErrors(() => worker.drain())).value.inserted, 0, 'sin archivo de avisos no se retira la evidencia');
+            fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath);
+            const third = await captureErrors(() => worker.drain());
+            assert.equal(third.value.inserted, 1);
+            outbox = readOutbox(dir);
+            assert.deepEqual(outbox.map(e => [e.cycle, e.cleared, e.delivered]).sort(), [[1, true, true], [2, true, true], [3, true, true]]);
+            assert.deepEqual(receiver.posts.slice(-1).map(p => [p.cycle, p.status]), [[3, 201]], 'la avería 3 tiene su propio aviso');
+            assert.equal(receiver.acks.size, 3, 'tres avisos lógicos para tres averías');
+            assert.equal(await rows(), 3);
+            return { filas: 3, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status) };
+        } finally {
+            spoolModule().install(previous);
+            try { fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath); } catch { /* ya restablecido */ }
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
     await step('Q11', 'Dictamen ded9dd0, hallazgo 2: si el archivo de avisos no se pudo leer al arrancar, el mismo proceso lo recarga al recuperarse el volumen, sin sustituirlo, y envía una vez el aviso pendiente', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q11-')), previous = spoolModule().shared();
