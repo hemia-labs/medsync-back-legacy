@@ -599,6 +599,103 @@ async function main() {
         } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     });
 
+    // 4d. Dictamen de Codex sobre ded9dd0: continuidad de los avisos. El receptor simulado sigue el contrato del receptor
+    // ampliado: 201 la primera vez que recibe una referencia y ciclo; 200 con el acuse existente si se repite.
+    const idempotentReceiver = () => {
+        const acks = new Map(), posts = [];
+        let ok = true;
+        const alert = async incident => {
+            if (!ok) { posts.push({ id: incident.id, cycle: incident.cycle, status: 503 }); return { ok: false, channel: 'qa', status: 503 }; }
+            const key = incident.id + '#' + incident.cycle, status = acks.has(key) ? 200 : 201;
+            if (status === 201) acks.set(key, { cycle: incident.cycle });
+            posts.push({ id: incident.id, cycle: incident.cycle, status });
+            return { ok: true, channel: 'qa', status };
+        };
+        return { alert, acks, posts, set ok(value) { ok = value; } };
+    };
+    await step('Q10', 'Dictamen ded9dd0, hallazgo 1: el acuse 201 en memoria no basta para retirar la última evidencia; dos averías separadas por recuperación y reinicio producen dos avisos lógicos y repetir uno reutiliza su acuse', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q10-')), previous = spoolModule().shared();
+        const receiver = idempotentReceiver(), alertsPath = path.join(dir, 'alerts');
+        const make = () => spoolModule().install(spoolModule().createAccessAuditSpool({ dir, alert: receiver.alert }));
+        const read = () => withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
+        const pendingIn = () => fs.readdirSync(path.join(dir, 'pending')).filter(f => f.endsWith('.json'));
+        const ids = [];
+        const rows = async () => Number((await root.query('SELECT COUNT(*) AS n FROM prescription_audit_log WHERE id_prescription_audit_log IN (?)', [ids]))[0][0].n);
+        try {
+            // Avería 1 con el directorio de avisos inutilizable; Soporte acusa con 201 y el acuse sólo queda en memoria.
+            let worker = make();
+            fs.writeFileSync(alertsPath, 'directorio de avisos indisponible');
+            assert.equal((await read()).status, 200);
+            ids.push(JSON.parse(fs.readFileSync(path.join(dir, 'pending', pendingIn()[0]), 'utf8')).id);
+            await worker.deliverAlerts();
+            assert.deepEqual(receiver.posts.map(p => [p.cycle, p.status]), [[1, 201]]);
+            // Vuelve MySQL con el directorio aún caído: la última evidencia no se retira sólo por el acuse en memoria.
+            const stuck = await captureErrors(() => worker.drain());
+            assert.equal(stuck.value.inserted, 0, 'el acuse en memoria no sustituye al ciclo guardado');
+            assert.equal(pendingIn().length, 1, 'la evidencia sigue en disco');
+            assert.equal(await rows(), 0);
+            // Reinicio antes de recuperar el directorio (se pierde la memoria y su acuse); luego vuelve el directorio.
+            worker = make();
+            fs.unlinkSync(alertsPath);
+            const recovered = await captureErrors(() => worker.drain());
+            assert.equal(recovered.value.inserted, 1); assert.deepEqual(pendingIn(), []);
+            let outbox = readOutbox(dir);
+            assert.deepEqual(outbox.map(e => [e.cycle, e.cleared, e.delivered]), [[1, true, true]], 'ciclo 1 guardado y resuelto antes de retirar la evidencia');
+            assert.deepEqual(receiver.posts.map(p => [p.cycle, p.status]), [[1, 201], [1, 200]], 'repetir el ciclo 1 reutiliza su acuse');
+            // Avería 2 tras la recuperación y otro reinicio: ciclo nuevo y aviso nuevo.
+            worker = make();
+            assert.equal((await read()).status, 200);
+            ids.push(JSON.parse(fs.readFileSync(path.join(dir, 'pending', pendingIn()[0]), 'utf8')).id);
+            const second = await worker.drain();
+            assert.equal(second.inserted, 1);
+            outbox = readOutbox(dir);
+            assert.deepEqual(outbox.map(e => [e.cycle, e.cleared, e.delivered]).sort(), [[1, true, true], [2, true, true]]);
+            assert.deepEqual(receiver.posts.map(p => [p.cycle, p.status]), [[1, 201], [1, 200], [2, 201]]);
+            assert.equal(receiver.acks.size, 2, 'dos avisos lógicos para dos averías');
+            assert.equal(await rows(), 2);
+            return { filas: 2, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status) };
+        } finally { spoolModule().install(previous); fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+    await step('Q11', 'Dictamen ded9dd0, hallazgo 2: si el archivo de avisos no se pudo leer al arrancar, el mismo proceso lo recarga al recuperarse el volumen, sin sustituirlo, y envía una vez el aviso pendiente', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q11-')), previous = spoolModule().shared();
+        const receiver = idempotentReceiver(), alertsPath = path.join(dir, 'alerts');
+        let restarted = null;
+        try {
+            // Una lectura vaciada a MySQL con su aviso guardado y pendiente: el webhook no está disponible.
+            const worker = spoolModule().install(spoolModule().createAccessAuditSpool({ dir, alert: receiver.alert }));
+            receiver.ok = false;
+            assert.equal((await withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }))).status, 200);
+            assert.equal((await worker.drain()).inserted, 1);
+            const saved = readOutbox(dir);
+            assert.deepEqual(saved.map(e => [e.cycle, e.cleared, e.delivered]), [[1, true, false]]);
+            // Proceso nuevo con el directorio temporalmente inaccesible; el receptor ya está disponible.
+            receiver.ok = true;
+            fs.renameSync(alertsPath, alertsPath + '.away');
+            fs.writeFileSync(alertsPath, 'volumen temporalmente inaccesible');
+            restarted = spoolModule().install(spoolModule().createAccessAuditSpool({ dir, alert: receiver.alert }));
+            const started = await captureErrors(async () => [restarted.start(500, { retryMs: 100 }), await restarted.deliverAlerts()]);
+            assert.equal(started.value[0], false, 'arranque diferido mientras el volumen no responde');
+            const sentBefore = receiver.posts.filter(p => p.status !== 503).length;
+            // Vuelve el mismo directorio, intacto; el mismo proceso arranca por su reintento.
+            fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath);
+            for (let i = 0; i < 40 && !(restarted.running() && receiver.posts.some(p => p.status === 201)); i++) await wait(100);
+            await wait(200);
+            assert.equal(restarted.running(), true, 'el mismo proceso arrancó por su reintento');
+            const accepted = receiver.posts.filter(p => p.status !== 503);
+            assert.deepEqual(accepted.map(p => [p.cycle, p.status]), [[1, 201]], 'el aviso pendiente se envía una vez sin otro reinicio');
+            const after = readOutbox(dir);
+            assert.equal(after.length, 1, 'el archivo no se sustituyó por uno vacío');
+            assert.deepEqual([after[0].cycle, after[0].delivered, after[0].incident.detectedAt], [1, true, saved[0].incident.detectedAt]);
+            assert.deepEqual(after[0].attempts.map(a => a.ok), [false, true]);
+            return { enviadosConVolumenCaido: sentBefore, tras: accepted.map(p => p.cycle + ':' + p.status), intentos: after[0].attempts.map(a => a.ok) };
+        } finally {
+            if (restarted) restarted.stop();
+            spoolModule().install(previous);
+            try { fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath); } catch { /* ya restablecido */ }
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     // 5. Recuperación de la evidencia y ausencia de contenido clínico.
     await step('E1', 'Recuperación por el operador con acceso a la base, filtrada por consultorio; ningún evento contiene texto clínico', async () => {
         const [rows] = await root.query(`
