@@ -62,7 +62,7 @@ class PrescriptionController extends httpResponseHelper {
                 id_prescription: req.params.id_prescription,
                 id_login: req.tokenDecode ? req.tokenDecode.id_login : null,
                 id_business: getBusinessIdFromToken(req.tokenDecode)
-            });
+            }, { audit: true });
         } catch (error) {
             response = this.HttpError(error.status, error.message);
         }

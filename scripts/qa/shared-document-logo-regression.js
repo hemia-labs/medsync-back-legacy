@@ -53,7 +53,7 @@ histories.getPatient=async()=>({id_person:'patient'});
 histories.lockDraft=async()=>true;
 histories.validateRequiredFieldsFromTemplate=()=>({ok:true});
 histories.getSensitiveConsent=async()=>({status:'FIRMADO',token:'qa',document:{id_patient_document:'consent'},signedDocument:{id_patient_document:'consent'}});
-histories.getConsentDocumentById=async()=>null;histories.getDoctorForHistory=async()=>profile;histories.addEvent=async()=>{};
+histories.getConsentDocumentById=async()=>null;histories.getDoctorForHistory=async()=>profile;histories.addEvent=async()=>{};histories.recordView=async()=>{};
 histories.hydrate=value=>value;
 require('../../src/Dao/mysql/patientAllergy.dao').getCurrent=async()=>({review_status:'NONE_KNOWN',revision:0});
 const realDetail=histories.getById.bind(histories);

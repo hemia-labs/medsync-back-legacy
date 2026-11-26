@@ -760,7 +760,7 @@
     "scope": "getById",
     "snippet": "this.HttpError(error.status, error.message)",
     "hash": "b8007df2d783991972a25f5d580d258d9de303d533742a5bb509becdb9dcfc2b",
-    "context": "daac693c5fb2d6bc49d8f67a8f69f751d7c72dfd459301b88129a9f999c75868",
+    "context": "e67028dee4767f5a88e56b0349493e0e2c8b7fe99a21d9aa642b537602d49384",
     "count": 1,
     "reason": "Existing legacy catch boundary: status comes from a thrown DAO/service error; not a reviewed AUTH emitter. Pin enclosing function; new explicit 401 origins and HTTP envelope tests remain required."
   },
