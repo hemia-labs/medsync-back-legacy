@@ -691,13 +691,19 @@ async function main() {
                 const third = await draining;
                 assert.equal(third.inserted, 1);
                 assert.ok(reassigned && !reassigned.delivered, 'ciclo 3 reasignado antes del acuse tardío');
-                // El 200 atrasado del ciclo 1 no confirma el ciclo 3: sigue pendiente en memoria y en disco.
-                const afterLateAck = worker.outages().find(e => e.cycle === 3);
-                assert.equal(afterLateAck.delivered, false, 'el acuse del ciclo 1 no se aplica al ciclo 3');
-                assert.equal(readOutbox(dir).find(e => e.cycle === 3).delivered, false, 'ciclo 3 pendiente en disco');
-                assert.equal(receiver.acks.has(receiver.posts[0].id + '#3'), false, 'el receptor aún no confirmó el ciclo 3');
                 await worker.deliverAlerts();
                 await worker.drain();
+                // El 200 atrasado del ciclo 1 quedó registrado como respuesta de ese ciclo y dejó pendiente el ciclo 3; el
+                // ciclo 3 se confirmó después con su propio envío (201). Se comprueba en el historial de intentos guardado.
+                const entry3 = readOutbox(dir).find(e => e.cycle === 3);
+                const late = entry3.attempts.findIndex(a => a.cycle === 1 && a.status === 200);
+                assert.ok(late >= 0 && entry3.attempts[late].superseded === true, 'el acuse del ciclo 1 no se aplica al ciclo 3: ' + JSON.stringify(entry3.attempts));
+                const own = entry3.attempts.findIndex((a, i) => i > late && a.ok && a.status === 201 && !a.superseded);
+                assert.ok(own > late, 'el ciclo 3 obtuvo su propio acuse después del acuse tardío');
+                assert.ok(Date.parse(entry3.deliveredAt) >= Date.parse(entry3.attempts[late].at));
+                const order = receiver.posts.map(p => p.cycle + ':' + p.status);
+                assert.ok(order.lastIndexOf('3:201') > order.lastIndexOf('1:200'), 'el receptor confirmó el ciclo 3 por separado: ' + order.join(','));
+                delayed.intentosCiclo3 = entry3.attempts.map(a => (a.cycle ? a.cycle + '→' : '') + (a.status || a.ok) + (a.superseded ? ' (anterior)' : ''));
             } else {
                 await worker.deliverAlerts();
                 assert.deepEqual(receiver.posts.at(-1), { id: receiver.posts[0].id, cycle: 1, status: 200 }, 'ciclo provisional repetido');
@@ -713,7 +719,7 @@ async function main() {
             assert.equal(receiver.acks.size, 3, 'tres avisos lógicos para tres averías');
             assert.equal(await rows(), 3);
             return { filas: 3, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status),
-                ...(delayedAck ? { ciclo3TrasAcuseTardio: { delivered: reassigned.delivered }, persistido: outbox.map(e => [e.cycle, e.delivered]) } : {}) };
+                ...(delayedAck ? { ciclo3AlReasignar: { delivered: reassigned.delivered }, intentosCiclo3: delayed.intentosCiclo3, persistido: outbox.map(e => [e.cycle, e.delivered]) } : {}) };
         } finally {
             spoolModule().install(previous);
             try { fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath); } catch { /* ya restablecido */ }
