@@ -16,7 +16,10 @@
 // respaldada continúa y el aviso se reintenta con espera progresiva. Ni la cola ni el aviso guardan texto clínico.
 // Contrato del receptor de Soporte (el mismo de C22): referencia `INC-` + 12 hexadecimales, ciclo entero, ambiente y un código
 // reconocido. NC2 usa el código ACCESS_AUDIT_SPOOLED, que el receptor debe aceptar de forma explícita.
-// El vaciado no retira el archivo de un acceso hasta que el aviso de su avería está completo en disco (releído) o tiene acuse.
+// El vaciado no retira el archivo de un acceso hasta que el ciclo de aviso de su avería está completo en disco (releído), aunque
+// Soporte ya haya acusado, y no retira la última evidencia de una familia hasta guardar la resolución de ese ciclo.
+// El archivo de avisos se relee antes de consultar, despachar o guardar: un volumen que no respondía al arrancar se recupera
+// sin otro reinicio y sin sustituir su contenido.
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -70,22 +73,65 @@ function writeDurable(dir, name, text) {
 }
 
 // Avisos de NC2: una entrada por incidente y ciclo. put deja la entrada en memoria antes de guardar; si el guardado falla, la
-// entrada sigue ahí y el siguiente guardado la vuelve a escribir. Un archivo ilegible se aparta (no se sobrescribe).
+// entrada sigue ahí y el siguiente guardado la vuelve a escribir.
+// El archivo se vuelve a leer antes de consultar, despachar o guardar, y sus entradas se incorporan a la memoria (la memoria de
+// este proceso es la más reciente para la misma clave). Se distinguen tres casos al leer:
+// - no existe y su directorio existe (o aún no se ha creado): almacén vacío, primer uso;
+// - JSON inválido: se aparta con sus bytes originales y se continúa vacío;
+// - cualquier otro error (volumen inaccesible, directorio sustituido, permisos): es temporal. No se aparta ni se sustituye el
+//   archivo, y mientras nunca se haya podido leer no se guarda: los ciclos abiertos quedan provisionales en memoria (se
+//   despachan) y el siguiente intento vuelve a leer el archivo.
 function createAlertStore(file) {
     const entries = new Map(), keyOf = e => e.id + '#' + (e.cycle || 1);
-    try { for (const e of JSON.parse(fs.readFileSync(file, 'utf8'))) entries.set(keyOf(e), e); }
-    catch (error) {
-        if (error.code !== 'ENOENT') {
-            console.error('NC2_ACCESS_AUDIT_ALERTS_UNREADABLE ' + JSON.stringify({ error: String(error.code || error.name).slice(0, 40) }));
-            try { fs.renameSync(file, file + '.unreadable-' + Date.now()); } catch { /* se conserva donde está */ }
+    let loaded = false;
+    const notLoaded = () => Object.assign(new Error('ACCESS_AUDIT_ALERTS_NOT_LOADED'), { code: 'ENOTLOADED' });
+    const firstUse = () => { try { return fs.statSync(path.dirname(file)).isDirectory(); } catch (error) { return error.code === 'ENOENT'; } };
+    function refresh() {
+        let list;
+        try {
+            list = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (!Array.isArray(list)) throw new SyntaxError('ACCESS_AUDIT_ALERTS_NOT_ARRAY');
+        } catch (error) {
+            if (error instanceof SyntaxError) {
+                console.error('NC2_ACCESS_AUDIT_ALERTS_UNREADABLE ' + JSON.stringify({ error: 'INVALID_JSON' }));
+                try { fs.renameSync(file, file + '.unreadable-' + Date.now()); } catch { return false; } // no se sobrescribe
+                list = [];
+            } else if (error.code === 'ENOENT' && firstUse()) list = [];
+            else {
+                console.error('NC2_ACCESS_AUDIT_ALERTS_UNAVAILABLE ' + JSON.stringify({ error: String(error.code || error.name).slice(0, 40), loaded }));
+                return false;
+            }
         }
+        // Un ciclo provisional (abierto sin conocer el archivo) que coincide en número con otra avería guardada se renumera al
+        // siguiente ciclo libre y vuelve a quedar pendiente de envío: un aviso de más, nunca uno de menos.
+        const collided = [];
+        for (const e of list) {
+            if (!e || !e.id) continue;
+            const mine = entries.get(keyOf(e));
+            if (!mine) entries.set(keyOf(e), e);
+            else if (mine.provisional && mine.incident?.detectedAt !== e.incident?.detectedAt) { collided.push(mine); entries.set(keyOf(e), e); }
+        }
+        for (const mine of collided) {
+            mine.cycle = Math.max(...[...entries.values()].filter(x => x.id === mine.id).map(x => x.cycle)) + 1;
+            Object.assign(mine, { delivered: false, nextAttemptAt: 0 }); delete mine.deliveredAt;
+            entries.set(keyOf(mine), mine);
+        }
+        for (const e of entries.values()) delete e.provisional;
+        loaded = true;
+        return true;
     }
-    const save = () => writeDurable(path.dirname(file), path.basename(file), JSON.stringify([...entries.values()], null, 1));
+    const ready = () => refresh() || loaded;
+    const write = () => writeDurable(path.dirname(file), path.basename(file), JSON.stringify([...entries.values()], null, 1));
     return {
-        latest: id => [...entries.values()].filter(e => e.id === id).sort((a, b) => b.cycle - a.cycle)[0],
-        all: () => [...entries.values()],
-        put(entry) { entries.set(keyOf(entry), entry); save(); return entry; },
-        save
+        latest: id => { ready(); return [...entries.values()].filter(e => e.id === id).sort((a, b) => b.cycle - a.cycle)[0]; },
+        all() { ready(); return [...entries.values()]; },
+        // Sin haber leído nunca el archivo, la entrada queda provisional en memoria (se despacha, pero no se guarda) y put
+        // lanza: el guardado sustituiría un contenido que no se conoce.
+        put(entry) {
+            if (!ready()) { entries.set(keyOf(entry), Object.assign(entry, { provisional: true })); throw notLoaded(); }
+            entries.set(keyOf(entry), entry); write(); return entry;
+        },
+        save() { if (!ready()) throw notLoaded(); write(); }
     };
 }
 
@@ -145,7 +191,8 @@ function createAccessAuditSpool({ dir = path.resolve(process.env.ACCESS_AUDIT_SP
         catch { return null; }
     }
 
-    // Antes de retirar la evidencia de un acceso: el aviso de su avería debe estar completo en disco o tener acuse del receptor.
+    // Antes de retirar la evidencia de un acceso, el ciclo de aviso de su avería debe estar completo en disco, aunque Soporte ya
+    // haya acusado: sin ese registro, una avería posterior reutilizaría el mismo ciclo y el receptor la tomaría por repetición.
     // Una entrada que sólo existe en memoria (porque falló o quedó incompleta su escritura) se vuelve a guardar aquí.
     function ensureAlertDurable(table, code, at) {
         let entry;
@@ -153,8 +200,27 @@ function createAccessAuditSpool({ dir = path.resolve(process.env.ACCESS_AUDIT_SP
         catch (error) { entry = outbox.latest(incidentId(table, code)); if (!entry) throw error; } // quedó en memoria: se reintenta
         if (persistedCopy(entry)) return entry;
         try { outbox.save(); } catch { /* se comprueba abajo */ }
-        if (persistedCopy(entry) || entry.delivered) return entry; // delivered: acuse del receptor, que guarda su propio comprobante
+        if (persistedCopy(entry)) return entry;
         throw Object.assign(new Error('ACCESS_AUDIT_ALERT_NOT_DURABLE'), { code: 'ENOTDURABLE' });
+    }
+
+    // Antes de retirar la ÚLTIMA evidencia de una familia, su avería queda resuelta en disco. Así, tras un reinicio, una avería
+    // nueva abre otro ciclo en vez de reutilizar uno abierto. Si no se puede guardar, se deshace en memoria y la evidencia se queda.
+    function resolveBeforeLastEvidence(table, keep) {
+        const others = pending().some(name => {
+            if (name === keep) return false;
+            try { const e = JSON.parse(fs.readFileSync(path.join(pendingDir, name), 'utf8')); return KINDS[e.kind] && KINDS[e.kind].table === table; }
+            catch { return false; }
+        });
+        if (others) return true;
+        const open = outbox.all().filter(e => e.incident.table === table && !e.cleared);
+        if (!open.length) return true;
+        const clearedAt = new Date(now()).toISOString();
+        for (const e of open) { e.cleared = true; e.clearedAt = clearedAt; }
+        try { outbox.save(); if (open.every(e => { const c = persistedCopy(e); return c && c.cleared; })) return true; }
+        catch { /* se deshace abajo */ }
+        for (const e of open) { e.cleared = false; delete e.clearedAt; }
+        return false;
     }
 
     // Guarda una entrada de aviso; si falla, queda en memoria y se reintentará en el siguiente guardado.
@@ -236,6 +302,12 @@ function createAccessAuditSpool({ dir = path.resolve(process.env.ACCESS_AUDIT_SP
                 catch (error) {
                     if (!isDuplicate(error)) { blocked.set(writer.table, errorCode(error)); result.pending++; continue; }
                     result.duplicates++;
+                }
+                // Fila ya en MySQL: si es la última evidencia de su familia, la resolución del ciclo se guarda antes de retirarla.
+                // Si no se puede, el archivo se queda y el siguiente vaciado lo encontrará como duplicado.
+                if (!resolveBeforeLastEvidence(writer.table, name)) {
+                    console.error('NC2_ACCESS_AUDIT_ALERT_QUEUE_FAILED ' + JSON.stringify({ table: writer.table, error: 'ENOTDURABLE' }));
+                    result.pending++; continue;
                 }
                 fs.unlinkSync(file);
             }
