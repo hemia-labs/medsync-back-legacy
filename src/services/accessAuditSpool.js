@@ -237,13 +237,24 @@ function createAccessAuditSpool({ dir = path.resolve(process.env.ACCESS_AUDIT_SP
             for (const entry of outbox.all()) {
                 if (entry.delivered || now() < (entry.nextAttemptAt ?? 0)) continue;
                 const queued = pending().length;
-                const result = await alert({ ...entry.incident, cycle: entry.cycle, pendingAccesses: queued }, entry.attempts.length + 1)
+                // Identidad enviada, fijada antes de esperar: mientras se espera, la recarga del archivo puede renumerar un
+                // ciclo provisional. El acuse sólo vale para la referencia y el ciclo que se enviaron.
+                const sent = { id: entry.id, cycle: entry.cycle };
+                const result = await alert({ ...entry.incident, id: sent.id, cycle: sent.cycle, pendingAccesses: queued }, entry.attempts.length + 1)
                     .catch(error => ({ ok: false, channel: 'unknown', error: String(error.message).slice(0, 30) }));
-                entry.attempts.push({ at: new Date(now()).toISOString(), channel: result.channel, ok: Boolean(result.ok), ...(result.status ? { status: result.status } : {}), ...(result.error ? { error: result.error } : {}) });
-                if (result.ok) { entry.delivered = true; entry.deliveredAt = new Date(now()).toISOString(); entry.nextAttemptAt = null; }
-                else entry.nextAttemptAt = now() + backoff(entry.attempts.length);
+                const attempt = { at: new Date(now()).toISOString(), channel: result.channel, ok: Boolean(result.ok), ...(result.status ? { status: result.status } : {}), ...(result.error ? { error: result.error } : {}) };
+                if (entry.id !== sent.id || entry.cycle !== sent.cycle) {
+                    // La entrada cambió de identidad: la respuesta corresponde al ciclo anterior. El ciclo nuevo sigue pendiente,
+                    // sin espera, hasta obtener su propio acuse.
+                    entry.attempts.push({ ...attempt, cycle: sent.cycle, superseded: true });
+                    entry.delivered = false; delete entry.deliveredAt; entry.nextAttemptAt = now();
+                } else {
+                    entry.attempts.push(attempt);
+                    if (result.ok) { entry.delivered = true; entry.deliveredAt = new Date(now()).toISOString(); entry.nextAttemptAt = null; }
+                    else entry.nextAttemptAt = now() + backoff(entry.attempts.length);
+                }
                 saveEntry(entry);
-                out.push({ id: entry.id, cycle: entry.cycle, attempt: entry.attempts.length, ok: Boolean(result.ok), channel: result.channel });
+                out.push({ id: sent.id, cycle: sent.cycle, attempt: entry.attempts.length, ok: Boolean(result.ok), channel: result.channel, ...(entry.cycle !== sent.cycle ? { supersededBy: entry.cycle } : {}) });
             }
             return out;
         })().finally(() => { dispatching = null; });
