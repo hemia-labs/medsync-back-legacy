@@ -613,8 +613,10 @@ async function main() {
         };
         return { alert, acks, posts, set ok(value) { ok = value; } };
     };
-    await step('Q10', 'Dictamen ded9dd0, hallazgo 1: el acuse 201 en memoria no basta para retirar la última evidencia; dos averías separadas por recuperación y reinicio producen dos avisos lógicos y repetir uno reutiliza su acuse', async () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q10-')), previous = spoolModule().shared();
+    // Q10 y su variante Q10b comparten las averías 1 y 2; Q10b demora el acuse del ciclo provisional de la avería 3 (parche de
+    // Codex q10-acuse-en-vuelo-2a666f6.patch) hasta después de que el vaciado lo renumera al ciclo 3.
+    const q10 = ({ delayedAck = false } = {}) => async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), delayedAck ? 'nc2-q10b-' : 'nc2-q10-')), previous = spoolModule().shared();
         const receiver = idempotentReceiver(), alertsPath = path.join(dir, 'alerts');
         const make = () => spoolModule().install(spoolModule().createAccessAuditSpool({ dir, alert: receiver.alert }));
         const read = () => withEventWritesFailing('prescription_audit_log', () => call(Prescriptions.getById, 'valeria', { params: { id_prescription: 'rx-a' } }));
@@ -655,28 +657,71 @@ async function main() {
             assert.equal(await rows(), 2);
             // Avería 3 en un proceso que arranca con el archivo de avisos inaccesible: su ciclo provisional (1) coincide con el
             // historial y el receptor lo toma por repetición. Al volver el volumen se renumera y se avisa como ciclo 3.
+            let delayed = null;
+            if (delayedAck) {
+                // El receptor resuelve el POST del ciclo 1 (200, repetición), pero la respuesta llega al trabajador hasta que se libera.
+                let releaseOldAck, reportArrival;
+                const permissionToReturn = new Promise(resolve => { releaseOldAck = resolve; });
+                const oldAckReady = new Promise(resolve => { reportArrival = resolve; });
+                const send = receiver.alert;
+                receiver.alert = async incident => {
+                    const response = await send(incident);
+                    if (incident.cycle === 1 && response.status === 200) { reportArrival(); await permissionToReturn; }
+                    return response;
+                };
+                delayed = { releaseOldAck, oldAckReady };
+            }
             worker = make();
             fs.renameSync(alertsPath, alertsPath + '.away'); fs.writeFileSync(alertsPath, 'volumen temporalmente inaccesible');
             assert.equal((await read()).status, 200);
             ids.push(JSON.parse(fs.readFileSync(path.join(dir, 'pending', pendingIn()[0]), 'utf8')).id);
-            await worker.deliverAlerts();
-            assert.deepEqual(receiver.posts.at(-1), { id: receiver.posts[0].id, cycle: 1, status: 200 }, 'ciclo provisional repetido');
-            assert.equal((await captureErrors(() => worker.drain())).value.inserted, 0, 'sin archivo de avisos no se retira la evidencia');
-            fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath);
-            const third = await captureErrors(() => worker.drain());
-            assert.equal(third.value.inserted, 1);
+            let reassigned = null;
+            if (delayedAck) {
+                await delayed.oldAckReady;
+                assert.equal(receiver.posts.at(-1).cycle, 1);
+                fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath);
+                // El vaciado renumera el ciclo provisional a 3 mientras el trabajador sigue esperando la respuesta del ciclo 1.
+                const draining = worker.drain();
+                try {
+                    for (let attempt = 0; attempt < 100 && !reassigned; attempt++) {
+                        reassigned = readOutbox(dir).find(entry => entry.cycle === 3);
+                        if (!reassigned) await wait(10);
+                    }
+                } finally { delayed.releaseOldAck(); }
+                const third = await draining;
+                assert.equal(third.inserted, 1);
+                assert.ok(reassigned && !reassigned.delivered, 'ciclo 3 reasignado antes del acuse tardío');
+                // El 200 atrasado del ciclo 1 no confirma el ciclo 3: sigue pendiente en memoria y en disco.
+                const afterLateAck = worker.outages().find(e => e.cycle === 3);
+                assert.equal(afterLateAck.delivered, false, 'el acuse del ciclo 1 no se aplica al ciclo 3');
+                assert.equal(readOutbox(dir).find(e => e.cycle === 3).delivered, false, 'ciclo 3 pendiente en disco');
+                assert.equal(receiver.acks.has(receiver.posts[0].id + '#3'), false, 'el receptor aún no confirmó el ciclo 3');
+                await worker.deliverAlerts();
+                await worker.drain();
+            } else {
+                await worker.deliverAlerts();
+                assert.deepEqual(receiver.posts.at(-1), { id: receiver.posts[0].id, cycle: 1, status: 200 }, 'ciclo provisional repetido');
+                assert.equal((await captureErrors(() => worker.drain())).value.inserted, 0, 'sin archivo de avisos no se retira la evidencia');
+                fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath);
+                const third = await captureErrors(() => worker.drain());
+                assert.equal(third.value.inserted, 1);
+            }
             outbox = readOutbox(dir);
+            assert.deepEqual([...receiver.acks.values()].map(entry => entry.cycle), [1, 2, 3], 'cada avería llegó a Soporte con su propio ciclo');
             assert.deepEqual(outbox.map(e => [e.cycle, e.cleared, e.delivered]).sort(), [[1, true, true], [2, true, true], [3, true, true]]);
             assert.deepEqual(receiver.posts.slice(-1).map(p => [p.cycle, p.status]), [[3, 201]], 'la avería 3 tiene su propio aviso');
             assert.equal(receiver.acks.size, 3, 'tres avisos lógicos para tres averías');
             assert.equal(await rows(), 3);
-            return { filas: 3, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status) };
+            return { filas: 3, avisosLogicos: [...receiver.acks.keys()].map(k => k.split('#')[1]), envios: receiver.posts.map(p => p.cycle + ':' + p.status),
+                ...(delayedAck ? { ciclo3TrasAcuseTardio: { delivered: reassigned.delivered }, persistido: outbox.map(e => [e.cycle, e.delivered]) } : {}) };
         } finally {
             spoolModule().install(previous);
             try { fs.unlinkSync(alertsPath); fs.renameSync(alertsPath + '.away', alertsPath); } catch { /* ya restablecido */ }
             fs.rmSync(dir, { recursive: true, force: true });
         }
-    });
+    };
+    await step('Q10', 'Dictamen ded9dd0, hallazgo 1: el acuse 201 en memoria no basta para retirar la última evidencia; dos averías separadas por recuperación y reinicio producen dos avisos lógicos y repetir uno reutiliza su acuse', q10());
+    await step('Q10b', 'Variante de Q10 con el acuse demorado: el 200 atrasado del ciclo 1 llega después de renumerar la avería 3 y deja pendiente el ciclo 3, que el receptor confirma después por separado', q10({ delayedAck: true }));
     await step('Q11', 'Dictamen ded9dd0, hallazgo 2: si el archivo de avisos no se pudo leer al arrancar, el mismo proceso lo recarga al recuperarse el volumen, sin sustituirlo, y envía una vez el aviso pendiente', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc2-q11-')), previous = spoolModule().shared();
         const receiver = idempotentReceiver(), alertsPath = path.join(dir, 'alerts');
